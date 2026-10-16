@@ -1,0 +1,9 @@
+[package]
+name = "autark-displays"
+description = "Display manager: monitor layouts and scaling, switching automatically on dock."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

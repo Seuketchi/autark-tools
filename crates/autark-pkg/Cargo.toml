@@ -1,0 +1,9 @@
+[package]
+name = "autark-pkg"
+description = "Autark's package manager: signed packages from recipes, with install, remove, upgrade, search and rollback."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

@@ -1,0 +1,9 @@
+[package]
+name = "autark-bar"
+description = "Top bar: app menu, clock, Wi-Fi, battery, volume, notification centre button."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

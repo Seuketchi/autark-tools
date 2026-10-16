@@ -1,0 +1,9 @@
+[package]
+name = "autark-notifyd"
+description = "Notification centre and org.freedesktop.Notifications service, with widgets."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

@@ -1,0 +1,9 @@
+[package]
+name = "autark-lock"
+description = "Lock screen using ext-session-lock and PAM."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

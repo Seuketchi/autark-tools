@@ -1,0 +1,9 @@
+[package]
+name = "autark-sandbox"
+description = "Sandbox launcher: runs vendor binaries under a per-app Landlock profile."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

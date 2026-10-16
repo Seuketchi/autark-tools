@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/autark-ai",
+    "crates/autark-bar",
+    "crates/autark-common",
+    "crates/autark-displays",
+    "crates/autark-dock",
+    "crates/autark-files",
+    "crates/autark-init",
+    "crates/autark-launcher",
+    "crates/autark-lock",
+    "crates/autark-monitor",
+    "crates/autark-nightlight",
+    "crates/autark-notes",
+    "crates/autark-notifyd",
+    "crates/autark-pkg",
+    "crates/autark-sandbox",
+    "crates/autark-shot",
+    "crates/autark-stats",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"

@@ -1,0 +1,9 @@
+[package]
+name = "autark-notes"
+description = "Notes: Apple Notes surface over plain Markdown vaults with links, backlinks and graph view."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

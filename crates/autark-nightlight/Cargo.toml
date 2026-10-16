@@ -1,0 +1,9 @@
+[package]
+name = "autark-nightlight"
+description = "Night light daemon using Wayland gamma control."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

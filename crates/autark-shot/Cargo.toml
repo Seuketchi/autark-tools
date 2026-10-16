@@ -1,0 +1,9 @@
+[package]
+name = "autark-shot"
+description = "Screenshots and screen recording (Shift+Super+3/4/5)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

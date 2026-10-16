@@ -1,0 +1,9 @@
+[package]
+name = "autark-launcher"
+description = "Spotlight-style launcher, clipboard history (Super+V) and Kith's entry point."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
