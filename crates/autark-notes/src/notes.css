@@ -46,12 +46,17 @@ window.notes .titlebar {
 .sidebar windowcontrols button {
   min-width: 12px;
   min-height: 12px;
-  margin-right: 8px;
+  margin: 0 8px 0 0;
+  padding: 0;
   border-radius: 50%;
 }
 
 .sidebar windowcontrols button image {
-  opacity: 0;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  -gtk-icon-size: 0;
 }
 
 .sidebar windowcontrols button.close {

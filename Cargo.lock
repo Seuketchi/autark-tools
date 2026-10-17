@@ -190,6 +190,13 @@ dependencies = [
 [[package]]
 name = "autark-monitor"
 version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "futures-util",
+ "gtk4",
+ "serde_json",
+ "zbus",
+]
 
 [[package]]
 name = "autark-nightlight"

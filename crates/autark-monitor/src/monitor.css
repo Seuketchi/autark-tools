@@ -1,0 +1,302 @@
+window.activity,
+window.force-quit {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+/* Below the rules for each kind of button, which are more specific. */
+button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: @text;
+  min-height: 0;
+  padding: 0;
+}
+
+.titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+windowcontrols button {
+  min-width: 12px;
+  min-height: 12px;
+  margin: 0 8px 0 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+windowcontrols button image {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  -gtk-icon-size: 0;
+}
+
+windowcontrols button.close {
+  background-color: #E5684F;
+}
+
+windowcontrols button.minimize {
+  background-color: #E8B04A;
+}
+
+windowcontrols button.maximize {
+  background-color: #6FAF7A;
+}
+
+.header {
+  min-height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+  background-color: #FBFAF7;
+}
+
+.header .title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.header .subtitle {
+  font-size: 11px;
+  color: #7A736A;
+}
+
+.tabs {
+  padding: 2px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+}
+
+.tabs button {
+  min-height: 28px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.tabs button:checked {
+  background-color: @surface;
+  box-shadow: 0 1px 2px alpha(@text, 0.12);
+  font-weight: 600;
+}
+
+.header entry {
+  min-height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+  box-shadow: none;
+  outline: none;
+  color: @text;
+}
+
+button.force-quit-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(196, 80, 60, 0.35);
+  border-radius: 8px;
+  background-color: @surface;
+  color: #A8402E;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+button.force-quit-button:hover {
+  background-color: rgba(196, 80, 60, 0.06);
+}
+
+.columns {
+  min-height: 32px;
+  padding: 0 20px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+.columns label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #7A736A;
+}
+
+.rows {
+  padding: 4px 8px;
+}
+
+.row {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 8px;
+}
+
+.row:hover {
+  background-color: alpha(@text, 0.03);
+}
+
+.row.selected {
+  background-color: @accent_soft;
+}
+
+.row .name {
+  font-weight: 500;
+}
+
+.row.process {
+  min-height: 30px;
+  padding-left: 66px;
+}
+
+.row.process .name {
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: #68625A;
+}
+
+.row.process .number {
+  font-size: 12px;
+  color: #68625A;
+}
+
+button.chevron {
+  min-width: 16px;
+  min-height: 16px;
+  color: #7A736A;
+  -gtk-icon-size: 12px;
+}
+
+button.chevron:disabled {
+  opacity: 0.25;
+}
+
+.tile {
+  border-radius: 6px;
+  background-color: #E2DDD3;
+  color: #68625A;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.flag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background-color: #F6E7C8;
+  color: #8A5A12;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.number {
+  font-feature-settings: "tnum";
+}
+
+.empty,
+.note {
+  padding: 16px 12px;
+  font-size: 12px;
+  color: #7A736A;
+}
+
+.footer {
+  min-height: 168px;
+  padding: 16px 20px 18px;
+  border-top: 1px solid alpha(@text, 0.08);
+  background-color: #FBFAF7;
+}
+
+.card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid alpha(@text, 0.08);
+  background-color: @surface;
+}
+
+.card-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #7A736A;
+}
+
+.caption,
+.card .line {
+  font-size: 12px;
+  color: #68625A;
+}
+
+.card .big {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Force quit */
+
+window.force-quit .head {
+  padding: 18px 20px 12px;
+}
+
+window.force-quit .title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+window.force-quit .note {
+  padding: 0;
+}
+
+window.force-quit list.apps {
+  padding: 4px 10px 10px;
+  background: none;
+  color: @text;
+}
+
+window.force-quit scrolledwindow {
+  background: none;
+}
+
+window.force-quit list.apps row {
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+
+window.force-quit list.apps row:selected {
+  background-color: @accent;
+  color: #FFFFFF;
+}
+
+window.force-quit list.apps row:selected .flag {
+  background: none;
+  color: #FFFFFF;
+}
+
+window.force-quit .buttons {
+  padding: 12px 16px;
+  border-top: 1px solid alpha(@text, 0.08);
+  background-color: #FBFAF7;
+}
+
+window.force-quit .buttons button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid alpha(@text, 0.12);
+  border-radius: 8px;
+  background-color: @surface;
+}
+
+window.force-quit .buttons button.destructive {
+  border: none;
+  background-color: #C4503C;
+  color: #FFFFFF;
+  font-weight: 500;
+}
