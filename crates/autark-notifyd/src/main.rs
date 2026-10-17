@@ -9,6 +9,7 @@ mod widgets;
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gtk::glib;
@@ -36,13 +37,14 @@ fn start(app: &gtk::Application) {
     std::mem::forget(app.hold());
 
     let (events, received) = async_channel::unbounded();
+    let kept = Arc::new(Mutex::new(Vec::new()));
     let app = app.clone();
     glib::spawn_future_local(async move {
         let connection = zbus::connection::Builder::session()
             .name("org.freedesktop.Notifications")
             .name("org.autark.Notifications1")
             .serve_at(server::PATH, Server::new(events.clone()))
-            .serve_at(server::CONTROL_PATH, server::Control { events })
+            .serve_at(server::CONTROL_PATH, server::Control { events, kept: kept.clone() })
             .build()
             .await;
         let connection = match connection {
@@ -53,7 +55,7 @@ fn start(app: &gtk::Application) {
                 return;
             }
         };
-        let daemon = Daemon::new(&app, connection);
+        let daemon = Daemon::new(&app, connection, kept);
         while let Ok(event) = received.recv().await {
             match event {
                 Event::Notify(notification) => daemon.notify(notification),
@@ -70,6 +72,8 @@ pub struct Daemon {
     config: config::Notifyd,
     /// Kept for the centre, newest first.
     notifications: RefCell<Vec<Notification>>,
+    /// The same, as `org.autark.Notifications1.Kept` gives them to the lock screen.
+    kept: Arc<Mutex<Vec<server::Kept>>>,
     pub do_not_disturb: Cell<bool>,
     banner_window: gtk::ApplicationWindow,
     banners: gtk::Box,
@@ -81,7 +85,7 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    fn new(app: &gtk::Application, connection: zbus::Connection) -> Rc<Self> {
+    fn new(app: &gtk::Application, connection: zbus::Connection, kept: Arc<Mutex<Vec<server::Kept>>>) -> Rc<Self> {
         Rc::new_cyclic(|daemon: &Weak<Self>| {
             let banners = gtk::Box::new(gtk::Orientation::Vertical, 8);
             let banner_window = gtk::ApplicationWindow::new(app);
@@ -120,6 +124,7 @@ impl Daemon {
                 connection,
                 config,
                 notifications: RefCell::default(),
+                kept,
                 do_not_disturb: Cell::new(false),
                 banner_window,
                 banners,
@@ -149,6 +154,7 @@ impl Daemon {
                 kept.insert(0, notification.clone());
             }
         }
+        self.share_kept();
         // With the centre open on them, new notifications show up there instead of as banners.
         let quiet = self.do_not_disturb.get() && notification.urgency != server::CRITICAL;
         if !quiet && !self.centre.shows_notifications() {
@@ -232,6 +238,7 @@ impl Daemon {
 
     pub fn dismiss(&self, id: u32, reason: u32) {
         self.notifications.borrow_mut().retain(|kept| kept.id != id);
+        self.share_kept();
         self.remove_banner(id);
         self.centre.refresh();
         self.emit_closed(id, reason);
@@ -242,6 +249,19 @@ impl Daemon {
         for id in ids {
             self.dismiss(id, server::DISMISSED);
         }
+    }
+
+    /// Copies the kept notifications to where `Kept` answers from, and says they changed.
+    fn share_kept(&self) {
+        if let Ok(mut kept) = self.kept.lock() {
+            *kept = self.notifications.borrow().iter().map(Notification::kept).collect();
+        }
+        let connection = self.connection.clone();
+        glib::spawn_future_local(async move {
+            if let Ok(emitter) = SignalEmitter::new(&connection, server::CONTROL_PATH) {
+                let _ = server::Control::kept_changed(&emitter).await;
+            }
+        });
     }
 
     fn invoke(&self, id: u32, key: &str) {

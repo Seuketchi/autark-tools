@@ -1,8 +1,10 @@
 //! The `org.freedesktop.Notifications` service apps send to, and `org.autark.Notifications1`,
-//! which the bar calls to open the centre. Methods run on zbus's thread and hand events to GTK.
+//! which the bar calls to open the centre and the lock screen reads the kept notifications from.
+//! Methods run on zbus's thread and hand events to GTK.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use async_channel::Sender;
@@ -50,6 +52,13 @@ pub enum Event {
 pub struct Server {
     next_id: AtomicU32,
     events: Sender<Event>,
+}
+
+impl Notification {
+    pub fn kept(&self) -> Kept {
+        let received = self.received.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |since| since.as_secs() as i64);
+        (self.app_name.clone(), self.icon.clone(), self.summary.clone(), self.body.clone(), received)
+    }
 }
 
 impl Server {
@@ -114,8 +123,14 @@ impl Server {
     pub async fn action_invoked(emitter: &SignalEmitter<'_>, id: u32, action_key: &str) -> zbus::Result<()>;
 }
 
+/// A kept notification as the lock screen sees it: app name, icon, summary, body, and when it came
+/// (Unix seconds).
+pub type Kept = (String, String, String, String, i64);
+
 pub struct Control {
     pub events: Sender<Event>,
+    /// The centre's notifications, newest first, copied over whenever they change.
+    pub kept: Arc<Mutex<Vec<Kept>>>,
 }
 
 #[zbus::interface(name = "org.autark.Notifications1")]
@@ -129,4 +144,13 @@ impl Control {
     async fn edit_widgets(&self) {
         let _ = self.events.send(Event::EditWidgets).await;
     }
+
+    /// The notifications kept in the centre, newest first.
+    fn kept(&self) -> Vec<Kept> {
+        self.kept.lock().map(|kept| kept.clone()).unwrap_or_default()
+    }
+
+    /// The kept notifications changed; call `Kept` again.
+    #[zbus(signal)]
+    pub async fn kept_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }

@@ -8,6 +8,7 @@ mod auth;
 mod config;
 mod daemon;
 mod fingerprint;
+mod notifications;
 
 use std::cell::{Cell, RefCell};
 use std::io::Write;
@@ -89,6 +90,9 @@ struct Lock {
     /// Every monitor's hint line, and what it says when nothing is happening.
     hints: RefCell<Vec<gtk::Label>>,
     idle_hint: RefCell<&'static str>,
+    /// Every monitor's notification list, and what they show.
+    notifications: RefCell<Vec<gtk::Box>>,
+    groups: RefCell<Vec<notifications::Group>>,
 }
 
 const PASSWORD_HINT: &str = "Type your password to unlock";
@@ -131,6 +135,8 @@ fn start(app: &gtk::Application, config: Rc<config::Lock>) {
         checking: Cell::new(false),
         hints: RefCell::default(),
         idle_hint: RefCell::new(PASSWORD_HINT),
+        notifications: RefCell::default(),
+        groups: RefCell::default(),
     });
     instance.connect_monitor({
         let (app, lock) = (app.clone(), lock.clone());
@@ -144,6 +150,21 @@ fn start(app: &gtk::Application, config: Rc<config::Lock>) {
         app.quit();
         return;
     }
+    glib::spawn_future_local({
+        let lock = lock.clone();
+        async move {
+            let result = notifications::watch(|groups| {
+                for list in lock.notifications.borrow().iter() {
+                    notifications::fill(list, &groups, lock.config.notification_text);
+                }
+                *lock.groups.borrow_mut() = groups;
+            })
+            .await;
+            if let Err(err) = result {
+                eprintln!("lock: notifications: {err}");
+            }
+        }
+    });
     if lock.config.fingerprint {
         glib::spawn_future_local(async move {
             let user = lock.user.name.clone();
@@ -167,7 +188,7 @@ fn start(app: &gtk::Application, config: Rc<config::Lock>) {
     }
 }
 
-/// One monitor's lock screen: date and time, the user, the password field, and power buttons.
+/// One monitor's lock screen: date and time, notifications, the user, the password field, and power buttons.
 fn window(app: &gtk::Application, lock: &Rc<Lock>) -> gtk::ApplicationWindow {
     let date = gtk::Label::new(None);
     date.add_css_class("date");
@@ -176,10 +197,25 @@ fn window(app: &gtk::Application, lock: &Rc<Lock>) -> gtk::ApplicationWindow {
     tick(date.downgrade(), time.downgrade());
     let clock = gtk::Box::new(gtk::Orientation::Vertical, 6);
     clock.add_css_class("clock");
-    clock.set_valign(gtk::Align::Start);
     clock.set_halign(gtk::Align::Center);
     clock.append(&date);
     clock.append(&time);
+    let notifications = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    notifications.add_css_class("notifications");
+    notifications.set_halign(gtk::Align::Center);
+    notifications::fill(&notifications, &lock.groups.borrow(), lock.config.notification_text);
+    lock.notifications.borrow_mut().push(notifications.clone());
+    // Between the clock and the form, taking only the room left: on a short screen the cards that
+    // don't fit are left out rather than drawn over the form.
+    let between = gtk::ScrolledWindow::builder()
+        .child(&notifications)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::External)
+        .propagate_natural_height(true)
+        .vexpand(true)
+        .valign(gtk::Align::Start)
+        .build();
+    notifications::fit(&between, &notifications);
 
     let avatar: gtk::Widget = match &lock.user.avatar {
         Some(path) => {
@@ -215,7 +251,6 @@ fn window(app: &gtk::Application, lock: &Rc<Lock>) -> gtk::ApplicationWindow {
 
     let form = gtk::Box::new(gtk::Orientation::Vertical, 14);
     form.add_css_class("form");
-    form.set_valign(gtk::Align::End);
     form.set_halign(gtk::Align::Center);
     form.append(&avatar);
     form.append(&name);
@@ -248,8 +283,11 @@ fn window(app: &gtk::Application, lock: &Rc<Lock>) -> gtk::ApplicationWindow {
     let backdrop = gtk::Box::new(gtk::Orientation::Vertical, 0);
     backdrop.add_css_class("backdrop");
     overlay.set_child(Some(&backdrop));
-    overlay.add_overlay(&clock);
-    overlay.add_overlay(&form);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    column.append(&clock);
+    column.append(&between);
+    column.append(&form);
+    overlay.add_overlay(&column);
     overlay.add_overlay(&power);
 
     let unlock = {
