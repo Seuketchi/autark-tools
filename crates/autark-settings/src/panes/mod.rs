@@ -3,6 +3,7 @@
 mod appearance;
 mod display;
 mod dock;
+mod keyboard;
 mod lock;
 mod night;
 mod password;
@@ -115,6 +116,7 @@ pub fn build(id: &str) -> gtk::Widget {
         "sound" => sound::build(),
         "power" => power::build(),
         "lock" => lock::build(),
+        "keyboard" => keyboard::build(),
         _ => {
             let (page, column) = ui::page();
             column.append(&ui::title(find(id).map_or(id, |pane| pane.label), None));

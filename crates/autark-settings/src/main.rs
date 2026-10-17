@@ -7,6 +7,7 @@ mod config;
 mod icon;
 mod panes;
 mod ui;
+mod wayfire;
 mod window;
 
 use std::cell::RefCell;
