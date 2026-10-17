@@ -18,6 +18,10 @@ window {
   border-radius: 6px;
 }
 
+.icon {
+  padding: 0 7px;
+}
+
 .logo {
   min-width: 32px;
   padding: 0;

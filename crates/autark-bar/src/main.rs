@@ -5,6 +5,8 @@ mod battery;
 mod clock;
 mod config;
 mod logo;
+mod volume;
+mod wifi;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
@@ -40,6 +42,8 @@ fn build(app: &gtk::Application) {
     start.append(&app_name::new());
 
     let end = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    end.append(&wifi::new());
+    end.append(&volume::new());
     end.append(&battery::new(config.battery_percent));
     end.append(&clock::new(&config.clock_format));
 
