@@ -6,31 +6,89 @@ mod clock;
 mod config;
 mod logo;
 mod menu;
+mod shared;
 mod volume;
 mod wifi;
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+
+use shared::Shared;
 
 fn main() -> glib::ExitCode {
     let app = gtk::Application::builder()
         .application_id("org.autark.Bar")
         .build();
     app.connect_startup(|_| load_css());
-    app.connect_activate(build);
+    app.connect_activate(start);
     app.run()
 }
 
-fn build(app: &gtk::Application) {
+/// What every monitor's bar shows, each watched once however many monitors there are.
+struct Sources {
+    battery_percent: bool,
+    app_name: Shared<Option<String>>,
+    wifi: wifi::Source,
+    volume: Shared<volume::Snapshot>,
+    battery: Shared<Option<battery::Level>>,
+    clock: Shared<String>,
+}
+
+fn start(app: &gtk::Application) {
     // A second launch only activates the running bar.
-    if app.active_window().is_some() {
+    thread_local!(static STARTED: Cell<bool> = const { Cell::new(false) });
+    if STARTED.replace(true) {
         return;
     }
-    let config: config::Bar = autark_common::config::load("bar");
+    // Keep running while no monitor is connected.
+    std::mem::forget(app.hold());
 
+    let config: config::Bar = autark_common::config::load("bar");
+    let sources = Rc::new(Sources {
+        battery_percent: config.battery_percent,
+        app_name: app_name::source(),
+        wifi: wifi::source(),
+        volume: volume::source(),
+        battery: battery::source(),
+        clock: clock::source(&config.clock_format),
+    });
+
+    let monitors = gdk::Display::default().expect("no display").monitors();
+    let bars: Rc<RefCell<Vec<(gdk::Monitor, gtk::ApplicationWindow)>>> = Rc::default();
+    let sync = {
+        let (app, monitors) = (app.clone(), monitors.clone());
+        move || {
+            let current: Vec<gdk::Monitor> = (0..monitors.n_items())
+                .filter_map(|index| monitors.item(index).and_downcast())
+                .collect();
+            let mut bars = bars.borrow_mut();
+            bars.retain(|(monitor, window)| {
+                let keep = current.contains(monitor);
+                if !keep {
+                    window.destroy();
+                }
+                keep
+            });
+            for monitor in current {
+                if !bars.iter().any(|(shown, _)| *shown == monitor) {
+                    let window = bar(&app, &monitor, &sources);
+                    bars.push((monitor, window));
+                }
+            }
+        }
+    };
+    sync();
+    monitors.connect_items_changed(move |_, _, _, _| sync());
+}
+
+fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk::ApplicationWindow {
     let window = gtk::ApplicationWindow::new(app);
     window.init_layer_shell();
+    window.set_monitor(Some(monitor));
     window.set_layer(Layer::Top);
     window.set_namespace(Some("autark-bar"));
     for edge in [Edge::Top, Edge::Left, Edge::Right] {
@@ -42,13 +100,13 @@ fn build(app: &gtk::Application) {
 
     let start = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     start.append(&logo::new());
-    start.append(&app_name::new());
+    start.append(&app_name::view(&sources.app_name));
 
     let end = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    end.append(&wifi::new());
-    end.append(&volume::new());
-    end.append(&battery::new(config.battery_percent));
-    end.append(&clock::new(&config.clock_format));
+    end.append(&wifi::view(&sources.wifi));
+    end.append(&volume::view(&sources.volume));
+    end.append(&battery::view(&sources.battery, sources.battery_percent));
+    end.append(&clock::view(&sources.clock));
 
     let bar = gtk::CenterBox::new();
     bar.add_css_class("bar");
@@ -56,6 +114,7 @@ fn build(app: &gtk::Application) {
     bar.set_end_widget(Some(&end));
     window.set_child(Some(&bar));
     window.present();
+    window
 }
 
 fn load_css() {

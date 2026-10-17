@@ -16,14 +16,25 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
 };
 
-pub fn new() -> gtk::Label {
+use crate::shared::Shared;
+
+/// Watches the compositor once for every bar; `None` hides the name.
+pub fn source() -> Shared<Option<String>> {
+    let shared = Shared::new(None);
+    if let Err(err) = watch(shared.clone()) {
+        eprintln!("app name: {err}");
+    }
+    shared
+}
+
+pub fn view(source: &Shared<Option<String>>) -> gtk::Label {
     let label = gtk::Label::new(None);
     label.add_css_class("item");
     label.add_css_class("app-name");
-    label.set_visible(false);
-    if let Err(err) = watch(label.clone()) {
-        eprintln!("app name: {err}");
-    }
+    source.watch(&label, |label, name| {
+        label.set_visible(name.is_some());
+        label.set_label(name.as_deref().unwrap_or_default());
+    });
     label
 }
 
@@ -34,7 +45,7 @@ struct Toplevel {
 }
 
 struct State {
-    label: gtk::Label,
+    shared: Shared<Option<String>>,
     /// Applied on each handle's `done` event, as the protocol asks.
     pending: HashMap<ObjectId, Toplevel>,
     toplevels: HashMap<ObjectId, Toplevel>,
@@ -59,10 +70,9 @@ impl State {
                 let name = self.names.entry(app_id.clone()).or_insert_with(|| {
                     autark_common::desktop::app_name(&app_id).unwrap_or_else(|| fallback_name(&app_id))
                 });
-                self.label.set_label(name);
-                self.label.set_visible(true);
+                self.shared.set(Some(name.clone()));
             }
-            None => self.label.set_visible(false),
+            None => self.shared.set(None),
         }
     }
 }
@@ -75,11 +85,11 @@ fn fallback_name(app_id: &str) -> String {
 }
 
 /// A Wayland connection of its own, read from the GTK main loop whenever the compositor writes.
-fn watch(label: gtk::Label) -> Result<(), Box<dyn std::error::Error>> {
+fn watch(shared: Shared<Option<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let connection = Connection::connect_to_env()?;
     let mut queue: EventQueue<State> = connection.new_event_queue();
     connection.display().get_registry(&queue.handle(), ());
-    let mut state = State { label, pending: HashMap::new(), toplevels: HashMap::new(), names: HashMap::new() };
+    let mut state = State { shared, pending: HashMap::new(), toplevels: HashMap::new(), names: HashMap::new() };
     queue.roundtrip(&mut state)?;
     queue.roundtrip(&mut state)?;
 
@@ -95,7 +105,7 @@ fn watch(label: gtk::Label) -> Result<(), Box<dyn std::error::Error>> {
             Ok(_) => glib::ControlFlow::Continue,
             Err(err) => {
                 eprintln!("app name: compositor connection lost: {err}");
-                state.borrow().label.set_visible(false);
+                state.borrow().shared.set(None);
                 glib::ControlFlow::Break
             }
         }

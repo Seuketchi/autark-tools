@@ -8,6 +8,8 @@ use gtk::cairo::{Context, Operator};
 use gtk::glib;
 use gtk::prelude::*;
 
+use crate::shared::Shared;
+
 #[zbus::proxy(
     interface = "org.freedesktop.UPower.Device",
     default_service = "org.freedesktop.UPower",
@@ -27,12 +29,19 @@ const CHARGING: u32 = 1;
 const FULLY_CHARGED: u32 = 4;
 
 #[derive(Clone, Copy, Default)]
-struct Level {
+pub struct Level {
     percent: f64,
     state: u32,
 }
 
-pub fn new(show_percent: bool) -> gtk::Box {
+/// Watches UPower once for every bar; `None` hides the item.
+pub fn source() -> Shared<Option<Level>> {
+    let shared = Shared::new(None);
+    glib::spawn_future_local(watch(shared.clone()));
+    shared
+}
+
+pub fn view(source: &Shared<Option<Level>>, show_percent: bool) -> gtk::Box {
     let level = Rc::new(Cell::new(Level::default()));
 
     let label = gtk::Label::new(None);
@@ -50,15 +59,13 @@ pub fn new(show_percent: bool) -> gtk::Box {
 
     let item = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     item.add_css_class("item");
-    item.set_visible(false);
     item.append(&label);
     item.append(&icon);
-    glib::spawn_future_local(watch(item.clone(), label, icon, level));
-    item
-}
-
-async fn watch(item: gtk::Box, label: gtk::Label, icon: gtk::DrawingArea, level: Rc<Cell<Level>>) {
-    let update = |current: Level| {
+    source.watch(&item, move |item, current| {
+        item.set_visible(current.is_some());
+        let Some(current) = *current else {
+            return;
+        };
         level.set(current);
         label.set_label(&format!("{:.0}%", current.percent));
         item.set_tooltip_text(Some(&match current.state {
@@ -67,7 +74,11 @@ async fn watch(item: gtk::Box, label: gtk::Label, icon: gtk::DrawingArea, level:
             _ => format!("{:.0}%", current.percent),
         }));
         icon.queue_draw();
-    };
+    });
+    item
+}
+
+async fn watch(shared: Shared<Option<Level>>) {
     let result = async {
         let connection = zbus::Connection::system().await?;
         let device = DeviceProxy::new(&connection).await?;
@@ -78,8 +89,7 @@ async fn watch(item: gtk::Box, label: gtk::Label, icon: gtk::DrawingArea, level:
             percent: device.percentage().await?,
             state: device.state().await?,
         };
-        update(current);
-        item.set_visible(true);
+        shared.set(Some(current));
 
         let mut percent = device.receive_percentage_changed().await.fuse();
         let mut state = device.receive_state_changed().await.fuse();
@@ -94,14 +104,14 @@ async fn watch(item: gtk::Box, label: gtk::Label, icon: gtk::DrawingArea, level:
                     None => break,
                 },
             }
-            update(current);
+            shared.set(Some(current));
         }
         zbus::Result::Ok(())
     };
     if let Err(err) = result.await {
         eprintln!("battery: {err}");
-        item.set_visible(false);
     }
+    shared.set(None);
 }
 
 /// The design's battery: a rounded body filled to the level, a terminal nub, and a bolt while charging.

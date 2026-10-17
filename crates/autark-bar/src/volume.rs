@@ -20,6 +20,7 @@ use pw::spa::pod::{Pod, Value, ValueArray};
 use pw::types::ObjectType;
 
 use crate::menu;
+use crate::shared::Shared;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Level {
@@ -36,7 +37,7 @@ struct Sink {
 
 /// What the PipeWire thread reports: the outputs, which is the default, and its level.
 #[derive(Clone, Default, PartialEq)]
-struct Snapshot {
+pub struct Snapshot {
     sinks: Vec<Sink>,
     default: Option<u32>,
     level: Option<Level>,
@@ -51,7 +52,28 @@ fn wpctl(args: &[&str]) {
     }
 }
 
-pub fn new() -> gtk::MenuButton {
+/// Watches PipeWire once for every bar, on a thread of its own.
+pub fn source() -> Shared<Snapshot> {
+    let shared = Shared::new(Snapshot::default());
+    let (updates, received) = async_channel::unbounded();
+    std::thread::spawn(move || {
+        if let Err(err) = watch(updates) {
+            eprintln!("volume: {err}");
+        }
+    });
+    glib::spawn_future_local({
+        let shared = shared.clone();
+        async move {
+            while let Ok(update) = received.recv().await {
+                shared.set(update);
+            }
+            shared.set(Snapshot::default());
+        }
+    });
+    shared
+}
+
+pub fn view(source: &Shared<Snapshot>) -> gtk::MenuButton {
     let level = Rc::new(Cell::new(Level::default()));
     let default = Rc::new(Cell::new(None::<u32>));
 
@@ -101,56 +123,43 @@ pub fn new() -> gtk::MenuButton {
     panel.append(&outputs);
 
     let button = menu::button(&icon, &panel, &["icon"]);
-    button.set_visible(false);
-
-    let (updates, received) = async_channel::unbounded();
-    std::thread::spawn(move || {
-        if let Err(err) = watch(updates) {
-            eprintln!("volume: {err}");
-        }
-    });
-    glib::spawn_future_local({
-        let button = button.clone();
-        async move {
-            let mut shown = Snapshot::default();
-            while let Ok(update) = received.recv().await {
-                let Some(current) = update.level else {
-                    button.set_visible(false);
-                    continue;
-                };
-                button.set_visible(true);
-                button.set_tooltip_text(Some(&if current.muted {
-                    "Muted".to_owned()
-                } else {
-                    format!("Volume {:.0}%", current.volume * 100.0)
-                }));
-                level.set(current);
-                default.set(update.default);
-                if pending.get().is_none() {
-                    syncing.set(true);
-                    slider.set_value(f64::from(current.volume) * 100.0);
-                    syncing.set(false);
-                }
-                mute.set_tooltip_text(Some(if current.muted { "Unmute" } else { "Mute" }));
-                icon.queue_draw();
-                if let Some(speaker) = mute.child() {
-                    speaker.queue_draw();
-                }
-                if (&update.sinks, update.default) != (&shown.sinks, shown.default) {
-                    while let Some(child) = outputs.first_child() {
-                        outputs.remove(&child);
-                    }
-                    for sink in &update.sinks {
-                        let row = menu::row(&sink.description, Some(sink.id) == update.default);
-                        let id = sink.id.to_string();
-                        row.connect_clicked(move |_| wpctl(&["set-default", &id]));
-                        outputs.append(&row);
-                    }
-                }
-                shown = update;
-            }
+    let shown = RefCell::new(Snapshot::default());
+    source.watch(&button, move |button, update| {
+        let Some(current) = update.level else {
             button.set_visible(false);
+            return;
+        };
+        button.set_visible(true);
+        button.set_tooltip_text(Some(&if current.muted {
+            "Muted".to_owned()
+        } else {
+            format!("Volume {:.0}%", current.volume * 100.0)
+        }));
+        level.set(current);
+        default.set(update.default);
+        if pending.get().is_none() {
+            syncing.set(true);
+            slider.set_value(f64::from(current.volume) * 100.0);
+            syncing.set(false);
         }
+        mute.set_tooltip_text(Some(if current.muted { "Unmute" } else { "Mute" }));
+        icon.queue_draw();
+        if let Some(speaker) = mute.child() {
+            speaker.queue_draw();
+        }
+        let mut shown = shown.borrow_mut();
+        if (&update.sinks, update.default) != (&shown.sinks, shown.default) {
+            while let Some(child) = outputs.first_child() {
+                outputs.remove(&child);
+            }
+            for sink in &update.sinks {
+                let row = menu::row(&sink.description, Some(sink.id) == update.default);
+                let id = sink.id.to_string();
+                row.connect_clicked(move |_| wpctl(&["set-default", &id]));
+                outputs.append(&row);
+            }
+        }
+        *shown = update.clone();
     });
     button
 }

@@ -15,6 +15,7 @@ use gtk::glib;
 use gtk::prelude::*;
 
 use crate::menu;
+use crate::shared::Shared;
 
 #[derive(Clone, Default, PartialEq)]
 pub enum Wifi {
@@ -60,7 +61,62 @@ fn never() -> Changes {
     changes(futures_util::stream::pending::<()>())
 }
 
-pub fn new() -> gtk::MenuButton {
+/// What every bar shows, kept by the one backend watcher.
+#[derive(Clone, Default, PartialEq)]
+pub struct State {
+    status: Wifi,
+    networks: Vec<Network>,
+    /// The network that last failed to join, until something connects.
+    failed: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct Source {
+    state: Shared<State>,
+    commands: async_channel::Sender<Command>,
+}
+
+/// Starts the backend once for every bar: iwd if it runs, else NetworkManager.
+pub fn source() -> Source {
+    let state = Shared::new(State::default());
+    let (commands, received_commands) = async_channel::unbounded();
+    let (updates, received) = async_channel::unbounded();
+    glib::spawn_future_local(async move {
+        match iwd::run(updates.clone(), received_commands.clone()).await {
+            Ok(true) => {}
+            Ok(false) => {
+                if let Err(err) = network_manager::run(updates, received_commands).await {
+                    eprintln!("wifi: NetworkManager: {err}");
+                }
+            }
+            Err(err) => eprintln!("wifi: iwd: {err}"),
+        }
+    });
+    glib::spawn_future_local({
+        let state = state.clone();
+        async move {
+            let mut current = State::default();
+            while let Ok(update) = received.recv().await {
+                match update {
+                    Update::Status(status) => {
+                        if matches!(status, Wifi::Connected { .. }) {
+                            current.failed = None;
+                        }
+                        current.status = status;
+                    }
+                    Update::Networks(networks) => current.networks = networks,
+                    Update::Failed(name) => current.failed = Some(name),
+                }
+                state.set(current.clone());
+            }
+            // The backend has stopped, so what's shown can't be trusted.
+            state.set(State::default());
+        }
+    });
+    Source { state, commands }
+}
+
+pub fn view(source: &Source) -> gtk::MenuButton {
     let status = Rc::new(RefCell::new(Wifi::default()));
     let icon = fan(16, {
         let status = status.clone();
@@ -70,7 +126,7 @@ pub fn new() -> gtk::MenuButton {
         }
     });
 
-    let (commands, received_commands) = async_channel::unbounded();
+    let commands = source.commands.clone();
     let power = gtk::Switch::builder().valign(gtk::Align::Center).build();
     // Set while the switch is moved to match the backend, so that isn't sent back as a change.
     let syncing = Rc::new(std::cell::Cell::new(false));
@@ -90,7 +146,6 @@ pub fn new() -> gtk::MenuButton {
     header.append(&power);
 
     let message = menu::caption("");
-    message.set_visible(false);
     let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
     let networks = gtk::Box::new(gtk::Orientation::Vertical, 10);
     networks.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -103,7 +158,6 @@ pub fn new() -> gtk::MenuButton {
     panel.append(&networks);
 
     let button = menu::button(&icon, &panel, &["icon"]);
-    button.set_visible(false);
     if let Some(popover) = button.popover() {
         let commands = commands.clone();
         popover.connect_show(move |_| {
@@ -112,52 +166,28 @@ pub fn new() -> gtk::MenuButton {
     }
 
     let join = Join::new(commands.clone());
-    let (updates, received) = async_channel::unbounded();
-    glib::spawn_future_local({
-        let received_commands = received_commands.clone();
-        async move {
-            match iwd::run(updates.clone(), received_commands.clone()).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    if let Err(err) = network_manager::run(updates, received_commands).await {
-                        eprintln!("wifi: NetworkManager: {err}");
-                    }
-                }
-                Err(err) => eprintln!("wifi: iwd: {err}"),
-            }
+    let shown = RefCell::new(None::<Vec<Network>>);
+    source.state.watch(&button, move |button, state| {
+        button.set_visible(state.status != Wifi::Unavailable);
+        button.set_tooltip_text(Some(&match &state.status {
+            Wifi::Connected { name, .. } => name.clone(),
+            Wifi::Off => "Wi-Fi: off".to_owned(),
+            _ => "Wi-Fi: not connected".to_owned(),
+        }));
+        syncing.set(true);
+        power.set_active(state.status != Wifi::Off);
+        syncing.set(false);
+        networks.set_visible(state.status != Wifi::Off);
+        message.set_visible(state.failed.is_some());
+        if let Some(name) = &state.failed {
+            message.set_label(&format!("Couldn't join {name}"));
         }
-    });
-    glib::spawn_future_local({
-        let button = button.clone();
-        async move {
-            while let Ok(update) = received.recv().await {
-                match update {
-                    Update::Status(update) => {
-                        button.set_visible(update != Wifi::Unavailable);
-                        button.set_tooltip_text(Some(&match &update {
-                            Wifi::Connected { name, .. } => name.clone(),
-                            Wifi::Off => "Wi-Fi: off".to_owned(),
-                            _ => "Wi-Fi: not connected".to_owned(),
-                        }));
-                        syncing.set(true);
-                        power.set_active(update != Wifi::Off);
-                        syncing.set(false);
-                        networks.set_visible(update != Wifi::Off);
-                        if matches!(update, Wifi::Connected { .. }) {
-                            message.set_visible(false);
-                        }
-                        *status.borrow_mut() = update;
-                        icon.queue_draw();
-                    }
-                    Update::Networks(found) => show_networks(&list, &found, &join, &commands),
-                    Update::Failed(name) => {
-                        message.set_label(&format!("Couldn't join {name}"));
-                        message.set_visible(true);
-                    }
-                }
-            }
-            // The backend has stopped, so what's shown can't be trusted.
-            button.set_visible(false);
+        *status.borrow_mut() = state.status.clone();
+        icon.queue_draw();
+        let mut shown = shown.borrow_mut();
+        if shown.as_ref() != Some(&state.networks) {
+            show_networks(&list, &state.networks, &join, &commands);
+            *shown = Some(state.networks.clone());
         }
     });
     button
