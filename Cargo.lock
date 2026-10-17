@@ -140,6 +140,18 @@ dependencies = [
 [[package]]
 name = "autark-displays"
 version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "async-io",
+ "autark-common",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "toml",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "zbus",
+]
 
 [[package]]
 name = "autark-dock"
