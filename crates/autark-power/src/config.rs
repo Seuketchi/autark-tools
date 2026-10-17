@@ -3,6 +3,7 @@
 //!
 //! ```toml
 //! low_battery = 10    # percent; 0 never warns
+//! lock_after = 0      # seconds after the screens go off until it locks; -1 never
 //!
 //! [battery]
 //! screen_off = 2      # minutes idle; 0 is never
@@ -29,19 +30,25 @@ pub struct Timers {
 #[serde(default, deny_unknown_fields)]
 pub struct Power {
     pub low_battery: u32,
+    pub lock_after: i64,
     pub battery: Timers,
     pub plugged_in: Timers,
 }
 
 impl Default for Power {
     fn default() -> Self {
-        Self { low_battery: 10, battery: Timers::default(), plugged_in: Timers::default() }
+        Self { low_battery: 10, lock_after: 0, battery: Timers::default(), plugged_in: Timers::default() }
     }
 }
 
 impl Power {
     pub fn load() -> Self {
         autark_common::config::load("power")
+    }
+
+    /// How long after the screens go off it locks, if it does.
+    pub fn lock_delay(&self) -> Option<Duration> {
+        u64::try_from(self.lock_after).ok().map(Duration::from_secs)
     }
 
     /// The screen-off and sleep timeouts for now, none where it's never.
@@ -61,5 +68,7 @@ mod tests {
         let power: Power = toml::from_str("[plugged_in]\nsleep = 0").unwrap();
         assert_eq!(power.timeouts(true), (Some(Duration::from_secs(120)), Some(Duration::from_secs(600))));
         assert_eq!(power.timeouts(false), (Some(Duration::from_secs(300)), None));
+        assert_eq!(power.lock_delay(), Some(Duration::ZERO));
+        assert_eq!(Power { lock_after: -1, ..power }.lock_delay(), None);
     }
 }

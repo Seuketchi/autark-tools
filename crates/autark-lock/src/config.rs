@@ -11,10 +11,12 @@ pub struct Lock {
     pub lock_on_sleep: bool,
     /// Also unlock with an enrolled fingerprint, through fprintd.
     pub fingerprint: bool,
+    /// Show what notifications say on the lock screen, not only which apps sent them.
+    pub notification_text: bool,
 }
 
 impl Default for Lock {
     fn default() -> Self {
-        Self { pam_service: "autark-lock".to_owned(), lock_on_sleep: true, fingerprint: true }
+        Self { pam_service: "autark-lock".to_owned(), lock_on_sleep: true, fingerprint: true, notification_text: false }
     }
 }

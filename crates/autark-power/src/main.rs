@@ -1,8 +1,9 @@
 //! Idle timers and the low-battery warning. After `power.toml`'s minutes with no one at the laptop the screens
 //! go off (back on at a touch), and later it sleeps through logind; the battery's timers apply while UPower
 //! says it's on battery, the plugged-in ones otherwise. An app holding an idle inhibitor (a playing video)
-//! holds both off. When the battery falls to the warning level, a notification says so, once per discharge.
-//! `power.toml` is watched, so Settings' changes apply at once. Start it with the session.
+//! holds both off. Once the screens are off it locks, at once or after `lock_after`. When the battery falls
+//! to the warning level, a notification says so, once per discharge. `power.toml` is watched, so Settings'
+//! changes apply at once. Start it with the session.
 
 mod config;
 mod idle;
@@ -32,6 +33,12 @@ trait Device {
 #[zbus::proxy(interface = "org.freedesktop.login1.Manager", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1")]
 trait Manager {
     fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+    fn get_session(&self, session_id: &str) -> zbus::Result<zbus::OwnedObjectPath>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.login1.Session", default_service = "org.freedesktop.login1")]
+trait Session {
+    fn lock(&self) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(interface = "org.freedesktop.Notifications", default_service = "org.freedesktop.Notifications", default_path = "/org/freedesktop/Notifications")]
@@ -52,6 +59,8 @@ trait Notifications {
 
 enum Woken {
     Idle(Vec<Event>),
+    /// Long enough with the screens off to lock.
+    Lock,
     Config,
     Supply(Option<Supply>),
 }
@@ -88,6 +97,8 @@ async fn daemon() -> Result<(), String> {
         let _keep = supplies;
         let mut supply = Supply::default();
         let mut warned = false;
+        // When to lock, while the screens are off.
+        let mut lock_at: Option<std::time::Instant> = None;
         idle.set(power.timeouts(supply.on_battery).0, power.timeouts(supply.on_battery).1);
         loop {
             // What woke it, with the waits let go before it's handled.
@@ -95,8 +106,15 @@ async fn daemon() -> Result<(), String> {
                 let wayland = std::pin::pin!(idle.dispatch());
                 let changed = std::pin::pin!(changes.next());
                 let supplied = std::pin::pin!(supplied.recv());
-                match select(wayland, select(changed, supplied)).await {
-                    Either::Left((events, _)) => Woken::Idle(events?),
+                let locking = std::pin::pin!(async {
+                    match lock_at {
+                        Some(at) => async_io::Timer::at(at).await,
+                        None => futures_util::future::pending().await,
+                    };
+                });
+                match select(select(wayland, locking), select(changed, supplied)).await {
+                    Either::Left((Either::Left((events, _)), _)) => Woken::Idle(events?),
+                    Either::Left((Either::Right(_), _)) => Woken::Lock,
                     Either::Right((Either::Left((changed, _)), _)) => {
                         changed.map_err(|error| format!("watching power.toml: {error}"))?;
                         Woken::Config
@@ -109,12 +127,22 @@ async fn daemon() -> Result<(), String> {
                 Woken::Idle(events) => {
                     for event in events {
                         match event {
-                            Event::Idle(Timer::ScreenOff) => idle.screens(true),
-                            Event::Back(Timer::ScreenOff) => idle.screens(false),
+                            Event::Idle(Timer::ScreenOff) => {
+                                idle.screens(true);
+                                lock_at = power.lock_delay().map(|delay| std::time::Instant::now() + delay);
+                            }
+                            Event::Back(Timer::ScreenOff) => {
+                                idle.screens(false);
+                                lock_at = None;
+                            }
                             Event::Idle(Timer::Sleep) => suspend().await,
                             Event::Back(Timer::Sleep) => {}
                         }
                     }
+                }
+                Woken::Lock => {
+                    lock_at = None;
+                    lock().await;
                 }
                 Woken::Config => {
                     let loaded = Power::load();
@@ -189,6 +217,18 @@ fn low(power: &Power, supply: Supply, warned: bool) -> (Option<f64>, bool) {
     match supply.battery {
         Some((percentage, true)) if power.low_battery > 0 && percentage <= f64::from(power.low_battery) => ((!warned).then_some(percentage), true),
         _ => (None, false),
+    }
+}
+
+/// Locks this session through logind, which `autark-lock --daemon` answers.
+async fn lock() {
+    let locked = async {
+        let connection = zbus::Connection::system().await?;
+        let path = ManagerProxy::new(&connection).await?.get_session("auto").await?;
+        SessionProxy::builder(&connection).path(path).build().await?.lock().await
+    };
+    if let Err(error) = locked.await {
+        eprintln!("power: locking: {error}");
     }
 }
 

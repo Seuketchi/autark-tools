@@ -88,6 +88,14 @@ fn trace(cr: &Context, path: &str) {
                     cr.line_to(x, y);
                 }
             }
+            'C' => {
+                for curve in values.as_chunks::<6>().0 {
+                    let point = |index: usize| if relative { (x + curve[index], y + curve[index + 1]) } else { (curve[index], curve[index + 1]) };
+                    let ((x1, y1), (x2, y2), (ex, ey)) = (point(0), point(2), point(4));
+                    cr.curve_to(x1, y1, x2, y2, ex, ey);
+                    (x, y) = (ex, ey);
+                }
+            }
             'A' => {
                 for arc in values.as_chunks::<7>().0 {
                     let (ex, ey) = if relative { (x + arc[5], y + arc[6]) } else { (arc[5], arc[6]) };
