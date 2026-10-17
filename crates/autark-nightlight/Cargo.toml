@@ -7,3 +7,13 @@ license.workspace = true
 publish = false
 
 [dependencies]
+async-channel = "2.5.0"
+async-io = "2.6.0"
+autark-common = { version = "0.0.0", path = "../autark-common" }
+chrono = "0.4.45"
+futures-util = "0.3.34"
+rustix = { version = "1", features = ["fs"] }
+serde = { version = "1.0.229", features = ["derive"] }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+zbus = "6.0.0"

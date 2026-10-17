@@ -208,6 +208,18 @@ dependencies = [
 [[package]]
 name = "autark-nightlight"
 version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "async-io",
+ "autark-common",
+ "chrono",
+ "futures-util",
+ "rustix",
+ "serde",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "zbus",
+]
 
 [[package]]
 name = "autark-notes"
