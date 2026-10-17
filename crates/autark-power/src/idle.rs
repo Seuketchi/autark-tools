@@ -113,6 +113,16 @@ impl Idle {
     }
 }
 
+impl Drop for Idle {
+    /// Screens left off would stay off with no one to turn them back on, so whatever ends this (a signal,
+    /// an error, a panic) brings them back.
+    fn drop(&mut self) {
+        if self.state.off {
+            self.screens(false);
+        }
+    }
+}
+
 impl State {
     fn apply(&mut self, handle: &QueueHandle<State>) {
         let Some(manager) = &self.power else { return };

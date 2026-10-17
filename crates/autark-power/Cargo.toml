@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 async-channel = "2.5.0"
 async-io = "2.6.0"
+async-signal = "0.2.14"
 autark-common = { version = "0.0.0", path = "../autark-common", features = ["changes"] }
 futures-util = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }

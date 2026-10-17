@@ -63,6 +63,8 @@ enum Woken {
     Lock,
     Config,
     Supply(Option<Supply>),
+    /// Asked to stop (SIGTERM, SIGINT, SIGHUP).
+    Stop,
 }
 
 /// UPower's `State` while the battery runs down.
@@ -86,6 +88,8 @@ async fn daemon() -> Result<(), String> {
     let mut idle = Idle::connect()?;
     let mut power = Power::load();
     let mut changes = autark_common::changes::Changes::config("power").map_err(|error| format!("watching power.toml: {error}"))?;
+    // Stopping returns normally, so the screens come back on as `idle` is dropped.
+    let mut signals = async_signal::Signals::new([async_signal::Signal::Term, async_signal::Signal::Int, async_signal::Signal::Hup]).map_err(|error| format!("signals: {error}"))?;
     let (supplies, supplied) = async_channel::unbounded();
     let watcher = supplies.clone();
     let upower = async move {
@@ -112,14 +116,16 @@ async fn daemon() -> Result<(), String> {
                         None => futures_util::future::pending().await,
                     };
                 });
-                match select(select(wayland, locking), select(changed, supplied)).await {
-                    Either::Left((Either::Left((events, _)), _)) => Woken::Idle(events?),
-                    Either::Left((Either::Right(_), _)) => Woken::Lock,
-                    Either::Right((Either::Left((changed, _)), _)) => {
+                let stop = std::pin::pin!(signals.next());
+                match select(select(select(wayland, locking), select(changed, supplied)), stop).await {
+                    Either::Left((Either::Left((Either::Left((events, _)), _)), _)) => Woken::Idle(events?),
+                    Either::Left((Either::Left((Either::Right(_), _)), _)) => Woken::Lock,
+                    Either::Left((Either::Right((Either::Left((changed, _)), _)), _)) => {
                         changed.map_err(|error| format!("watching power.toml: {error}"))?;
                         Woken::Config
                     }
-                    Either::Right((Either::Right((update, _)), _)) => Woken::Supply(update.ok()),
+                    Either::Left((Either::Right((Either::Right((update, _)), _)), _)) => Woken::Supply(update.ok()),
+                    Either::Right(_) => Woken::Stop,
                 }
             };
             let mut reset = false;
@@ -156,14 +162,13 @@ async fn daemon() -> Result<(), String> {
                     warned = warn(&power, supply, warned).await;
                 }
                 Woken::Supply(None) => {}
+                Woken::Stop => return Ok(()),
             }
             if reset {
                 let (screen_off, sleep) = power.timeouts(supply.on_battery);
                 idle.set(screen_off, sleep);
             }
         }
-        #[allow(unreachable_code)]
-        Ok::<(), String>(())
     };
     match select(std::pin::pin!(upower), std::pin::pin!(main)).await {
         Either::Left(_) => Ok(()),
