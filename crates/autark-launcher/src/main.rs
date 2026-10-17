@@ -1,9 +1,11 @@
-//! Spotlight-style launcher, clipboard history (Super+V) and Kith's entry point.
+//! Spotlight-style launcher, clipboard history (Super+V) and Kith's entry point: with AI on, results end
+//! with Ask Kith, which turns the launcher into Kith's view (see `kith`).
 //!
 //! Runs once and stays resident: each later `autark-launcher` opens or closes it, so the
 //! compositor binds Super+Space to that. `--daemon` starts it hidden, for login.
 
 mod actions;
+mod kith;
 mod search;
 
 use std::cell::{Cell, RefCell};
@@ -36,9 +38,19 @@ fn main() -> glib::ExitCode {
 
 struct Launcher {
     window: gtk::ApplicationWindow,
+    dialog: gtk::Box,
+    search_icon: gtk::Image,
+    kith_mark: gtk::Label,
     entry: gtk::Entry,
     results: gtk::Box,
     scroller: gtk::ScrolledWindow,
+    footer: gtk::Box,
+    kith_hint: gtk::Label,
+    kith: Rc<kith::View>,
+    /// `ai.toml` as of opening.
+    ai: Cell<kith::Settings>,
+    /// Showing Kith's view rather than results.
+    asking: Cell<bool>,
     index: RefCell<Index>,
     hits: RefCell<Vec<Hit>>,
     rows: RefCell<Vec<gtk::Box>>,
@@ -63,6 +75,8 @@ impl Launcher {
         let search_icon = gtk::Image::from_icon_name("system-search-symbolic");
         search_icon.set_pixel_size(20);
         search_icon.add_css_class("search-icon");
+        let kith_mark = kith_mark();
+        kith_mark.set_visible(false);
         let entry = gtk::Entry::builder()
             .placeholder_text("Search apps, files and actions")
             .hexpand(true)
@@ -73,6 +87,7 @@ impl Launcher {
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         header.add_css_class("header");
         header.append(&search_icon);
+        header.append(&kith_mark);
         header.append(&entry);
         header.append(&esc);
 
@@ -81,9 +96,12 @@ impl Launcher {
 
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         footer.add_css_class("footer");
-        for hint in ["↑↓ to move", "↵ to open", "Super + Space to toggle"] {
+        let kith_hint = gtk::Label::new(Some("Tab to ask Kith"));
+        for hint in ["↑↓ to move", "↵ to open"] {
             footer.append(&gtk::Label::new(Some(hint)));
         }
+        footer.append(&kith_hint);
+        footer.append(&gtk::Label::new(Some("Super + Space to toggle")));
 
         let dialog = gtk::Box::new(gtk::Orientation::Vertical, 0);
         dialog.add_css_class("dialog");
@@ -99,6 +117,20 @@ impl Launcher {
             .build();
         dialog.append(&scroller);
         dialog.append(&footer);
+        // Built once the launcher is, as its Open button closes the launcher.
+        let hide: Rc<RefCell<std::rc::Weak<Launcher>>> = Rc::default();
+        let kith = kith::View::new({
+            let hide = hide.clone();
+            move || {
+                if let Some(launcher) = hide.borrow().upgrade() {
+                    launcher.hide();
+                }
+            }
+        });
+        kith.root.set_visible(false);
+        kith.footer.set_visible(false);
+        dialog.insert_child_after(&kith.root, Some(&header));
+        dialog.append(&kith.footer);
 
         let backdrop = gtk::Box::new(gtk::Orientation::Vertical, 0);
         backdrop.add_css_class("backdrop");
@@ -107,19 +139,30 @@ impl Launcher {
 
         let launcher = Rc::new(Self {
             window,
+            dialog: dialog.clone(),
+            search_icon,
+            kith_mark,
             entry,
             results,
             scroller,
+            footer,
+            kith_hint,
+            kith,
+            ai: Cell::new(kith::Settings::load()),
+            asking: Cell::new(false),
             index: RefCell::new(Index::load()),
             hits: RefCell::default(),
             rows: RefCell::default(),
             selected: Cell::new(0),
         });
+        *hide.borrow_mut() = Rc::downgrade(&launcher);
 
         launcher.entry.connect_changed({
             let launcher = Rc::downgrade(&launcher);
             move |_| {
                 if let Some(launcher) = launcher.upgrade() {
+                    // Changing what's asked goes back to results, where Ask Kith asks again.
+                    launcher.leave_kith();
                     launcher.search();
                 }
             }
@@ -128,7 +171,11 @@ impl Launcher {
             let launcher = Rc::downgrade(&launcher);
             move |_| {
                 if let Some(launcher) = launcher.upgrade() {
-                    launcher.open(launcher.selected.get());
+                    if launcher.asking.get() {
+                        launcher.kith.activate();
+                    } else {
+                        launcher.open(launcher.selected.get());
+                    }
                 }
             }
         });
@@ -144,6 +191,8 @@ impl Launcher {
                 let count = launcher.hits.borrow().len();
                 match key {
                     gdk::Key::Escape => launcher.hide(),
+                    gdk::Key::Tab if !launcher.asking.get() && launcher.kith_row().is_some() => launcher.select(launcher.kith_row().unwrap_or(0)),
+                    _ if launcher.asking.get() => return glib::Propagation::Proceed,
                     gdk::Key::Down if count > 0 => launcher.select((launcher.selected.get() + 1) % count),
                     gdk::Key::Up if count > 0 => launcher.select((launcher.selected.get() + count - 1) % count),
                     _ => return glib::Propagation::Proceed,
@@ -179,6 +228,9 @@ impl Launcher {
             return;
         }
         self.index.borrow_mut().refresh();
+        self.ai.set(kith::Settings::load());
+        self.kith_hint.set_visible(self.ai.get().offered());
+        self.leave_kith();
         self.entry.set_text("");
         self.search();
         self.window.present();
@@ -186,11 +238,44 @@ impl Launcher {
     }
 
     fn hide(&self) {
+        self.leave_kith();
         self.window.set_visible(false);
     }
 
+    /// Where the Ask Kith row is.
+    fn kith_row(&self) -> Option<usize> {
+        self.hits.borrow().iter().position(|hit| matches!(hit.target, Target::Kith(_)))
+    }
+
+    /// Swaps results for Kith's view and asks it about `text`.
+    fn ask_kith(self: &Rc<Self>, text: &str) {
+        self.asking.set(true);
+        self.dialog.add_css_class("asking");
+        self.search_icon.set_visible(false);
+        self.kith_mark.set_visible(true);
+        self.scroller.set_visible(false);
+        self.footer.set_visible(false);
+        self.kith.root.set_visible(true);
+        self.kith.footer.set_visible(true);
+        self.kith.start(text, self.ai.get());
+    }
+
+    fn leave_kith(&self) {
+        if !self.asking.replace(false) {
+            return;
+        }
+        self.kith.cancel();
+        self.dialog.remove_css_class("asking");
+        self.search_icon.set_visible(true);
+        self.kith_mark.set_visible(false);
+        self.scroller.set_visible(true);
+        self.footer.set_visible(true);
+        self.kith.root.set_visible(false);
+        self.kith.footer.set_visible(false);
+    }
+
     fn search(self: &Rc<Self>) {
-        let hits = self.index.borrow().search(&self.entry.text());
+        let hits = self.index.borrow().search(&self.entry.text(), self.ai.get().offered());
         while let Some(child) = self.results.first_child() {
             self.results.remove(&child);
         }
@@ -224,6 +309,14 @@ impl Launcher {
                 image.set_pixel_size(32);
                 image.upcast()
             }
+            Icon::Kith => {
+                let tile = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                tile.add_css_class("glyph");
+                tile.set_valign(gtk::Align::Center);
+                tile.set_homogeneous(true);
+                tile.append(&kith_mark());
+                tile.upcast()
+            }
             Icon::Glyph(name) => {
                 let image = gtk::Image::from_icon_name(name);
                 image.set_pixel_size(18);
@@ -248,7 +341,7 @@ impl Launcher {
         text.set_valign(gtk::Align::Center);
         text.append(&title);
         text.append(&detail);
-        let open = gtk::Label::new(Some("↵ open"));
+        let open = gtk::Label::new(Some(if matches!(hit.target, Target::Kith(_)) { "↵ ask" } else { "↵ open" }));
         open.add_css_class("open");
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -307,11 +400,17 @@ impl Launcher {
         }
     }
 
-    fn open(&self, index: usize) {
+    fn open(self: &Rc<Self>, index: usize) {
         let hits = self.hits.borrow();
         let Some(hit) = hits.get(index) else {
             return;
         };
+        if let Target::Kith(text) = &hit.target {
+            let text = text.clone();
+            drop(hits);
+            self.ask_kith(&text);
+            return;
+        }
         let context = WidgetExt::display(&self.window).app_launch_context();
         match &hit.target {
             Target::App(app) => {
@@ -325,6 +424,7 @@ impl Launcher {
                     eprintln!("launcher: opening {uri}: {err}");
                 }
             }
+            Target::Kith(_) => {}
             Target::Action(action) => {
                 let action = *action;
                 glib::spawn_future_local(async move {
@@ -337,6 +437,13 @@ impl Launcher {
         drop(hits);
         self.hide();
     }
+}
+
+/// Kith's sparkle, as the design draws it beside "Ask Kith".
+fn kith_mark() -> gtk::Label {
+    let mark = gtk::Label::new(Some("✦"));
+    mark.add_css_class("kith-mark");
+    mark
 }
 
 fn load_css() {

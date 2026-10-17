@@ -134,6 +134,7 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
+ "toml",
  "ureq",
  "zbus",
 ]
@@ -218,9 +219,12 @@ name = "autark-launcher"
 version = "0.0.0"
 dependencies = [
  "autark-common",
+ "futures-util",
  "gtk4",
  "gtk4-layer-shell",
  "serde",
+ "serde_json",
+ "toml_edit",
  "zbus",
 ]
 

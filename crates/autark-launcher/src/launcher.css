@@ -123,3 +123,183 @@ window.launcher {
   color: @text3;
   font-size: 12px;
 }
+
+/* Ask Kith */
+
+.dialog.asking {
+  min-width: 720px;
+}
+
+.kith-mark {
+  color: @accent;
+  font-size: 18px;
+}
+
+.header .kith-mark {
+  font-size: 20px;
+}
+
+.kith {
+  padding: 4px 20px 16px;
+  border-top: 1px solid alpha(@text, 0.08);
+}
+
+.kith .group {
+  padding: 0;
+}
+
+.kith-status {
+  padding: 20px 0 8px;
+  color: @text2;
+  font-size: 14px;
+}
+
+.kith-section {
+  padding-top: 16px;
+}
+
+.kith-pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background-color: @accent_soft;
+  color: @accent_text;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.kith-action {
+  min-height: 56px;
+  padding: 0 14px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 10px;
+  background-color: @surface;
+}
+
+.kith-action.done {
+  background-color: @accent_soft;
+}
+
+.kith-action checkbutton check {
+  border-radius: 5px;
+}
+
+.kith-action checkbutton check:checked {
+  background-color: @accent;
+  background-image: none;
+  border-color: @accent;
+  color: @on_accent;
+}
+
+.kith-tile {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  background-color: @accent_soft;
+  color: @accent_text;
+}
+
+.kith-action .title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.kith-call {
+  color: @text3;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+}
+
+.kith-confidence {
+  color: @text2;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+}
+
+progressbar.kith-bar {
+  min-width: 48px;
+}
+
+progressbar.kith-bar trough,
+progressbar.kith-bar progress {
+  min-height: 4px;
+  border: none;
+  border-radius: 2px;
+  background-image: none;
+}
+
+progressbar.kith-bar trough {
+  background-color: alpha(@text, 0.10);
+}
+
+progressbar.kith-bar progress {
+  min-width: 0;
+  margin: 0;
+  background-color: @accent;
+}
+
+.kith-done {
+  color: @accent_text;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.kith-done.failed {
+  color: @danger;
+  font-weight: 400;
+}
+
+button.kith-run {
+  min-height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 9px;
+  background: @accent;
+  color: @on_accent;
+  font-weight: 500;
+}
+
+button.kith-run:disabled {
+  background: alpha(@accent, 0.45);
+  color: @on_accent;
+}
+
+.kith-answer {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.kith-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background-color: alpha(@text, 0.06);
+  color: @text2;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+}
+
+.kith-chip.failed {
+  color: @danger;
+}
+
+button.kith-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid alpha(@text, 0.14);
+  border-radius: 8px;
+  background: none;
+  box-shadow: none;
+  color: @text;
+}
+
+.kith-footer switch {
+  border: none;
+  outline-color: alpha(@accent, 0.4);
+}
+
+.kith-footer switch:checked {
+  background-color: @accent;
+}
+
+.row.selected .kith-mark {
+  color: @on_accent;
+}

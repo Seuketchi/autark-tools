@@ -31,8 +31,8 @@ impl Ollama {
         serde_json::from_str(content).map_err(|err| format!("the model's answer isn't the asked-for JSON: {err}"))
     }
 
-    /// Generated text, handed to `on_piece` as it arrives.
-    pub fn stream(&self, system: &str, user: &str, mut on_piece: impl FnMut(&str)) -> Result<(), String> {
+    /// Generated text, handed to `on_piece` as it arrives, until it returns false.
+    pub fn stream(&self, system: &str, user: &str, mut on_piece: impl FnMut(&str) -> bool) -> Result<(), String> {
         let body = self.request(system, user, json!({ "stream": true }))?;
         for line in BufReader::new(body).lines() {
             let line = line.map_err(|err| format!("reading from Ollama: {err}"))?;
@@ -43,8 +43,10 @@ impl Ollama {
             if let Some(error) = chunk["error"].as_str() {
                 return Err(format!("Ollama: {error}"));
             }
-            if let Some(piece) = chunk["message"]["content"].as_str().filter(|piece| !piece.is_empty()) {
-                on_piece(piece);
+            if let Some(piece) = chunk["message"]["content"].as_str().filter(|piece| !piece.is_empty())
+                && !on_piece(piece)
+            {
+                break;
             }
             if chunk["done"].as_bool() == Some(true) {
                 break;

@@ -1,5 +1,5 @@
 //! What the launcher finds: apps by name, recent files, and system actions, ranked with how
-//! often each app was opened from here.
+//! often each app was opened from here, then, with AI on, a row that asks Kith.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,6 +14,7 @@ pub enum Group {
     Applications,
     Files,
     Actions,
+    Kith,
 }
 
 impl Group {
@@ -22,6 +23,7 @@ impl Group {
             Group::Applications => "APPLICATIONS",
             Group::Files => "FILES",
             Group::Actions => "ACTIONS",
+            Group::Kith => "KITH",
         }
     }
 }
@@ -30,12 +32,16 @@ pub enum Target {
     App(gio::AppInfo),
     File(String),
     Action(Action),
+    /// Ask Kith about what's typed.
+    Kith(String),
 }
 
 pub enum Icon {
     Gicon(gio::Icon),
     /// A symbolic icon shown on a grey tile.
     Glyph(&'static str),
+    /// Kith's sparkle.
+    Kith,
 }
 
 pub struct Hit {
@@ -88,13 +94,24 @@ impl Index {
         }
     }
 
-    pub fn search(&self, query: &str) -> Vec<Hit> {
-        let query = query.trim().to_lowercase();
+    /// What matches `query`, ending with a row that asks Kith about it when `kith` is on.
+    pub fn search(&self, query: &str, kith: bool) -> Vec<Hit> {
+        let typed = query.trim();
+        let query = typed.to_lowercase();
         let mut hits = self.apps(&query);
         // One letter matches too much outside app names.
         if query.chars().count() >= 2 {
             hits.extend(files(&query));
             hits.extend(actions(&query));
+        }
+        if kith && !typed.is_empty() {
+            hits.push(Hit {
+                group: Group::Kith,
+                title: format!("Ask Kith: {typed}"),
+                detail: "Do it or answer it, from what you typed".to_owned(),
+                icon: Icon::Kith,
+                target: Target::Kith(typed.to_owned()),
+            });
         }
         hits
     }

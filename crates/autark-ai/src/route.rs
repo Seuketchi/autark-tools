@@ -1,25 +1,31 @@
-//! `Route`: a sentence typed into the launcher becomes actions with arguments, a question or a
-//! search. The model only picks from the catalog below; code checks every argument, and `Act`
-//! runs the actions you choose.
+//! `Route`: a sentence typed into the launcher becomes the actions it asks for, each with how sure the model
+//! is, and the question it asks, with the files that question needs. "Dim the screen and mute, then tell me why
+//! my last build stopped" is two actions and a question. The model only picks actions from the catalog below
+//! and files from the ones named or remembered; code checks every argument, and `Act` runs the actions you
+//! choose.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct Routed {
-    #[serde(flatten)]
-    pub route: Route,
-    /// How sure the engine is, 0 to 1. Below the launcher's threshold it shows options instead of
-    /// acting.
+    pub actions: Vec<Chosen>,
+    /// What's asked, put as a question on its own; empty when the sentence only asks for actions.
+    pub question: String,
+    /// Files the question needs, as `~/…`, from the ones the sentence names or a memory points to.
+    pub files: Vec<String>,
+    /// How sure the model is of the whole, 0 to 1.
     pub confidence: f64,
+    /// Who answered: `ollama`, or `jev` once its client is built.
+    pub engine: &'static str,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Route {
-    Actions { actions: Vec<Action> },
-    Question { text: String },
-    Search { query: String },
+pub struct Chosen {
+    #[serde(flatten)]
+    pub action: Action,
+    /// How sure the model is that you asked for this one; the launcher leaves an unsure one unticked.
+    pub confidence: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -48,49 +54,63 @@ const CATALOG: [(&str, &str); 9] = [
     ("open_app", "open an app (text: its name)"),
 ];
 
-pub fn system_prompt() -> String {
+/// The instructions, with what you've asked Kith to remember, which is how "my last build" finds its log.
+pub fn system_prompt(facts: &[String]) -> String {
     let actions: Vec<String> = CATALOG.iter().map(|(name, what)| format!("- {name}: {what}")).collect();
-    format!(
-        "You turn one sentence typed into a desktop launcher into JSON.\n\
-         kind \"actions\": the sentence asks to change something the actions below can do; list each one with its argument.\n\
-         kind \"question\": it asks something to be answered or explained.\n\
-         kind \"search\": it names a file, app or setting to find; put the words to search for in query.\n\
-         confidence: how sure you are, from 0 to 1.\n\
+    let mut prompt = format!(
+        "You turn one sentence typed into a desktop launcher into JSON. A sentence can ask for actions, ask a question, or both.\n\
+         actions: each change the sentence asks for that an action below can make, with its argument and your confidence from 0 to 1 \
+         that it was asked for. None if it asks for no change.\n\
+         question: the part that asks something to be answered or explained, put as a question on its own. Empty if there's none.\n\
+         files: the files from the list given that are needed to answer the question. None if no list is given.\n\
+         confidence: how sure you are of the whole answer, from 0 to 1.\n\
          Actions:\n{}",
         actions.join("\n")
-    )
+    );
+    if !facts.is_empty() {
+        let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
+        prompt.push_str(&format!("\nWhat the user asked you to remember:\n{}", facts.join("\n")));
+    }
+    prompt
 }
 
-pub fn schema() -> Value {
+/// The answer's shape; `files` can only be among `candidates`.
+pub fn schema(candidates: &[String]) -> Value {
     let names: Vec<&str> = CATALOG.iter().map(|(name, ..)| *name).collect();
-    json!({
-        "type": "object",
-        "properties": {
-            "kind": { "enum": ["actions", "question", "search"] },
-            "actions": { "type": "array", "items": {
-                "type": "object",
-                "properties": {
-                    "name": { "enum": names },
-                    "number": { "type": "number" },
-                    "on": { "type": "boolean" },
-                    "text": { "type": "string" },
-                },
-                "required": ["name"],
-            }},
-            "query": { "type": "string" },
-            "confidence": { "type": "number" },
-        },
-        "required": ["kind", "confidence"],
-    })
+    let mut properties = json!({
+        "actions": { "type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "name": { "enum": names },
+                "number": { "type": "number" },
+                "on": { "type": "boolean" },
+                "text": { "type": "string" },
+                "confidence": { "type": "number" },
+            },
+            "required": ["name", "confidence"],
+        }},
+        "question": { "type": "string" },
+        "confidence": { "type": "number" },
+    });
+    if !candidates.is_empty() {
+        properties["files"] = json!({ "type": "array", "items": { "enum": candidates } });
+    }
+    json!({ "type": "object", "properties": properties, "required": ["actions", "question", "confidence"] })
+}
+
+/// What the model is told besides the instructions: the sentence, and the files it may pick from.
+pub fn user(text: &str, candidates: &[String]) -> String {
+    if candidates.is_empty() { text.to_owned() } else { format!("{text}\n\nFiles: {}", candidates.join(", ")) }
 }
 
 #[derive(Deserialize)]
 struct Answer {
-    kind: String,
     #[serde(default)]
     actions: Vec<RawAction>,
     #[serde(default)]
-    query: String,
+    question: String,
+    #[serde(default)]
+    files: Vec<String>,
     confidence: f64,
 }
 
@@ -100,27 +120,44 @@ struct RawAction {
     number: Option<f64>,
     on: Option<bool>,
     text: Option<String>,
+    confidence: Option<f64>,
 }
 
-/// Checks the model's answer against the catalog. `text` is the sentence, used as the question
-/// or search when the model leaves those out.
-pub fn parse(answer: Value, text: &str) -> Result<Routed, String> {
+/// Checks the model's answer against the catalog and the candidate files. With neither actions nor a question,
+/// the whole sentence is the question: you asked Kith, so Kith answers.
+pub fn parse(answer: Value, text: &str, candidates: &[String]) -> Result<Routed, String> {
     let answer: Answer = serde_json::from_value(answer).map_err(|err| format!("the route doesn't fit the schema: {err}"))?;
     let confidence = answer.confidence.clamp(0.0, 1.0);
-    let or_text = |words: String| if words.trim().is_empty() { text.to_owned() } else { words };
-    let route = match answer.kind.as_str() {
-        "actions" => {
-            let actions = answer.actions.into_iter().map(action).collect::<Result<Vec<_>, _>>()?;
-            if actions.is_empty() {
-                return Err("the model chose actions but named none".to_owned());
-            }
-            Route::Actions { actions }
+    let actions = answer
+        .actions
+        .into_iter()
+        .map(|raw| {
+            let sure = raw.confidence.unwrap_or(confidence).clamp(0.0, 1.0);
+            action(raw).map(|action| Chosen { action, confidence: sure })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut question = answer.question.trim().to_owned();
+    if actions.is_empty() && question.is_empty() {
+        question = text.trim().to_owned();
+    }
+    let mut files: Vec<String> = Vec::new();
+    for file in answer.files {
+        if candidates.contains(&file) && !files.contains(&file) && !question.is_empty() {
+            files.push(file);
         }
-        "question" => Route::Question { text: text.to_owned() },
-        "search" => Route::Search { query: or_text(answer.query) },
-        other => return Err(format!("unknown route kind {other:?}")),
-    };
-    Ok(Routed { route, confidence })
+    }
+    Ok(Routed { actions, question, files, confidence, engine: "ollama" })
+}
+
+/// The files the sentence names, then the ones memories point to.
+pub fn candidates(text: &str, facts: &[String]) -> Vec<String> {
+    let mut found = crate::files::named(text);
+    for file in facts.iter().flat_map(|fact| crate::files::named(fact)) {
+        if !found.contains(&file) {
+            found.push(file);
+        }
+    }
+    found
 }
 
 fn action(raw: RawAction) -> Result<Action, String> {
@@ -149,29 +186,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dim_and_mute() {
-        let answer = json!({ "kind": "actions", "confidence": 0.93, "actions": [
-            { "name": "set_brightness", "number": 30 }, { "name": "mute", "on": true } ] });
-        let routed = parse(answer, "dim the screen and mute").unwrap();
-        assert_eq!(routed.route, Route::Actions { actions: vec![Action::SetBrightness { percent: 30 }, Action::Mute { on: true }] });
+    fn actions_and_a_question_from_one_sentence() {
+        let answer = json!({ "confidence": 0.9, "question": "Why did my last build stop?", "files": ["~/autark/log.md"], "actions": [
+            { "name": "set_brightness", "number": 30, "confidence": 0.94 }, { "name": "mute", "on": true, "confidence": 0.97 } ] });
+        let candidates = vec!["~/autark/log.md".to_owned()];
+        let routed = parse(answer, "dim the screen and mute, then tell me why my last build stopped", &candidates).unwrap();
+        assert_eq!(routed.actions, vec![Chosen { action: Action::SetBrightness { percent: 30 }, confidence: 0.94 }, Chosen { action: Action::Mute { on: true }, confidence: 0.97 }]);
+        assert_eq!(routed.question, "Why did my last build stop?");
+        assert_eq!(routed.files, candidates);
         let json = serde_json::to_value(&routed).unwrap();
-        assert_eq!(json["kind"], "actions");
-        assert_eq!(json["actions"][0], json!({ "action": "set_brightness", "percent": 30 }));
+        assert_eq!(json["actions"][0], json!({ "action": "set_brightness", "percent": 30, "confidence": 0.94 }));
+        assert_eq!(json["actions"][1], json!({ "action": "mute", "on": true, "confidence": 0.97 }));
+        assert_eq!(json["engine"], "ollama");
     }
 
     #[test]
-    fn arguments_are_checked() {
-        let clamp = json!({ "kind": "actions", "confidence": 2.0, "actions": [{ "name": "set_volume", "number": 140 }] });
-        let routed = parse(clamp, "").unwrap();
+    fn arguments_and_files_are_checked() {
+        let clamp = json!({ "confidence": 2.0, "question": "", "actions": [{ "name": "set_volume", "number": 140, "confidence": 0.8 }, { "name": "lock", "confidence": 0.5 }] });
+        let routed = parse(clamp, "", &[]).unwrap();
         assert_eq!(routed.confidence, 1.0);
-        assert_eq!(routed.route, Route::Actions { actions: vec![Action::SetVolume { percent: 100 }] });
-        assert!(parse(json!({ "kind": "actions", "confidence": 1, "actions": [{ "name": "wifi" }] }), "").is_err());
-        assert!(parse(json!({ "kind": "actions", "confidence": 1, "actions": [{ "name": "rm_rf" }] }), "").is_err());
+        assert_eq!(routed.actions[0].action, Action::SetVolume { percent: 100 });
+        assert_eq!(serde_json::to_value(&routed.actions[1]).unwrap(), json!({ "action": "lock", "confidence": 0.5 }));
+        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "wifi", "confidence": 1 }] }), "", &[]).is_err());
+        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "rm_rf", "confidence": 1 }] }), "", &[]).is_err());
+        let invented = json!({ "confidence": 1, "question": "what's in it?", "files": ["~/autark/log.md", "/etc/shadow"] });
+        assert_eq!(parse(invented, "", &["~/autark/log.md".to_owned()]).unwrap().files, vec!["~/autark/log.md"]);
     }
 
     #[test]
-    fn search_falls_back_to_the_sentence() {
-        let routed = parse(json!({ "kind": "search", "confidence": 0.7 }), "tax receipts").unwrap();
-        assert_eq!(routed.route, Route::Search { query: "tax receipts".to_owned() });
+    fn nothing_routed_asks_the_whole_sentence() {
+        let routed = parse(json!({ "confidence": 0.4, "question": " ", "actions": [] }), "how much swap do I have ", &[]).unwrap();
+        assert_eq!(routed.question, "how much swap do I have");
+        assert!(routed.actions.is_empty());
     }
 }

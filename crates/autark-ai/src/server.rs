@@ -1,7 +1,8 @@
 //! `org.autark.AI1` on the session bus.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -9,7 +10,7 @@ use zbus::object_server::SignalEmitter;
 
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, check, log, route};
+use crate::{act, check, files, log, memory, route};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -29,12 +30,14 @@ pub struct Ai {
     config: RwLock<Arc<Config>>,
     ollama: RwLock<Arc<Ollama>>,
     next_answer: AtomicU32,
+    /// Answers to stop at their next piece.
+    stopped: Arc<Mutex<HashSet<u32>>>,
 }
 
 impl Ai {
     pub fn new(config: Config) -> Self {
         let ollama = Arc::new(Ollama::new(&config.ollama));
-        Self { config: RwLock::new(Arc::new(config)), ollama: RwLock::new(ollama), next_answer: AtomicU32::new(1) }
+        Self { config: RwLock::new(Arc::new(config)), ollama: RwLock::new(ollama), next_answer: AtomicU32::new(1), stopped: Arc::default() }
     }
 
     /// Takes a changed ai.toml.
@@ -72,16 +75,60 @@ impl Ai {
         log::record(call, "ollama", input, &answer, start.elapsed());
         answer
     }
+
+    /// Streams an answer on a thread of its own as `AnswerPiece` signals, then `AnswerDone`, and returns its id.
+    /// `logged` is added to the call log's input.
+    fn answer(&self, emitter: SignalEmitter<'_>, prompt: String, context: String, logged: Value) -> u32 {
+        let id = self.next_answer.fetch_add(1, Ordering::Relaxed);
+        let emitter = emitter.into_owned();
+        let ollama = self.ollama();
+        let stopped = self.stopped.clone();
+        std::thread::spawn(move || {
+            let system = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
+                          Use the context when it's given; say so when it doesn't hold the answer.";
+            let user = if context.is_empty() { prompt.clone() } else { format!("Context:\n{context}\n\nQuestion: {prompt}") };
+            let start = Instant::now();
+            let mut text = String::new();
+            let result = ollama.stream(system, &user, |piece| {
+                if stopped.lock().map(|mut stopped| stopped.remove(&id)).unwrap_or(false) {
+                    return false;
+                }
+                text.push_str(piece);
+                if let Err(err) = async_io::block_on(Ai::answer_piece(&emitter, id, piece)) {
+                    eprintln!("ai: sending an answer: {err}");
+                }
+                true
+            });
+            let answer = result.map(|()| json!(text));
+            let mut input = json!({ "prompt": prompt, "context": context });
+            if let (Some(input), Value::Object(logged)) = (input.as_object_mut(), logged) {
+                input.extend(logged);
+            }
+            log::record("ask", "ollama", input, &answer, start.elapsed());
+            let error = answer.err().unwrap_or_default();
+            if let Ok(mut stopped) = stopped.lock() {
+                stopped.remove(&id);
+            }
+            if let Err(err) = async_io::block_on(Ai::answer_done(&emitter, id, &error)) {
+                eprintln!("ai: sending an answer: {err}");
+            }
+        });
+        id
+    }
 }
 
 #[zbus::interface(name = "org.autark.AI1")]
 impl Ai {
-    /// Turns a sentence into actions, a question or a search, as JSON:
-    /// `{"kind":"actions","actions":[{"action":"set_volume","percent":30}],"confidence":0.9}`.
+    /// Turns a sentence into the actions it asks for and the question it asks, as JSON:
+    /// `{"actions":[{"action":"mute","on":true,"confidence":0.97}],"question":"Why did my build stop?",
+    /// "files":["~/autark/log.md"],"confidence":0.9,"engine":"ollama"}`.
     async fn route(&self, text: String) -> Result<String, Error> {
         self.allowed(self.config().features.route, "route")?;
-        let answer = self.json("route", json!(text), route::system_prompt(), text.clone(), route::schema()).await;
-        let routed = answer.and_then(|answer| route::parse(answer, &text)).map_err(Error::Engine)?;
+        let facts = memory::facts();
+        let candidates = route::candidates(&text, &facts);
+        let user = route::user(&text, &candidates);
+        let answer = self.json("route", json!(text), route::system_prompt(&facts), user, route::schema(&candidates)).await;
+        let routed = answer.and_then(|answer| route::parse(answer, &text, &candidates)).map_err(Error::Engine)?;
         serde_json::to_string(&routed).map_err(|err| Error::Engine(err.to_string()))
     }
 
@@ -127,29 +174,23 @@ impl Ai {
     /// then `AnswerDone`, whose error is empty on success.
     async fn ask(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, context: String) -> Result<u32, Error> {
         self.allowed(self.config().features.ask, "ask")?;
-        let id = self.next_answer.fetch_add(1, Ordering::Relaxed);
-        let emitter = emitter.into_owned();
-        let ollama = self.ollama();
-        std::thread::spawn(move || {
-            let system = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
-                          Use the context when it's given; say so when it doesn't hold the answer.";
-            let user = if context.is_empty() { prompt.clone() } else { format!("Context:\n{context}\n\nQuestion: {prompt}") };
-            let start = Instant::now();
-            let mut text = String::new();
-            let result = ollama.stream(system, &user, |piece| {
-                text.push_str(piece);
-                if let Err(err) = async_io::block_on(Ai::answer_piece(&emitter, id, piece)) {
-                    eprintln!("ai: sending an answer: {err}");
-                }
-            });
-            let answer = result.map(|()| json!(text));
-            log::record("ask", "ollama", json!({ "prompt": prompt, "context": context }), &answer, start.elapsed());
-            let error = answer.err().unwrap_or_default();
-            if let Err(err) = async_io::block_on(Ai::answer_done(&emitter, id, &error)) {
-                eprintln!("ai: sending an answer: {err}");
-            }
-        });
-        Ok(id)
+        Ok(self.answer(emitter, prompt, context, json!({})))
+    }
+
+    /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
+    /// says how each went, an empty reason for read, before the answer streams.
+    async fn ask_files(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, files: Vec<String>) -> Result<(u32, Vec<(String, String)>), Error> {
+        self.allowed(self.config().features.ask, "ask")?;
+        let (context, outcome) = blocking::unblock(move || files::read(&files)).await;
+        let read = json!(outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>());
+        Ok((self.answer(emitter, prompt, context, json!({ "files": read })), outcome))
+    }
+
+    /// Stops an answer still being written; its `AnswerDone` follows, with no error.
+    async fn stop(&self, id: u32) {
+        if let Ok(mut stopped) = self.stopped.lock() {
+            stopped.insert(id);
+        }
     }
 
     /// Runs actions as `Route` gives them (a JSON array of `{"action": …}`), once you've chosen them, and
