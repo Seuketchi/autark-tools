@@ -53,6 +53,18 @@ impl Ollama {
         Ok(())
     }
 
+    /// The models pulled into Ollama, by name.
+    pub fn models(&self) -> Result<Vec<String>, String> {
+        let response = self.agent.get(format!("{}/api/tags", self.url)).call().map_err(|err| format!("Ollama at {}: {err}", self.url))?;
+        if !response.status().is_success() {
+            return Err(format!("Ollama: {}", response.status()));
+        }
+        let reply: Value = serde_json::from_reader(response.into_body().into_reader()).map_err(|err| format!("Ollama's reply: {err}"))?;
+        let mut names: Vec<String> = reply["models"].as_array().into_iter().flatten().filter_map(|model| model["name"].as_str().map(str::to_owned)).collect();
+        names.sort();
+        Ok(names)
+    }
+
     fn request(&self, system: &str, user: &str, extra: Value) -> Result<impl std::io::Read, String> {
         if self.model.is_empty() {
             return Err("no Ollama model chosen: set `model` under [ollama] in ai.toml".to_owned());

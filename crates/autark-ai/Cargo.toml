@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 async-io = "2.6.0"
-autark-common = { version = "0.0.0", path = "../autark-common" }
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["changes"] }
 blocking = "1.7.0"
 futures-util = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }

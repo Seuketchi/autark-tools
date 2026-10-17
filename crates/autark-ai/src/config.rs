@@ -7,8 +7,11 @@ use serde::Deserialize;
 pub struct Ai {
     /// The master switch. While off, only `Check`'s built-in rules answer.
     pub enabled: bool,
+    /// Everything goes to Ollama, Jev's features included.
+    pub local_only: bool,
     pub ollama: Ollama,
     pub features: Features,
+    pub jev: Jev,
 }
 
 #[derive(Deserialize)]
@@ -40,4 +43,21 @@ impl Default for Features {
     fn default() -> Self {
         Self { route: true, rank: true, check: true, ask: true }
     }
+}
+
+/// Which features Jev answers, unless `local_only` is on. Off by default: text goes to the cloud only
+/// when you choose. Until Jev's client is built, Ollama answers them all.
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct Jev {
+    /// Route: what's typed in the launcher, turned into actions.
+    pub launcher: bool,
+    /// Notification urgency, for Focus.
+    pub notify: bool,
+    /// Check: the terminal's safety check.
+    pub terminal: bool,
+    /// Rank, for Files' search.
+    pub files: bool,
+    /// Rank, for Settings' search.
+    pub settings: bool,
 }

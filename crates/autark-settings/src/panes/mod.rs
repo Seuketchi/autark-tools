@@ -1,5 +1,6 @@
 //! The panes, in the sidebar's order, and the names search finds.
 
+mod ai;
 mod appearance;
 mod bluetooth;
 mod display;
@@ -121,6 +122,7 @@ pub fn build(id: &str) -> gtk::Widget {
         "keyboard" => keyboard::build(),
         "wifi" => wifi::build(),
         "bluetooth" => bluetooth::build(),
+        "ai" => ai::build(),
         _ => {
             let (page, column) = ui::page();
             column.append(&ui::title(find(id).map_or(id, |pane| pane.label), None));

@@ -27,9 +27,11 @@ pub async fn system() -> zbus::Result<zbus::Connection> {
 
 /// An error as a sentence, naming the daemon when it isn't running.
 pub fn message(error: zbus::Error, daemon: &str) -> String {
+    // Unknown, or D-Bus couldn't start it.
+    let absent = |name: &str| name == "org.freedesktop.DBus.Error.ServiceUnknown" || name.starts_with("org.freedesktop.DBus.Error.Spawn.");
     match error {
-        zbus::Error::MethodError(name, ..) if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => format!("{daemon} isn't running."),
-        zbus::Error::FDO(error) if matches!(*error, zbus::fdo::Error::ServiceUnknown(_)) => format!("{daemon} isn't running."),
+        zbus::Error::MethodError(name, ..) if absent(name.as_str()) => format!("{daemon} isn't running."),
+        zbus::Error::FDO(error) if absent(zbus::DBusError::name(&*error).as_str()) => format!("{daemon} isn't running."),
         zbus::Error::MethodError(_, Some(message), _) => message,
         error => error.to_string(),
     }

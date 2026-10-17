@@ -252,6 +252,13 @@ pub fn rebuild_keeping_focus(containers: &[&gtk::Box], build: impl FnOnce()) {
     }
 }
 
+/// Gives keyboard focus to the control in `container` with this widget name, if it's there.
+pub fn focus_named(container: &gtk::Box, name: &str) {
+    if let Some(widget) = named(container.upcast_ref(), name) {
+        widget.grab_focus();
+    }
+}
+
 /// The descendant of `root` with this widget name.
 fn named(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     if root.widget_name() == name {
