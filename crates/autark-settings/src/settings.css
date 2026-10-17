@@ -429,3 +429,7 @@ list.choices row {
 .row-label.strong {
   font-weight: 500;
 }
+
+.good {
+  color: @good;
+}

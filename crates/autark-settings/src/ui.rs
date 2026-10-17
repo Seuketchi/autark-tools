@@ -226,3 +226,36 @@ impl Debounce {
         *self.0.borrow_mut() = Some(id);
     }
 }
+
+/// Rebuilds a page's `containers` with `build`, giving keyboard focus back to the control of the same widget
+/// name (set on the controls that should keep it) or, when that control is gone, to nothing rather than to
+/// whatever GTK picks, where a stray Enter would set it off.
+pub fn rebuild_keeping_focus(containers: &[&gtk::Box], build: impl FnOnce()) {
+    let root = containers.first().and_then(|container| container.root());
+    let inside = |widget: &gtk::Widget| containers.iter().any(|container| widget.is_ancestor(*container));
+    let focused = root
+        .as_ref()
+        .and_then(|root| root.focus())
+        .filter(inside)
+        .and_then(|widget| std::iter::successors(Some(widget), |widget| widget.parent()).find(|widget| widget.widget_name().contains(':')).map(|widget| widget.widget_name()));
+    build();
+    let Some(name) = focused else { return };
+    match containers.iter().find_map(|container| named(container.upcast_ref(), &name)) {
+        Some(widget) => {
+            widget.grab_focus();
+        }
+        None => {
+            if let Some(window) = root.and_downcast::<gtk::Window>() {
+                GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+            }
+        }
+    }
+}
+
+/// The descendant of `root` with this widget name.
+fn named(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if root.widget_name() == name {
+        return Some(root.clone());
+    }
+    std::iter::successors(root.first_child(), |child| child.next_sibling()).find_map(|child| named(&child, name))
+}

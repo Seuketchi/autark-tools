@@ -2,6 +2,7 @@
 //! the tools pick the change up by watching their file; the daemons are also told over D-Bus where they offer
 //! it. `autark-settings [pane]` opens the window, on a pane by id (`display`, `sound`…) if given.
 
+mod bluez;
 mod bus;
 mod config;
 mod icon;

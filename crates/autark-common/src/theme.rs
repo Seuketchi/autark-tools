@@ -178,6 +178,8 @@ pub struct Palette {
     pub danger: String,
     /// Things to look at soon: an app busy for minutes, power draw.
     pub warning: String,
+    /// Good news whatever the accent: connected, healthy.
+    pub good: String,
     /// The colour shadows are made from.
     pub shadow: String,
 }
@@ -207,6 +209,7 @@ impl Palette {
                 raised: "#2E2B26".into(),
                 danger: "#E5806B".into(),
                 warning: "#E3B866".into(),
+                good: "#7FB89A".into(),
                 shadow: "#000000".into(),
             }
         } else {
@@ -231,6 +234,7 @@ impl Palette {
                 raised: "#FBFAF7".into(),
                 danger: "#C4503C".into(),
                 warning: "#A9741E".into(),
+                good: "#336650".into(),
                 shadow: "#463A28".into(),
             }
         };
@@ -246,7 +250,7 @@ impl Palette {
         self.tokens().iter().map(|(name, value)| format!("@define-color {name} {value};\n")).collect()
     }
 
-    pub fn tokens(&self) -> [(&'static str, &str); 19] {
+    pub fn tokens(&self) -> [(&'static str, &str); 20] {
         [
             ("ground", &self.ground),
             ("surface", &self.surface),
@@ -266,6 +270,7 @@ impl Palette {
             ("raised", &self.raised),
             ("danger", &self.danger),
             ("warning", &self.warning),
+            ("good", &self.good),
             ("shadow", &self.shadow),
         ]
     }

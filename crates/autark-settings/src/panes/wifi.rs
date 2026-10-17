@@ -184,28 +184,9 @@ impl Wifi {
         Ok(())
     }
 
-    /// Rebuilds the page from the last read. Whatever had keyboard focus gets it back in the new page.
+    /// Rebuilds the page from the last read, keeping keyboard focus where it was.
     fn render(self: &Rc<Self>) {
-        let focused = self
-            .top
-            .root()
-            .and_then(|root| root.focus())
-            .and_then(|widget| std::iter::successors(Some(widget), |widget| widget.parent()).find(|widget| widget.widget_name().starts_with("wifi:")).map(|widget| widget.widget_name()));
-        self.build_page();
-        if let Some(name) = focused {
-            match [&self.top, &self.lists].into_iter().find_map(|container| named(container.upcast_ref(), &name)) {
-                Some(widget) => {
-                    widget.grab_focus();
-                }
-                // Gone (a network joined or out of range): no focus, rather than GTK's pick of some other
-                // control, where a stray Enter would flip it.
-                None => {
-                    if let Some(window) = self.top.root().and_downcast::<gtk::Window>() {
-                        GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
-                    }
-                }
-            }
-        }
+        ui::rebuild_keeping_focus(&[&self.top, &self.lists], || self.build_page());
     }
 
     fn build_page(self: &Rc<Self>) {
@@ -508,14 +489,6 @@ impl Wifi {
         name.connect_activate(move |_| submit());
         window.present();
     }
-}
-
-/// The descendant of `root` with this widget name.
-fn named(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
-    if root.widget_name() == name {
-        return Some(root.clone());
-    }
-    std::iter::successors(root.first_child(), |child| child.next_sibling()).find_map(|child| named(&child, name))
 }
 
 /// Why joining failed, in words: iwd says little more than that it did.
