@@ -305,6 +305,7 @@ dependencies = [
 name = "autark-pkg"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "md-5",
  "minisign",
  "serde",

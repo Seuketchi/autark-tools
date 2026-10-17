@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -75,8 +76,8 @@ pub fn build(config: &Config, recipe: &Recipe, sources: &[PathBuf], owners: &Has
         };
         std::fs::create_dir_all(&dest).ctx(&dest)?;
         chown_tree(&work, uid, gid)?;
-        command = Command::new("setpriv");
-        command.args(["--reuid", &uid.to_string(), "--regid", &gid.to_string(), "--clear-groups", "--no-new-privs", "--", "bash"]);
+        // SAFETY: drop_to makes only async-signal-safe calls, as is required between fork and exec.
+        unsafe { command.pre_exec(move || drop_to(uid, gid)) };
     } else if recipe.mode == Mode::Staged {
         std::fs::create_dir_all(&dest).ctx(&dest)?;
     }
@@ -156,6 +157,21 @@ fn is_archive(path: &Path) -> bool {
 
 pub fn is_root() -> bool {
     std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
+}
+
+/// Becomes the build user in the child before bash starts, as `setpriv --reuid --regid --clear-groups --no-new-privs`
+/// did (Autark's util-linux is built without setpriv): no supplementary groups, real, effective and saved ids all the
+/// user's, and no setuid program can raise them again.
+fn drop_to(uid: u32, gid: u32) -> std::io::Result<()> {
+    let check = |rc: libc::c_int| if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
+    // Groups and gid first: once the uid is dropped neither can change.
+    // SAFETY: plain system calls with valid arguments.
+    unsafe {
+        check(libc::setgroups(0, std::ptr::null()))?;
+        check(libc::setresgid(gid, gid, gid))?;
+        check(libc::setresuid(uid, uid, uid))?;
+        check(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+    }
 }
 
 /// The uid and gid of a user in this system's passwd.
