@@ -1,0 +1,131 @@
+window.notifications {
+  background: none;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+.card {
+  padding: 14px;
+  background-color: rgba(255, 255, 255, 0.78);
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 16px;
+}
+
+.card.critical {
+  border-color: alpha(@accent, 0.6);
+}
+
+.card .meta {
+  font-size: 11px;
+  color: @text2;
+}
+
+.card .summary {
+  font-weight: 600;
+}
+
+.card .body {
+  font-size: 12px;
+  color: #3E3A34;
+}
+
+.card .tile {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 9px;
+  background-color: @accent_text;
+  color: @surface;
+  font-weight: 600;
+}
+
+.card .app-icon {
+  border-radius: 9px;
+}
+
+.card .close {
+  min-height: 0;
+  min-width: 0;
+  padding: 0 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  color: @text2;
+  font-size: 13px;
+}
+
+.card .close:hover {
+  background-color: alpha(@text, 0.08);
+}
+
+.card .actions {
+  margin-top: 6px;
+}
+
+.card .action,
+.clear {
+  min-height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.10);
+  background-image: none;
+  box-shadow: none;
+  color: @text;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.header {
+  padding: 4px 6px 0;
+}
+
+.header .heading {
+  font-weight: 600;
+}
+
+.none {
+  padding: 24px;
+  color: @text2;
+}
+
+.quick .toggle {
+  min-height: 56px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 12px;
+  background-color: alpha(@text, 0.08);
+  background-image: none;
+  box-shadow: none;
+  color: @text;
+}
+
+.quick .toggle:checked {
+  background-color: @accent;
+  color: @surface;
+}
+
+.quick .toggle .badge {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 16px;
+  background-color: alpha(@text, 0.10);
+}
+
+.quick .toggle:checked .badge {
+  background-color: rgba(20, 23, 28, 0.14);
+}
+
+.quick .toggle .label {
+  font-weight: 600;
+}
+
+.quick .toggle .state {
+  font-size: 11px;
+  color: @text2;
+}
+
+.quick .toggle:checked .state {
+  color: @accent_soft;
+}

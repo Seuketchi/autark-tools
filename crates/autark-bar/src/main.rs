@@ -6,6 +6,7 @@ mod clock;
 mod config;
 mod logo;
 mod menu;
+mod notifications;
 mod shared;
 mod volume;
 mod wifi;
@@ -36,6 +37,7 @@ struct Sources {
     volume: Shared<volume::Snapshot>,
     battery: Shared<Option<battery::Level>>,
     clock: Shared<String>,
+    notifications: Shared<bool>,
 }
 
 fn start(app: &gtk::Application) {
@@ -55,6 +57,7 @@ fn start(app: &gtk::Application) {
         volume: volume::source(),
         battery: battery::source(),
         clock: clock::source(&config.clock_format),
+        notifications: notifications::source(),
     });
 
     let monitors = gdk::Display::default().expect("no display").monitors();
@@ -107,6 +110,7 @@ fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk
     end.append(&volume::view(&sources.volume));
     end.append(&battery::view(&sources.battery, sources.battery_percent));
     end.append(&clock::view(&sources.clock));
+    end.append(&notifications::view(&sources.notifications));
 
     let bar = gtk::CenterBox::new();
     bar.add_css_class("bar");

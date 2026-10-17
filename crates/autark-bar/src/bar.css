@@ -41,6 +41,7 @@ menubutton.item {
   padding: 0;
 }
 
+button.item,
 menubutton.item > button {
   min-height: 26px;
   min-width: 0;
@@ -52,10 +53,12 @@ menubutton.item > button {
   color: inherit;
 }
 
+button.item.icon,
 menubutton.icon > button {
   padding: 0 7px;
 }
 
+button.item:hover,
 menubutton.item > button:hover,
 menubutton.item > button:checked {
   background-color: alpha(@text, 0.08);
