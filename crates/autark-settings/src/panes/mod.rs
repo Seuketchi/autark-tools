@@ -1,6 +1,7 @@
 //! The panes, in the sidebar's order, and the names search finds.
 
 mod display;
+mod dock;
 mod night;
 
 use gtk::prelude::*;
@@ -104,6 +105,7 @@ pub fn find(id: &str) -> Option<&'static Pane> {
 pub fn build(id: &str) -> gtk::Widget {
     match id {
         "display" => display::build(),
+        "dock" => dock::build(),
         _ => {
             let (page, column) = ui::page();
             column.append(&ui::title(find(id).map_or(id, |pane| pane.label), None));

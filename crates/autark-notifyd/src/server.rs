@@ -41,6 +41,7 @@ pub enum Event {
     Notify(Notification),
     Close(u32),
     Toggle,
+    EditWidgets,
 }
 
 pub struct Server {
@@ -118,5 +119,10 @@ impl Control {
     /// Opens the notification centre, or closes it if open.
     async fn toggle(&self) {
         let _ = self.events.send(Event::Toggle).await;
+    }
+
+    /// Opens the centre on its Widgets view with Edit widgets showing.
+    async fn edit_widgets(&self) {
+        let _ = self.events.send(Event::EditWidgets).await;
     }
 }

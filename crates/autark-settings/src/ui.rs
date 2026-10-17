@@ -150,6 +150,14 @@ pub fn slider(min: f64, max: f64, step: f64, value: f64, left: &str, right: &str
     line
 }
 
+pub fn button(label: &str, clicked: impl Fn(&gtk::Button) + 'static) -> gtk::Button {
+    let button = gtk::Button::with_label(label);
+    button.add_css_class("small");
+    button.set_valign(gtk::Align::Center);
+    button.connect_clicked(clicked);
+    button
+}
+
 /// Removes every child of a box.
 pub fn clear(container: &gtk::Box) {
     while let Some(child) = container.first_child() {

@@ -1,11 +1,12 @@
 //! What Edit widgets changes, kept in `$XDG_STATE_HOME/autark/widgets.toml` since the config
-//! files are yours to write, not ours.
+//! files are yours to write, not ours. Settings' "Show widgets on the desktop" writes it too, so
+//! it's watched.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 #[serde(default)]
 pub struct Settings {
     /// Widgets switched off, by key (see `KINDS`).
@@ -47,7 +48,7 @@ impl Settings {
     }
 }
 
-fn file() -> PathBuf {
+pub fn file() -> PathBuf {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/state"));
     state.join("autark/widgets.toml")

@@ -42,6 +42,7 @@ pub struct Sources {
     /// Dropped to stop what runs while the widgets are shown.
     showing: RefCell<Option<async_channel::Sender<()>>>,
     weather_fetched: Cell<Option<Instant>>,
+    _watch: RefCell<Option<autark_common::watch::Watch>>,
     me: Weak<Sources>,
 }
 
@@ -60,8 +61,18 @@ impl Sources {
             runaways: RefCell::default(),
             showing: RefCell::default(),
             weather_fetched: Cell::new(None),
+            _watch: RefCell::default(),
             me: me.clone(),
         });
+        let me = Rc::downgrade(&sources);
+        *sources._watch.borrow_mut() = Some(autark_common::watch::files(&[settings::file()], move || {
+            if let Some(sources) = me.upgrade() {
+                let settings = Settings::load();
+                if settings != sources.settings.get() {
+                    sources.settings.set(settings);
+                }
+            }
+        }));
         if config.suggestions {
             glib::spawn_future_local(watch_runaways(Rc::downgrade(&sources)));
         }
@@ -216,7 +227,8 @@ fn show_while<T: 'static>(widget: &impl IsA<gtk::Widget>, settings: &Shared<Sett
 }
 
 /// The centre's Widgets view.
-pub fn page(sources: &Rc<Sources>) -> gtk::Box {
+/// The Widgets view, and its Edit widgets button.
+pub fn page(sources: &Rc<Sources>) -> (gtk::Box, gtk::MenuButton) {
     let settings = &sources.settings;
     let clock = clock::view(&sources.now, false);
     show_while(&clock, settings, settings, |settings, _| settings.shows("clock"));
@@ -248,11 +260,12 @@ pub fn page(sources: &Rc<Sources>) -> gtk::Box {
     page.append(&weather);
     page.append(&kith);
     page.append(&note);
-    page.append(&footer(sources));
-    page
+    let (footer, edit) = footer(sources);
+    page.append(&footer);
+    (page, edit)
 }
 
-fn footer(sources: &Rc<Sources>) -> gtk::Box {
+fn footer(sources: &Rc<Sources>) -> (gtk::Box, gtk::MenuButton) {
     let note = gtk::Label::builder().xalign(0.0).hexpand(true).wrap(true).build();
     note.add_css_class("detail");
     let edit = gtk::MenuButton::builder().label("Edit widgets").popover(&edit_popover(sources)).build();
@@ -265,7 +278,7 @@ fn footer(sources: &Rc<Sources>) -> gtk::Box {
     sources.settings.watch(&note, move |note, settings| {
         note.set_label(if settings.weather && has_location { "Weather from Open-Meteo" } else { "Weather is off: it sends your location" });
     });
-    footer
+    (footer, edit)
 }
 
 type OnSwitch = Box<dyn Fn(&Sources, bool)>;

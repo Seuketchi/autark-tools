@@ -9,6 +9,14 @@ window.dock {
   border-radius: 20px;
 }
 
+.left .panel {
+  padding: 10px 8px 10px 4px;
+}
+
+.right .panel {
+  padding: 10px 4px 10px 8px;
+}
+
 .dot {
   min-width: 4px;
   min-height: 4px;
@@ -16,14 +24,31 @@ window.dock {
   border-radius: 2px;
 }
 
-.running .dot {
+.left .dot {
+  margin: 0 4px 0 0;
+}
+
+.right .dot {
+  margin: 0 0 0 4px;
+}
+
+.dots .running .dot {
   background-color: @text;
 }
 
 .separator {
   min-width: 1px;
+  min-height: 1px;
   margin: 0 4px 12px;
   background-color: alpha(@text, 0.16);
+}
+
+.left .separator {
+  margin: 4px 0 4px 8px;
+}
+
+.right .separator {
+  margin: 4px 8px 4px 0;
 }
 
 tooltip {

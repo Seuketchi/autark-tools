@@ -2,7 +2,7 @@
 //! Settings doesn't know about all stay. The first change copies `/etc/autark/<name>.toml` across, since the
 //! user's file replaces the system's rather than adding to it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Table, Value};
 
@@ -16,6 +16,18 @@ pub fn read(name: &str) -> DocumentMut {
     let user = std::fs::read_to_string(path(name));
     let text = user.or_else(|_| std::fs::read_to_string(format!("/etc/autark/{name}.toml"))).unwrap_or_default();
     text.parse().unwrap_or_default()
+}
+
+/// A tool's own state, `$XDG_STATE_HOME/autark/<name>.toml`, for the few settings a tool keeps there
+/// (the widgets on the desktop).
+pub fn state_path(name: &str) -> PathBuf {
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/state"));
+    state.join("autark").join(format!("{name}.toml"))
+}
+
+pub fn read_path(path: &Path) -> DocumentMut {
+    std::fs::read_to_string(path).unwrap_or_default().parse().unwrap_or_default()
 }
 
 fn find<'a>(document: &'a DocumentMut, key: &str) -> Option<&'a Item> {
@@ -82,11 +94,14 @@ pub fn remove_in(document: &mut DocumentMut, key: &str) {
 }
 
 pub fn write(name: &str, document: &DocumentMut) -> Result<(), String> {
-    let path = path(name);
+    write_path(&path(name), document)
+}
+
+pub fn write_path(path: &Path, document: &DocumentMut) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
     }
-    autark_common::files::write_atomically(&path, document.to_string().as_bytes()).map_err(|error| format!("{}: {error}", path.display()))
+    autark_common::files::write_atomically(path, document.to_string().as_bytes()).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Reads, changes and writes one file.

@@ -16,6 +16,9 @@ pub struct Centre {
     stack: gtk::Stack,
     list: gtk::Box,
     daemon: Weak<Daemon>,
+    /// The switch's Widgets button, and Edit widgets on that view.
+    widgets: gtk::ToggleButton,
+    edit: gtk::MenuButton,
 }
 
 impl Centre {
@@ -74,12 +77,14 @@ impl Centre {
         let scroller = |child: &gtk::Box| gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(child).build();
         let stack = gtk::Stack::new();
         stack.add_named(&scroller(&content), Some("notifications"));
-        stack.add_named(&scroller(&widgets::page(sources)), Some("widgets"));
+        let (widgets_page, edit) = widgets::page(sources);
+        stack.add_named(&scroller(&widgets_page), Some("widgets"));
 
         let switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         switch.add_css_class("switch");
         switch.set_homogeneous(true);
         let mut first: Option<gtk::ToggleButton> = None;
+        let mut widgets_button = None;
         for (name, label) in [("notifications", "Notifications"), ("widgets", "Widgets")] {
             let button = gtk::ToggleButton::with_label(label);
             button.set_group(first.as_ref());
@@ -93,6 +98,9 @@ impl Centre {
                 }
             });
             switch.append(&button);
+            if name == "widgets" {
+                widgets_button = Some(button.clone());
+            }
             first.get_or_insert(button);
         }
 
@@ -115,7 +123,8 @@ impl Centre {
         window.connect_visible_notify(move |_| also());
         stack.connect_visible_child_name_notify(move |_| showing());
 
-        Self { window, stack, list, daemon }
+        let widgets = widgets_button.expect("the switch has a Widgets button");
+        Self { window, stack, list, daemon, widgets, edit }
     }
 
     pub fn is_open(&self) -> bool {
@@ -125,6 +134,23 @@ impl Centre {
     /// Open on the Notifications view, where new notifications show up without a banner.
     pub fn shows_notifications(&self) -> bool {
         self.is_open() && self.stack.visible_child_name().as_deref() == Some("notifications")
+    }
+
+    /// Opens on the Widgets view with Edit widgets showing, for Settings' Edit widgets button.
+    pub fn edit_widgets(&self) {
+        if !self.window.is_visible() {
+            self.window.set_visible(true);
+            self.refresh();
+        }
+        self.widgets.set_active(true);
+        self.window.present();
+        // A popover placed before the centre is laid out lands in the wrong place.
+        let edit = self.edit.downgrade();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+            if let Some(edit) = edit.upgrade() {
+                edit.popup();
+            }
+        });
     }
 
     pub fn toggle(&self) {

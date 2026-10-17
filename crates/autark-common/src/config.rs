@@ -19,7 +19,8 @@ pub fn load<T: DeserializeOwned + Default>(name: &str) -> T {
     T::default()
 }
 
-fn paths(name: &str) -> Vec<PathBuf> {
+/// The user's file, then the system's.
+pub fn paths(name: &str) -> Vec<PathBuf> {
     let file = format!("{name}.toml");
     let user = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)

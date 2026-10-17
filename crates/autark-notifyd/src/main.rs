@@ -61,6 +61,7 @@ fn start(app: &gtk::Application) {
                 Event::Notify(notification) => daemon.notify(notification),
                 Event::Close(id) => daemon.dismiss(id, server::CLOSED_BY_APP),
                 Event::Toggle => daemon.toggle_centre(),
+                Event::EditWidgets => daemon.centre.edit_widgets(),
             }
         }
     });

@@ -7,3 +7,5 @@ pub mod stats;
 pub mod theme;
 #[cfg(feature = "toplevels")]
 pub mod toplevels;
+#[cfg(feature = "watch")]
+pub mod watch;
