@@ -43,16 +43,19 @@ impl Stats {
         }
     }
 
-    /// One reading now, as JSON (see `autark_common::stats::Snapshot`). Rates need two
-    /// readings, so without a recent one this takes a third of a second.
+    /// One reading now, as JSON (see `autark_common::stats::Snapshot`). Rates are averages
+    /// since the previous reading, so calling this once a minute gives minute averages. Rates
+    /// need two readings, so without one in the last five minutes this takes a third of a second.
     async fn snapshot(&self) -> String {
-        let fresh = self.sampler.lock().unwrap().age().is_some_and(|age| age < Duration::from_secs(2));
-        if fresh {
+        let age = self.sampler.lock().unwrap().age();
+        if age.is_some_and(|age| age < Duration::from_secs(2)) {
             return self.latest.lock().unwrap().clone();
         }
-        let sampler = self.sampler.clone();
-        blocking::unblock(move || sampler.lock().unwrap().sample(None)).await;
-        async_io::Timer::after(Duration::from_millis(330)).await;
+        if age.is_none_or(|age| age > Duration::from_secs(300)) {
+            let sampler = self.sampler.clone();
+            blocking::unblock(move || sampler.lock().unwrap().sample(None)).await;
+            async_io::Timer::after(Duration::from_millis(330)).await;
+        }
         let watts = self.helper.watts().await;
         let sampler = self.sampler.clone();
         let snapshot = blocking::unblock(move || sampler.lock().unwrap().sample(watts)).await;

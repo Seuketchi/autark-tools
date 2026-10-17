@@ -1,23 +1,25 @@
-//! The notification centre: a panel down the right edge with quick settings and every kept
-//! notification. Opened from the bar; Escape closes it.
+//! The notification centre: a panel down the right edge with two views, Notifications (quick
+//! settings and every kept notification) and Widgets. Opened from the bar; Escape closes it.
 
 use std::f64::consts::PI;
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 
 use gtk::cairo::Operator;
 use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
+use crate::widgets::{self, Sources};
 use crate::{Daemon, WIDTH};
 
 pub struct Centre {
     window: gtk::ApplicationWindow,
+    stack: gtk::Stack,
     list: gtk::Box,
     daemon: Weak<Daemon>,
 }
 
 impl Centre {
-    pub fn new(app: &gtk::Application, daemon: Weak<Daemon>) -> Self {
+    pub fn new(app: &gtk::Application, daemon: Weak<Daemon>, sources: &Rc<Sources>) -> Self {
         let window = gtk::ApplicationWindow::new(app);
         window.init_layer_shell();
         window.set_layer(Layer::Overlay);
@@ -69,17 +71,60 @@ impl Centre {
         content.append(&quick_settings(daemon.clone()));
         content.append(&header);
         content.append(&list);
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .child(&content)
-            .build();
-        window.set_child(Some(&scroller));
+        let scroller = |child: &gtk::Box| gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(child).build();
+        let stack = gtk::Stack::new();
+        stack.add_named(&scroller(&content), Some("notifications"));
+        stack.add_named(&scroller(&widgets::page(sources)), Some("widgets"));
 
-        Self { window, list, daemon }
+        let switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        switch.add_css_class("switch");
+        switch.set_homogeneous(true);
+        let mut first: Option<gtk::ToggleButton> = None;
+        for (name, label) in [("notifications", "Notifications"), ("widgets", "Widgets")] {
+            let button = gtk::ToggleButton::with_label(label);
+            button.set_group(first.as_ref());
+            button.set_active(first.is_none());
+            let stack = stack.downgrade();
+            button.connect_toggled(move |button| {
+                if button.is_active()
+                    && let Some(stack) = stack.upgrade()
+                {
+                    stack.set_visible_child_name(name);
+                }
+            });
+            switch.append(&button);
+            first.get_or_insert(button);
+        }
+
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        column.append(&switch);
+        column.append(&stack);
+        window.set_child(Some(&column));
+
+        // Widgets read their sources only while you can see them.
+        let showing = {
+            let (window, stack, sources) = (window.downgrade(), stack.downgrade(), Rc::downgrade(sources));
+            move || {
+                let (Some(window), Some(stack), Some(sources)) = (window.upgrade(), stack.upgrade(), sources.upgrade()) else {
+                    return;
+                };
+                sources.set_shown(window.is_visible() && stack.visible_child_name().as_deref() == Some("widgets"));
+            }
+        };
+        let also = showing.clone();
+        window.connect_visible_notify(move |_| also());
+        stack.connect_visible_child_name_notify(move |_| showing());
+
+        Self { window, stack, list, daemon }
     }
 
     pub fn is_open(&self) -> bool {
         self.window.is_visible()
+    }
+
+    /// Open on the Notifications view, where new notifications show up without a banner.
+    pub fn shows_notifications(&self) -> bool {
+        self.is_open() && self.stack.visible_child_name().as_deref() == Some("notifications")
     }
 
     pub fn toggle(&self) {

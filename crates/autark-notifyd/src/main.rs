@@ -4,6 +4,8 @@ mod card;
 mod centre;
 mod config;
 mod server;
+mod shared;
+mod widgets;
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -74,6 +76,9 @@ pub struct Daemon {
     banners: gtk::Box,
     centre: centre::Centre,
     handlers: Rc<card::Handlers>,
+    _desktop: gtk::ApplicationWindow,
+    /// Widgets hold only weak references to their sources.
+    _sources: Rc<widgets::Sources>,
 }
 
 impl Daemon {
@@ -110,15 +115,19 @@ impl Daemon {
                     }
                 }),
             });
+            let config: config::Notifyd = autark_common::config::load("notifyd");
+            let sources = widgets::Sources::new(&config);
             Self {
                 connection,
-                config: autark_common::config::load("notifyd"),
+                config,
                 notifications: RefCell::default(),
                 do_not_disturb: Cell::new(false),
                 banner_window,
                 banners,
-                centre: centre::Centre::new(app, daemon.clone()),
+                centre: centre::Centre::new(app, daemon.clone(), &sources),
                 handlers,
+                _desktop: widgets::desktop(app, &sources),
+                _sources: sources,
             }
         })
     }
@@ -139,9 +148,9 @@ impl Daemon {
                 kept.insert(0, notification.clone());
             }
         }
-        // With the centre open, new notifications show up there instead of as banners.
+        // With the centre open on them, new notifications show up there instead of as banners.
         let quiet = self.do_not_disturb.get() && notification.urgency != server::CRITICAL;
-        if !quiet && !self.centre.is_open() {
+        if !quiet && !self.centre.shows_notifications() {
             self.show_banner(&notification);
         }
         self.centre.refresh();
@@ -206,7 +215,7 @@ impl Daemon {
     /// Banners make way for the centre: everything they show is in it.
     fn toggle_centre(&self) {
         self.centre.toggle();
-        if self.centre.is_open() {
+        if self.centre.shows_notifications() {
             while let Some(card) = self.banners.first_child() {
                 self.banners.remove(&card);
             }

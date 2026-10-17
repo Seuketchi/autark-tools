@@ -129,3 +129,312 @@ window.notifications {
 .quick .toggle:checked .state {
   color: @accent_soft;
 }
+
+/* The Notifications / Widgets switch. */
+.switch {
+  padding: 3px;
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.55);
+  border: 1px solid alpha(@text, 0.08);
+}
+
+.switch button {
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  box-shadow: none;
+  color: @text;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.switch button:checked {
+  background-color: @surface;
+  box-shadow: 0 1px 2px alpha(@text, 0.12);
+  font-weight: 600;
+}
+
+/* Widgets. */
+.caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #7A736A;
+}
+
+.widget .detail,
+.footer .detail,
+.note .detail {
+  font-size: 11px;
+  color: @text2;
+}
+
+.widget .name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.clock {
+  padding: 14px 16px;
+}
+
+.clock .weekday {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: @accent;
+}
+
+.clock .time {
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.clock .date {
+  font-size: 12px;
+  color: @text2;
+}
+
+.clock .calendar label {
+  min-width: 20px;
+  min-height: 18px;
+  font-size: 10px;
+}
+
+.clock .calendar .day-name {
+  font-weight: 600;
+  color: #7A736A;
+}
+
+.clock .calendar .today {
+  border-radius: 9px;
+  background-color: @accent;
+  color: @surface;
+  font-weight: 600;
+}
+
+.large.card {
+  padding: 18px;
+  background-color: rgba(255, 255, 255, 0.62);
+  border-radius: 20px;
+}
+
+.clock.large .weekday {
+  font-size: 12px;
+}
+
+.clock.large .time {
+  font-size: 44px;
+  letter-spacing: -0.03em;
+}
+
+.clock.large .date {
+  font-size: 13px;
+}
+
+.clock.large .calendar label {
+  min-height: 20px;
+}
+
+.clock.large .calendar .today {
+  border-radius: 10px;
+}
+
+.ring {
+  color: @text;
+}
+
+.ring-number {
+  font-size: 9px;
+  font-weight: 600;
+  color: #3E3A34;
+}
+
+.meter {
+  color: @accent;
+}
+
+.meter.power {
+  color: #C99A3E;
+}
+
+.widget .value {
+  color: @text2;
+  font-feature-settings: "tnum";
+}
+
+.kith-face {
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background-color: #1F2A25;
+}
+
+.kith-face .eye {
+  min-width: 4px;
+  min-height: 4px;
+  border-radius: 2px;
+  background-color: #9FD3B5;
+  box-shadow: 0 0 4px #9FD3B5;
+}
+
+.widget .when {
+  font-size: 12px;
+  font-weight: 600;
+  color: @accent;
+  font-feature-settings: "tnum";
+}
+
+.suggestion {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background-color: @accent_soft;
+}
+
+.suggestion-text {
+  font-size: 12px;
+}
+
+.suggestion button,
+.footer .edit > button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 7px;
+  background-image: none;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.suggestion button.primary {
+  background-color: @accent;
+  color: @surface;
+  font-weight: 500;
+}
+
+.suggestion button.secondary,
+.footer .edit > button {
+  background-color: rgba(255, 255, 255, 0.7);
+  color: @text;
+}
+
+.suggestion button.quiet {
+  padding: 0 8px;
+  background: none;
+  color: @text2;
+  font-size: 11px;
+}
+
+.widget .temperature {
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.note-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.note.large .widget .temperature {
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.note-title {
+  font-size: 16px;
+}
+
+.footer {
+  padding: 0 6px 6px;
+}
+
+.footer .edit > button {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+popover.edit-widgets > contents {
+  padding: 8px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 12px;
+  background-color: @surface;
+  color: @text;
+  box-shadow: 0 8px 24px alpha(@text, 0.16);
+}
+
+popover.edit-widgets > arrow {
+  border-color: alpha(@text, 0.10);
+  background-color: @surface;
+}
+
+popover.edit-widgets switch {
+  border: none;
+  background-color: alpha(@text, 0.16);
+}
+
+popover.edit-widgets switch:checked {
+  background-color: @accent;
+}
+
+popover.edit-widgets switch:disabled {
+  opacity: 0.5;
+}
+
+popover.edit-widgets switch slider {
+  border: none;
+  background-color: @surface;
+  box-shadow: 0 1px 2px alpha(@text, 0.2);
+}
+
+.edit-row {
+  min-height: 32px;
+  padding: 0 4px;
+}
+
+.edit-list separator {
+  margin: 6px 0;
+}
+
+/* The desktop's pinned note: boxes you can tick. */
+.note .item {
+  min-height: 0;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: @text;
+  font-size: 13px;
+  font-weight: normal;
+}
+
+.note .item .check {
+  min-width: 11px;
+  min-height: 11px;
+  border-radius: 8px;
+  border: 1px solid alpha(@text, 0.4);
+}
+
+.note .item.done {
+  color: #7A736A;
+}
+
+.note .item.done label {
+  text-decoration: line-through;
+}
+
+.note .item.done .check {
+  border-color: @accent;
+  background-color: @accent;
+}
+
+.note .line {
+  font-size: 13px;
+}
