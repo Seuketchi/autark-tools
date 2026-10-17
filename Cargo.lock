@@ -131,6 +131,7 @@ dependencies = [
  "async-io",
  "autark-common",
  "blocking",
+ "chrono",
  "futures-util",
  "serde",
  "serde_json",

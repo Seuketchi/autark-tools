@@ -1,9 +1,11 @@
 //! Kith's local daemon (org.autark.AI1): routing, Jev and Ollama, laptop MCP tools, tasks, memory.
 //!
-//! So far: `Route`, `Rank`, `Check`, `Ask`, `AskFiles` and `Models`, answered by Ollama, and `Act`, which runs
-//! routed actions; ai.toml is reread when it changes. Jev, chat, tasks and the MCP server come next.
+//! So far: `Route`, `Rank`, `Check`, `Ask`, `AskFiles` and `Models`, answered by Ollama; `Act`, which runs
+//! routed actions; and the conversation (`Chat`, `ChatAnswer`, `ChatAct`, `Remember`, `History`), which proposes
+//! facts for memory.toml. ai.toml is reread when it changes. Jev, tasks and the MCP server come next.
 
 mod act;
+mod chat;
 mod check;
 mod config;
 mod files;

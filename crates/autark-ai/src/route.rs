@@ -1,8 +1,8 @@
 //! `Route`: a sentence typed into the launcher becomes the actions it asks for, each with how sure the model
 //! is, and the question it asks, with the files that question needs. "Dim the screen and mute, then tell me why
-//! my last build stopped" is two actions and a question. The model only picks actions from the catalog below
-//! and files from the ones named or remembered; code checks every argument, and `Act` runs the actions you
-//! choose.
+//! my last build stopped" is two actions and a question. It also proposes a lasting fact about you to remember,
+//! which is kept only if you save it. The model only picks actions from the catalog below and files from the
+//! ones named or remembered; code checks every argument, and `Act` runs the actions you choose.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -14,6 +14,9 @@ pub struct Routed {
     pub question: String,
     /// Files the question needs, as `~/…`, from the ones the sentence names or a memory points to.
     pub files: Vec<String>,
+    /// A lasting fact about you to propose remembering: one you asked Kith to remember, or one it noticed.
+    /// Empty when there's none; it's saved only if you say so.
+    pub remember: String,
     /// How sure the model is of the whole, 0 to 1.
     pub confidence: f64,
     /// Who answered: `ollama`, or `jev` once its client is built.
@@ -54,7 +57,7 @@ const CATALOG: [(&str, &str); 9] = [
     ("open_app", "open an app (text: its name)"),
 ];
 
-/// The instructions, with what you've asked Kith to remember, which is how "my last build" finds its log.
+/// The instructions, with what Kith remembers about you, which is how "my last build" finds its log.
 pub fn system_prompt(facts: &[String]) -> String {
     let actions: Vec<String> = CATALOG.iter().map(|(name, what)| format!("- {name}: {what}")).collect();
     let mut prompt = format!(
@@ -63,13 +66,16 @@ pub fn system_prompt(facts: &[String]) -> String {
          that it was asked for. None if it asks for no change.\n\
          question: the part that asks something to be answered or explained, put as a question on its own. Empty if there's none.\n\
          files: the files from the list given that are needed to answer the question. None if no list is given.\n\
+         remember: a lasting fact about the user worth keeping, put briefly as a note about them (\"Works on Autark in the evenings\"): \
+         what they ask you to remember, or something lasting they say about themselves, their work, their setup or their preferences. \
+         Empty if there's none, if it's already remembered, or if it's a password, key, code or anything secret.\n\
          confidence: how sure you are of the whole answer, from 0 to 1.\n\
          Actions:\n{}",
         actions.join("\n")
     );
     if !facts.is_empty() {
         let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
-        prompt.push_str(&format!("\nWhat the user asked you to remember:\n{}", facts.join("\n")));
+        prompt.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
     }
     prompt
 }
@@ -90,17 +96,23 @@ pub fn schema(candidates: &[String]) -> Value {
             "required": ["name", "confidence"],
         }},
         "question": { "type": "string" },
+        "remember": { "type": "string" },
         "confidence": { "type": "number" },
     });
     if !candidates.is_empty() {
         properties["files"] = json!({ "type": "array", "items": { "enum": candidates } });
     }
-    json!({ "type": "object", "properties": properties, "required": ["actions", "question", "confidence"] })
+    json!({ "type": "object", "properties": properties, "required": ["actions", "question", "remember", "confidence"] })
 }
 
-/// What the model is told besides the instructions: the sentence, and the files it may pick from.
-pub fn user(text: &str, candidates: &[String]) -> String {
-    if candidates.is_empty() { text.to_owned() } else { format!("{text}\n\nFiles: {}", candidates.join(", ")) }
+/// What the model is told besides the instructions: the conversation so far if there is one, the sentence,
+/// and the files it may pick from.
+pub fn user(text: &str, candidates: &[String], conversation: &str) -> String {
+    let mut user = if conversation.is_empty() { text.to_owned() } else { format!("Conversation so far:\n{conversation}\n\nNew message: {text}") };
+    if !candidates.is_empty() {
+        user.push_str(&format!("\n\nFiles: {}", candidates.join(", ")));
+    }
+    user
 }
 
 #[derive(Deserialize)]
@@ -111,6 +123,8 @@ struct Answer {
     question: String,
     #[serde(default)]
     files: Vec<String>,
+    #[serde(default)]
+    remember: String,
     confidence: f64,
 }
 
@@ -123,9 +137,9 @@ struct RawAction {
     confidence: Option<f64>,
 }
 
-/// Checks the model's answer against the catalog and the candidate files. With neither actions nor a question,
-/// the whole sentence is the question: you asked Kith, so Kith answers.
-pub fn parse(answer: Value, text: &str, candidates: &[String]) -> Result<Routed, String> {
+/// Checks the model's answer against the catalog, the candidate files and the facts already kept. With no
+/// actions, question or fact, the whole sentence is the question: you asked Kith, so Kith answers.
+pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String]) -> Result<Routed, String> {
     let answer: Answer = serde_json::from_value(answer).map_err(|err| format!("the route doesn't fit the schema: {err}"))?;
     let confidence = answer.confidence.clamp(0.0, 1.0);
     let actions = answer
@@ -136,8 +150,12 @@ pub fn parse(answer: Value, text: &str, candidates: &[String]) -> Result<Routed,
             action(raw).map(|action| Chosen { action, confidence: sure })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let mut remember: String = answer.remember.trim().chars().take(200).collect();
+    if facts.iter().any(|fact| fact.eq_ignore_ascii_case(&remember)) {
+        remember.clear();
+    }
     let mut question = answer.question.trim().to_owned();
-    if actions.is_empty() && question.is_empty() {
+    if actions.is_empty() && question.is_empty() && remember.is_empty() {
         question = text.trim().to_owned();
     }
     let mut files: Vec<String> = Vec::new();
@@ -146,7 +164,7 @@ pub fn parse(answer: Value, text: &str, candidates: &[String]) -> Result<Routed,
             files.push(file);
         }
     }
-    Ok(Routed { actions, question, files, confidence, engine: "ollama" })
+    Ok(Routed { actions, question, files, remember, confidence, engine: "ollama" })
 }
 
 /// The files the sentence names, then the ones memories point to.
@@ -190,7 +208,7 @@ mod tests {
         let answer = json!({ "confidence": 0.9, "question": "Why did my last build stop?", "files": ["~/autark/log.md"], "actions": [
             { "name": "set_brightness", "number": 30, "confidence": 0.94 }, { "name": "mute", "on": true, "confidence": 0.97 } ] });
         let candidates = vec!["~/autark/log.md".to_owned()];
-        let routed = parse(answer, "dim the screen and mute, then tell me why my last build stopped", &candidates).unwrap();
+        let routed = parse(answer, "dim the screen and mute, then tell me why my last build stopped", &candidates, &[]).unwrap();
         assert_eq!(routed.actions, vec![Chosen { action: Action::SetBrightness { percent: 30 }, confidence: 0.94 }, Chosen { action: Action::Mute { on: true }, confidence: 0.97 }]);
         assert_eq!(routed.question, "Why did my last build stop?");
         assert_eq!(routed.files, candidates);
@@ -203,20 +221,31 @@ mod tests {
     #[test]
     fn arguments_and_files_are_checked() {
         let clamp = json!({ "confidence": 2.0, "question": "", "actions": [{ "name": "set_volume", "number": 140, "confidence": 0.8 }, { "name": "lock", "confidence": 0.5 }] });
-        let routed = parse(clamp, "", &[]).unwrap();
+        let routed = parse(clamp, "", &[], &[]).unwrap();
         assert_eq!(routed.confidence, 1.0);
         assert_eq!(routed.actions[0].action, Action::SetVolume { percent: 100 });
         assert_eq!(serde_json::to_value(&routed.actions[1]).unwrap(), json!({ "action": "lock", "confidence": 0.5 }));
-        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "wifi", "confidence": 1 }] }), "", &[]).is_err());
-        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "rm_rf", "confidence": 1 }] }), "", &[]).is_err());
+        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "wifi", "confidence": 1 }] }), "", &[], &[]).is_err());
+        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "rm_rf", "confidence": 1 }] }), "", &[], &[]).is_err());
         let invented = json!({ "confidence": 1, "question": "what's in it?", "files": ["~/autark/log.md", "/etc/shadow"] });
-        assert_eq!(parse(invented, "", &["~/autark/log.md".to_owned()]).unwrap().files, vec!["~/autark/log.md"]);
+        assert_eq!(parse(invented, "", &["~/autark/log.md".to_owned()], &[]).unwrap().files, vec!["~/autark/log.md"]);
     }
 
     #[test]
     fn nothing_routed_asks_the_whole_sentence() {
-        let routed = parse(json!({ "confidence": 0.4, "question": " ", "actions": [] }), "how much swap do I have ", &[]).unwrap();
+        let routed = parse(json!({ "confidence": 0.4, "question": " ", "actions": [] }), "how much swap do I have ", &[], &[]).unwrap();
         assert_eq!(routed.question, "how much swap do I have");
         assert!(routed.actions.is_empty());
+    }
+
+    #[test]
+    fn a_fact_to_remember_is_no_question() {
+        let answer = json!({ "confidence": 0.9, "question": "", "actions": [], "remember": " Works on Autark in the evenings " });
+        let routed = parse(answer.clone(), "remember that I work on Autark in the evenings", &[], &[]).unwrap();
+        assert_eq!(routed.remember, "Works on Autark in the evenings");
+        assert!(routed.question.is_empty());
+        let kept = parse(answer, "remember that I work on Autark in the evenings", &[], &["works on autark in the evenings".to_owned()]).unwrap();
+        assert!(kept.remember.is_empty());
+        assert_eq!(kept.question, "remember that I work on Autark in the evenings");
     }
 }

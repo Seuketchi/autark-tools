@@ -303,3 +303,226 @@ button.kith-button {
 .row.selected .kith-mark {
   color: @on_accent;
 }
+
+button.kith-follow {
+  margin-top: 16px;
+}
+
+.kith-follow .key {
+  padding: 0 6px;
+}
+
+/* The Assistant panel */
+
+window.assistant-window {
+  background: none;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+/* The margin leaves room for the shadow inside the panel's surface. */
+.assistant {
+  margin: 12px 12px 60px 44px;
+  background-color: alpha(@surface, 0.88);
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 18px;
+  box-shadow: 0 16px 40px alpha(@shadow, 0.16);
+}
+
+.assistant-header {
+  min-height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+.assistant-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kith-face {
+  min-width: 18px;
+  min-height: 22px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background-color: #24221E;
+}
+
+.kith-face .eye {
+  min-width: 5px;
+  min-height: 9px;
+  border-radius: 3px;
+  background-color: #7FC1A1;
+}
+
+button.assistant-memory {
+  min-height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: alpha(@text, 0.06);
+  box-shadow: none;
+  color: @text;
+  font-size: 12px;
+}
+
+button.assistant-icon {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  box-shadow: none;
+  color: @text2;
+}
+
+.assistant-list {
+  padding: 16px;
+}
+
+.assistant-you {
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  background-color: @accent;
+  color: @on_accent;
+  font-size: 14px;
+}
+
+.assistant-card {
+  padding: 12px 14px;
+  border-radius: 16px 16px 16px 4px;
+  background-color: @surface;
+  border: 1px solid alpha(@text, 0.08);
+}
+
+.assistant-answer {
+  color: @text2;
+  font-size: 14px;
+}
+
+.assistant-caption {
+  color: @text2;
+  font-size: 11px;
+}
+
+.assistant-ran {
+  font-size: 13px;
+}
+
+.assistant-ran .mark {
+  color: @accent_text;
+  font-weight: 700;
+}
+
+.assistant-ran.failed .mark,
+.assistant-ran.failed label {
+  color: @danger;
+}
+
+.assistant-ran.skipped {
+  color: @text3;
+}
+
+.assistant-actions checkbutton check:checked {
+  background-color: @accent;
+  background-image: none;
+  border-color: @accent;
+  color: @on_accent;
+}
+
+.assistant-memory-card {
+  border-radius: 14px;
+  background-color: @raised;
+  border: 1px dashed alpha(@accent, 0.45);
+}
+
+.assistant-memory-card .assistant-caption {
+  color: @accent_text;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.assistant-fact {
+  font-size: 14px;
+}
+
+.assistant-memory-card button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+button.assistant-save {
+  background: @accent;
+  color: @on_accent;
+  font-weight: 600;
+}
+
+button.assistant-edit {
+  background: alpha(@text, 0.07);
+  color: @text;
+}
+
+button.assistant-skip {
+  background: none;
+  color: @text2;
+}
+
+.assistant-outcome {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background-color: @accent_soft;
+  color: @accent_text;
+  font-size: 12px;
+}
+
+.assistant-error {
+  color: @danger;
+  font-size: 12px;
+}
+
+.assistant-thinking,
+.assistant-empty {
+  color: @text3;
+  font-size: 13px;
+}
+
+.assistant-bottom {
+  padding: 12px 16px 14px;
+  border-top: 1px solid alpha(@text, 0.08);
+}
+
+.assistant-input entry {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid alpha(@text, 0.12);
+  border-radius: 12px;
+  background: @surface;
+  box-shadow: none;
+  outline: none;
+}
+
+button.assistant-send {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: @accent;
+  color: @on_accent;
+}
+
+.assistant-note {
+  color: @text3;
+  font-size: 11px;
+}
+
+.assistant-status {
+  color: @danger;
+  font-size: 12px;
+}

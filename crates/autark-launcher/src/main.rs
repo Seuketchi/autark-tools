@@ -5,6 +5,8 @@
 //! compositor binds Super+Space to that. `--daemon` starts it hidden, for login.
 
 mod actions;
+mod ai;
+mod assistant;
 mod kith;
 mod search;
 
@@ -19,19 +21,53 @@ use search::{Hit, Icon, Index, Target};
 
 fn main() -> glib::ExitCode {
     let daemon = std::env::args().any(|arg| arg == "--daemon");
+    let assistant = std::env::args().any(|arg| arg == "--assistant");
     let app = gtk::Application::builder()
         .application_id("org.autark.Launcher")
         .build();
     app.connect_startup(|_| load_css());
+    let launcher: Rc<RefCell<Option<Rc<Launcher>>>> = Rc::default();
+    let get = {
+        let launcher = launcher.clone();
+        move |app: &gtk::Application| launcher.borrow_mut().get_or_insert_with(|| Launcher::new(app)).clone()
+    };
+    // `--assistant` opens or closes the Assistant panel, in the launcher already running if there is one.
+    let toggle_assistant = gio::SimpleAction::new("assistant", None);
+    toggle_assistant.connect_activate({
+        let (app, get) = (app.downgrade(), get.clone());
+        move |_, _| {
+            let Some(app) = app.upgrade() else { return };
+            let launcher = get(&app);
+            // From an open launcher it carries on there, as Follow up does.
+            if launcher.window.is_visible() { launcher.follow_up() } else { launcher.panel.toggle() }
+        }
+    });
+    app.add_action(&toggle_assistant);
     // Started hidden, the first activation is the daemon's own and shows nothing.
-    let skip = Cell::new(daemon);
-    let launcher: RefCell<Option<Rc<Launcher>>> = RefCell::default();
+    let skip = Cell::new(daemon || assistant);
     app.connect_activate(move |app| {
-        let launcher = launcher.borrow_mut().get_or_insert_with(|| Launcher::new(app)).clone();
+        let launcher = get(app);
         if !skip.replace(false) {
             launcher.toggle();
         }
     });
+    if assistant {
+        if let Err(err) = app.register(None::<&gio::Cancellable>) {
+            eprintln!("launcher: {err}");
+            return glib::ExitCode::FAILURE;
+        }
+        app.activate_action("assistant", None);
+        if app.is_remote() {
+            // The call goes out before this exits; the app is left as it is rather than torn down unrun.
+            if let Some(connection) = app.dbus_connection()
+                && let Err(err) = connection.flush_sync(None::<&gio::Cancellable>)
+            {
+                eprintln!("launcher: {err}");
+            }
+            std::mem::forget(app);
+            return glib::ExitCode::SUCCESS;
+        }
+    }
     // GTK would read our flags as files to open.
     app.run_with_args(&[] as &[&str])
 }
@@ -47,6 +83,7 @@ struct Launcher {
     footer: gtk::Box,
     kith_hint: gtk::Label,
     kith: Rc<kith::View>,
+    panel: Rc<assistant::Panel>,
     /// `ai.toml` as of opening.
     ai: Cell<kith::Settings>,
     /// Showing Kith's view rather than results.
@@ -119,14 +156,24 @@ impl Launcher {
         dialog.append(&footer);
         // Built once the launcher is, as its Open button closes the launcher.
         let hide: Rc<RefCell<std::rc::Weak<Launcher>>> = Rc::default();
-        let kith = kith::View::new({
-            let hide = hide.clone();
-            move || {
-                if let Some(launcher) = hide.borrow().upgrade() {
-                    launcher.hide();
+        let kith = kith::View::new(
+            {
+                let hide = hide.clone();
+                move || {
+                    if let Some(launcher) = hide.borrow().upgrade() {
+                        launcher.hide();
+                    }
                 }
-            }
-        });
+            },
+            {
+                let hide = hide.clone();
+                move || {
+                    if let Some(launcher) = hide.borrow().upgrade() {
+                        launcher.follow_up();
+                    }
+                }
+            },
+        );
         kith.root.set_visible(false);
         kith.footer.set_visible(false);
         dialog.insert_child_after(&kith.root, Some(&header));
@@ -148,6 +195,7 @@ impl Launcher {
             footer,
             kith_hint,
             kith,
+            panel: assistant::Panel::new(app),
             ai: Cell::new(kith::Settings::load()),
             asking: Cell::new(false),
             index: RefCell::new(Index::load()),
@@ -184,13 +232,15 @@ impl Launcher {
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed({
             let launcher = Rc::downgrade(&launcher);
-            move |_, key, _, _| {
+            move |_, key, _, modifiers| {
                 let Some(launcher) = launcher.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
+                let control = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
                 let count = launcher.hits.borrow().len();
                 match key {
                     gdk::Key::Escape => launcher.hide(),
+                    gdk::Key::Return | gdk::Key::KP_Enter if control && launcher.asking.get() => launcher.follow_up(),
                     gdk::Key::Tab if !launcher.asking.get() && launcher.kith_row().is_some() => launcher.select(launcher.kith_row().unwrap_or(0)),
                     _ if launcher.asking.get() => return glib::Propagation::Proceed,
                     gdk::Key::Down if count > 0 => launcher.select((launcher.selected.get() + 1) % count),
@@ -258,6 +308,13 @@ impl Launcher {
         self.kith.root.set_visible(true);
         self.kith.footer.set_visible(true);
         self.kith.start(text, self.ai.get());
+    }
+
+    /// Carries on from Ask Kith in the Assistant panel, the answer still being written there.
+    fn follow_up(&self) {
+        self.kith.detach();
+        self.hide();
+        self.panel.open();
     }
 
     fn leave_kith(&self) {
