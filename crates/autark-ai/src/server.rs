@@ -8,10 +8,10 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use zbus::object_server::SignalEmitter;
 
-use crate::chat::{Chat, Proposal, What};
+use crate::chat::{Chat, Proposal, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, check, files, log, memory, route};
+use crate::{act, check, files, log, memory, route, tasks};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -223,15 +223,57 @@ impl Ai {
                 let confidence = routed.actions.iter().map(|chosen| chosen.confidence).collect();
                 let actions = if actions.is_empty() { 0 } else { chat.push(What::Actions { actions, confidence, results: Vec::new(), skipped: false }) };
                 let memory = if routed.remember.is_empty() { 0 } else { chat.push(What::Memory { text: routed.remember.clone(), state: Proposal::Proposed }) };
-                Ok((actions, memory))
+                let task = match &routed.task {
+                    Some(task) => chat.push(What::Task { task: task.clone(), state: TaskState::Proposed, unit: String::new(), next: 0 }),
+                    None => 0,
+                };
+                Ok((actions, memory, task))
             })
             .await;
         let routed = routed?;
-        let (actions, memory) = entries.map_err(Error::Engine)?;
+        let (actions, memory, task) = entries.map_err(Error::Engine)?;
         let mut json = serde_json::to_value(&routed).map_err(|err| Error::Engine(err.to_string()))?;
         json["actions_entry"] = json!(actions);
         json["memory_entry"] = json!(memory);
+        json["task_entry"] = json!(task);
         Ok(json.to_string())
+    }
+
+    /// Creates a proposed task, as its card shows it (`task`, JSON, which you may have edited): its folder, its
+    /// timer, enabled and started. Returns the timer's unit and its first run, in microseconds since the epoch.
+    async fn create_task(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, task: String) -> Result<(String, u64), Error> {
+        if !matches!(lock(&self.chat).get_mut(entry), Some(What::Task { state: TaskState::Proposed, .. })) {
+            return Err(Error::Engine("that task has been answered already".to_owned()));
+        }
+        let task: tasks::Task = serde_json::from_str(&task).map_err(|err| Error::Engine(format!("that isn't a task: {err}")))?;
+        let task = tasks::check(task).map_err(Error::Engine)?;
+        let runner = std::env::current_exe().map_err(|err| Error::Engine(format!("finding autark-ai itself: {err}")))?;
+        let created = tasks::create(connection, task.clone(), self.config().tasks, &runner.to_string_lossy()).await.map_err(Error::Engine)?;
+        log::record("create_task", "code", json!({ "task": task, "id": created.id }), &Ok(json!({ "unit": created.unit, "next": created.next })), Default::default());
+        self.change(&emitter, |chat| {
+            if let Some(What::Task { task: kept, state, unit, next }) = chat.get_mut(entry) {
+                *kept = task;
+                *state = TaskState::Created;
+                unit.clone_from(&created.unit);
+                *next = created.next;
+            }
+        })
+        .await;
+        Ok((created.unit, created.next))
+    }
+
+    /// Answers a proposed task with Cancel.
+    async fn cancel_task(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64) -> Result<(), Error> {
+        if !matches!(lock(&self.chat).get_mut(entry), Some(What::Task { state: TaskState::Proposed, .. })) {
+            return Err(Error::Engine("that task has been answered already".to_owned()));
+        }
+        self.change(&emitter, |chat| {
+            if let Some(What::Task { state, .. }) = chat.get_mut(entry) {
+                *state = TaskState::Cancelled;
+            }
+        })
+        .await;
+        Ok(())
     }
 
     /// `AskFiles` as part of the conversation: answered with what was said before and what Kith remembers, the

@@ -75,7 +75,7 @@ impl Panel {
         let thinking = gtk::Label::builder().label("Kith is thinking…").xalign(0.0).halign(gtk::Align::Start).build();
         thinking.add_css_class("assistant-thinking");
 
-        let status = gtk::Label::builder().xalign(0.0).wrap(true).max_width_chars(30).visible(false).build();
+        let status = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(30).visible(false).build();
         status.add_css_class("assistant-status");
         let entry = gtk::Entry::builder().placeholder_text("Message Kith").hexpand(true).build();
         let send = gtk::Button::builder().icon_name("go-up-symbolic").focus_on_click(false).tooltip_text("Send").valign(gtk::Align::Center).build();
@@ -260,6 +260,7 @@ impl Panel {
             "actions" => self.actions_card(id, entry),
             "answer" => answer_card(entry),
             "memory" => memory_card(id, entry["text"].as_str().unwrap_or_default(), entry["state"].as_str().unwrap_or_default()).upcast(),
+            "task" => task_card(id, &entry["task"], entry["state"].as_str().unwrap_or_default(), entry["unit"].as_str().unwrap_or_default(), entry["next"].as_u64().unwrap_or(0)).upcast(),
             _ => gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
         }
     }
@@ -433,7 +434,7 @@ fn answer_card(entry: &Value) -> gtk::Widget {
     card.append(&label);
     let error = entry["error"].as_str().unwrap_or_default();
     if !error.is_empty() {
-        let why = gtk::Label::builder().label(error).xalign(0.0).wrap(true).max_width_chars(34).build();
+        let why = gtk::Label::builder().label(error).xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).build();
         why.add_css_class("assistant-error");
         card.append(&why);
     }
@@ -501,7 +502,7 @@ pub fn memory_card(entry: u64, text: &str, state: &str) -> gtk::Box {
     buttons.append(&edit);
     buttons.append(&skip);
     card.append(&buttons);
-    let why = gtk::Label::builder().xalign(0.0).wrap(true).max_width_chars(34).visible(false).build();
+    let why = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).visible(false).build();
     why.add_css_class("assistant-error");
     card.append(&why);
 
@@ -548,6 +549,229 @@ pub fn memory_card(entry: u64, text: &str, state: &str) -> gtk::Box {
         move |_| answer(true)
     });
     skip.connect_clicked(move |_| answer(false));
+    card
+}
+
+/// The schedules a task can have, as `autark-ai` takes them and as the card says them.
+const EVERY: [(&str, &str); 11] = [
+    ("day", "Every day"),
+    ("weekdays", "Weekdays"),
+    ("weekends", "Weekends"),
+    ("monday", "Mondays"),
+    ("tuesday", "Tuesdays"),
+    ("wednesday", "Wednesdays"),
+    ("thursday", "Thursdays"),
+    ("friday", "Fridays"),
+    ("saturday", "Saturdays"),
+    ("sunday", "Sundays"),
+    ("month", "Monthly"),
+];
+
+/// A task's schedule in words: "Every day at 08:00", "The 1st of each month at 09:00".
+fn when_words(when: &Value) -> String {
+    let every = when["every"].as_str().unwrap_or_default();
+    let time = when["time"].as_str().unwrap_or_default();
+    if every == "month" {
+        let day = when["day"].as_u64().unwrap_or(1);
+        let suffix = match (day % 10, day % 100) {
+            (_, 11..=13) => "th",
+            (1, _) => "st",
+            (2, _) => "nd",
+            (3, _) => "rd",
+            _ => "th",
+        };
+        return format!("The {day}{suffix} of each month at {time}");
+    }
+    let words = EVERY.iter().find(|(key, _)| *key == every).map_or(every, |(_, words)| words);
+    format!("{words} at {time}")
+}
+
+/// When a timer first fires, from microseconds since the epoch: "today at 08:00", "tomorrow at 08:00".
+fn first_run(next: u64) -> String {
+    let Ok(when) = glib::DateTime::from_unix_local((next / 1_000_000) as i64) else { return String::new() };
+    let Ok(now) = glib::DateTime::now_local() else { return String::new() };
+    let days = |date: &glib::DateTime| date.year() * 400 + date.day_of_year();
+    let time = when.format("%H:%M").map(|time| time.to_string()).unwrap_or_default();
+    match days(&when) - days(&now) {
+        0 => format!("today at {time}"),
+        1 => format!("tomorrow at {time}"),
+        _ => format!("{} at {time}", when.format("%a %-d %b").map(|date| date.to_string()).unwrap_or_default()),
+    }
+}
+
+/// What a created task's card says: when it first runs, if systemd said, and its timer.
+fn created(unit: &str, next: u64) -> String {
+    if next == 0 { format!("Created · {unit}") } else { format!("Created · first run {} · {unit}", first_run(next)) }
+}
+
+/// How long a run may take, from ai.toml's `[tasks]`, as `autark-ai` reads it.
+fn task_minutes() -> u64 {
+    #[derive(serde::Deserialize, Default)]
+    struct Ai {
+        #[serde(default)]
+        tasks: Tasks,
+    }
+    #[derive(serde::Deserialize)]
+    struct Tasks {
+        #[serde(default = "five")]
+        minutes: u64,
+    }
+    fn five() -> u64 {
+        5
+    }
+    impl Default for Tasks {
+        fn default() -> Self {
+            Self { minutes: five() }
+        }
+    }
+    autark_common::config::load::<Ai>("ai").tasks.minutes
+}
+
+/// A task Kith proposes, with what it does, when, what it reads, where it runs and how it's delivered: Create
+/// task, Edit (name, time and inputs) or Cancel, then what came of it. Shared with Ask Kith.
+pub fn task_card(entry: u64, task: &Value, state: &str, unit: &str, next: u64) -> gtk::Box {
+    let card = card("assistant-task-card");
+    let caption = gtk::Label::builder().label("NEW TASK").xalign(0.0).build();
+    caption.add_css_class("assistant-caption");
+    card.append(&caption);
+    let grid = gtk::Grid::builder().column_spacing(14).row_spacing(6).build();
+    let mut row = 0;
+    let mut add = |name: &str, value: &gtk::Widget| {
+        let label = gtk::Label::builder().label(name).xalign(0.0).yalign(0.0).build();
+        label.add_css_class("assistant-key");
+        grid.attach(&label, 0, row, 1, 1);
+        value.set_hexpand(true);
+        grid.attach(value, 1, row, 1, 1);
+        row += 1;
+    };
+    let text = |text: &str| gtk::Label::builder().label(text).xalign(0.0).wrap(true).max_width_chars(28).build();
+    let inputs: Vec<String> = task["reads"].as_array().into_iter().flatten().chain(task["urls"].as_array().into_iter().flatten()).filter_map(Value::as_str).map(str::to_owned).collect();
+    let fetches = task["urls"].as_array().is_some_and(|urls| !urls.is_empty());
+
+    let name = text(task["name"].as_str().unwrap_or_default());
+    let name_entry = gtk::Entry::builder().text(task["name"].as_str().unwrap_or_default()).visible(false).build();
+    let name_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    name_box.append(&name);
+    name_box.append(&name_entry);
+    add("Name", name_box.upcast_ref());
+    add("Does", text(task["prompt"].as_str().unwrap_or_default()).upcast_ref());
+
+    let when = text(&format!("{}, catching up after sleep", when_words(&task["when"])));
+    let every = gtk::DropDown::from_strings(&EVERY.map(|(_, words)| words));
+    let at = EVERY.iter().position(|(key, _)| Some(*key) == task["when"]["every"].as_str()).unwrap_or(0);
+    every.set_selected(at as u32);
+    let day = gtk::SpinButton::with_range(1.0, 31.0, 1.0);
+    day.set_value(task["when"]["day"].as_f64().unwrap_or(1.0).max(1.0));
+    day.set_visible(EVERY[at].0 == "month");
+    let time = gtk::Entry::builder().text(task["when"]["time"].as_str().unwrap_or_default()).width_chars(6).max_width_chars(6).build();
+    every.connect_selected_notify({
+        let day = day.clone();
+        move |every| day.set_visible(EVERY.get(every.selected() as usize).is_some_and(|(key, _)| *key == "month"))
+    });
+    let when_edit = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    when_edit.set_visible(false);
+    when_edit.append(&every);
+    when_edit.append(&day);
+    when_edit.append(&gtk::Label::new(Some("at")));
+    when_edit.append(&time);
+    let when_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    when_box.append(&when);
+    when_box.append(&when_edit);
+    add("When", when_box.upcast_ref());
+
+    let reads_words = if inputs.is_empty() { "Nothing but the instruction".to_owned() } else { inputs.join("\n") };
+    let reads = text(&if fetches { format!("{reads_words}\nPages are fetched from the web on each run") } else { reads_words });
+    let reads_entry = gtk::Entry::builder().text(inputs.join(", ")).placeholder_text("Files and https pages, with commas between").visible(false).build();
+    let reads_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    reads_box.append(&reads);
+    reads_box.append(&reads_entry);
+    add("Reads", reads_box.upcast_ref());
+    add("Runs on", text(&format!("This laptop (Ollama), up to {} minutes", task_minutes())).upcast_ref());
+    add("Delivery", text("Notification card, banner only if urgent").upcast_ref());
+    card.append(&grid);
+
+    if state != "proposed" {
+        let words = if state == "created" { created(unit, next) } else { "Not created".to_owned() };
+        let outcome = gtk::Label::builder().label(words).xalign(0.0).wrap(true).max_width_chars(34).halign(gtk::Align::Start).build();
+        outcome.add_css_class("assistant-outcome");
+        card.append(&outcome);
+        return card;
+    }
+    let create = gtk::Button::builder().label("Create task").focus_on_click(false).build();
+    create.add_css_class("assistant-save");
+    let edit = gtk::Button::builder().label("Edit").focus_on_click(false).build();
+    edit.add_css_class("assistant-edit");
+    let cancel = gtk::Button::builder().label("Cancel").focus_on_click(false).build();
+    cancel.add_css_class("assistant-skip");
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.append(&create);
+    buttons.append(&edit);
+    buttons.append(&cancel);
+    card.append(&buttons);
+    let why = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).visible(false).build();
+    why.add_css_class("assistant-error");
+    card.append(&why);
+
+    edit.connect_clicked({
+        let (name, name_entry, when, when_edit, reads, reads_entry) = (name.clone(), name_entry.clone(), when.clone(), when_edit.clone(), reads.clone(), reads_entry.clone());
+        move |edit| {
+            for (shown, editor) in
+                [(name.upcast_ref::<gtk::Widget>(), name_entry.upcast_ref::<gtk::Widget>()), (when.upcast_ref(), when_edit.upcast_ref()), (reads.upcast_ref(), reads_entry.upcast_ref())]
+            {
+                shown.set_visible(false);
+                editor.set_visible(true);
+            }
+            name_entry.grab_focus();
+            edit.set_visible(false);
+        }
+    });
+    let finish = {
+        let (card, buttons, why) = (card.clone(), buttons.clone(), why.clone());
+        move |result: Result<String, String>| match result {
+            Ok(words) => {
+                buttons.set_visible(false);
+                why.set_visible(false);
+                let outcome = gtk::Label::builder().label(words).xalign(0.0).wrap(true).max_width_chars(34).halign(gtk::Align::Start).build();
+                outcome.add_css_class("assistant-outcome");
+                card.append(&outcome);
+            }
+            Err(error) => {
+                why.set_label(&error);
+                why.set_visible(true);
+                buttons.set_sensitive(true);
+            }
+        }
+    };
+    create.connect_clicked({
+        let (task, finish, buttons) = (task.clone(), finish.clone(), buttons.clone());
+        let (name_entry, every, day, time, reads_entry) = (name_entry.clone(), every.clone(), day.clone(), time.clone(), reads_entry.clone());
+        move |_| {
+            let mut task = task.clone();
+            // What the card shows is what's created, edits included.
+            if WidgetExt::is_visible(&name_entry) {
+                let (reads, urls): (Vec<String>, Vec<String>) =
+                    reads_entry.text().split(',').map(|input| input.trim().to_owned()).filter(|input| !input.is_empty()).partition(|input| !input.contains("://"));
+                task["name"] = Value::from(name_entry.text().trim());
+                task["when"] = serde_json::json!({ "every": EVERY[every.selected() as usize].0, "day": day.value() as u64, "time": time.text().trim() });
+                task["reads"] = Value::from(reads);
+                task["urls"] = Value::from(urls);
+            }
+            buttons.set_sensitive(false);
+            let finish = finish.clone();
+            glib::spawn_future_local(async move {
+                let created = async { ai::proxy().await?.create_task(entry, &task.to_string()).await }.await;
+                finish(created.map(|(unit, next)| self::created(&unit, next)).map_err(said));
+            });
+        }
+    });
+    cancel.connect_clicked(move |_| {
+        buttons.set_sensitive(false);
+        let finish = finish.clone();
+        glib::spawn_future_local(async move {
+            let cancelled = async { ai::proxy().await?.cancel_task(entry).await }.await;
+            finish(cancelled.map(|()| "Not created".to_owned()).map_err(said));
+        });
+    });
     card
 }
 

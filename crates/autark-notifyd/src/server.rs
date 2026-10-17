@@ -39,6 +39,12 @@ pub struct Notification {
     pub transient: bool,
     /// The sender plays its own sound, or wants none.
     pub silent: bool,
+    /// Kept in the centre without a banner or a chime: Autark's own `x-autark-quiet` hint, which Kith's tasks
+    /// send for results that aren't urgent.
+    pub quiet: bool,
+    /// What to open for an action key, as URIs: the `x-autark-open` hint (`a{ss}`), so the buttons work after
+    /// the sender has gone, as a task's runner has once it's sent its result.
+    pub opens: Vec<(String, String)>,
     pub received: SystemTime,
 }
 
@@ -103,6 +109,8 @@ impl Server {
             timeout: expire_timeout,
             transient: hint("transient").and_then(|value| bool::try_from(value).ok()).unwrap_or(false),
             silent: hint("suppress-sound").and_then(|value| bool::try_from(value).ok()).unwrap_or(false) || hint("sound-file").is_some() || hint("sound-name").is_some(),
+            quiet: hint("x-autark-quiet").and_then(|value| bool::try_from(value).ok()).unwrap_or(false),
+            opens: hint("x-autark-open").and_then(|value| HashMap::<String, String>::try_from(value).ok()).map(|opens| opens.into_iter().collect()).unwrap_or_default(),
             received: SystemTime::now(),
         };
         let _ = self.events.send(Event::Notify(notification)).await;

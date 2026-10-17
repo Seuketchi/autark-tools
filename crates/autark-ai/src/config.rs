@@ -12,6 +12,7 @@ pub struct Ai {
     pub ollama: Ollama,
     pub features: Features,
     pub jev: Jev,
+    pub tasks: crate::tasks::Limits,
 }
 
 #[derive(Deserialize)]

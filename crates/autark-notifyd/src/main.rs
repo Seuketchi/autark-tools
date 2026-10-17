@@ -157,7 +157,7 @@ impl Daemon {
         }
         self.share_kept();
         // With the centre open on them, new notifications show up there instead of as banners.
-        let quiet = self.do_not_disturb.get() && notification.urgency != server::CRITICAL;
+        let quiet = (self.do_not_disturb.get() && notification.urgency != server::CRITICAL) || notification.quiet;
         if !quiet && !self.centre.shows_notifications() {
             self.show_banner(&notification);
         }
@@ -266,6 +266,13 @@ impl Daemon {
     }
 
     fn invoke(&self, id: u32, key: &str) {
+        let uri = self.notifications.borrow().iter().find(|kept| kept.id == id).and_then(|kept| kept.opens.iter().find(|(open, _)| open == key).map(|(_, uri)| uri.clone()));
+        if let Some(uri) = uri {
+            let context = WidgetExt::display(&self.banner_window).app_launch_context();
+            if let Err(err) = gtk::gio::AppInfo::launch_default_for_uri(&uri, Some(&context)) {
+                eprintln!("notifyd: opening {uri}: {err}");
+            }
+        }
         let (connection, key) = (self.connection.clone(), key.to_owned());
         glib::spawn_future_local(async move {
             if let Ok(emitter) = SignalEmitter::new(&connection, server::PATH) {

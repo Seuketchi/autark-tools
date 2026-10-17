@@ -82,9 +82,11 @@ struct Routed {
     question: String,
     files: Vec<String>,
     remember: String,
+    task: Option<Value>,
     engine: String,
     actions_entry: u64,
     memory_entry: u64,
+    task_entry: u64,
 }
 
 struct Row {
@@ -116,7 +118,7 @@ pub struct View {
     /// Counts each question, so an answer to one you've moved on from is dropped.
     generation: Cell<u64>,
     settings: Cell<Settings>,
-    /// Where the proposed fact's card goes.
+    /// Where the cards for a proposed fact or task go.
     memory: gtk::Box,
     follow: gtk::Button,
     /// The conversation's entry holding the actions shown.
@@ -308,6 +310,9 @@ impl View {
                     view.show_actions(&routed, start.elapsed().as_secs_f64());
                     if !routed.remember.is_empty() {
                         view.memory.append(&crate::assistant::memory_card(routed.memory_entry, &routed.remember, "proposed"));
+                    }
+                    if let Some(task) = &routed.task {
+                        view.memory.append(&crate::assistant::task_card(routed.task_entry, task, "proposed", "", 0));
                     }
                     if !routed.question.is_empty() {
                         view.ask(generation, routed.question, routed.files).await;

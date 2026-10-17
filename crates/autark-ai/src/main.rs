@@ -13,9 +13,23 @@ mod log;
 mod memory;
 mod ollama;
 mod route;
+mod runner;
 mod server;
+mod tasks;
+mod web;
 
 fn main() {
+    // `autark-ai task <id>` is one run of a task, as its timer starts it.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [verb, id] = args.as_slice()
+        && verb == "task"
+    {
+        if let Err(err) = runner::run(id) {
+            eprintln!("ai: task {id}: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let config: config::Ai = autark_common::config::load("ai");
     if !config.enabled {
         eprintln!("ai: AI is off; only Check's built-in rules answer (set `enabled = true` in ai.toml)");

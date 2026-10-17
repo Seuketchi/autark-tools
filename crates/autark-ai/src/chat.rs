@@ -54,6 +54,23 @@ pub enum What {
     },
     /// A fact Kith proposes to remember.
     Memory { text: String, state: Proposal },
+    /// A task Kith proposes; once created, its timer and its first run in microseconds since the epoch.
+    Task {
+        task: crate::tasks::Task,
+        state: TaskState,
+        #[serde(default)]
+        unit: String,
+        #[serde(default)]
+        next: u64,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Proposed,
+    Created,
+    Cancelled,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -151,6 +168,7 @@ impl Chat {
                     }
                 }
                 What::Memory { text, state: Proposal::Saved } => lines.push(format!("(Kith remembered: {text})")),
+                What::Task { task, state: TaskState::Created, .. } => lines.push(format!("(Kith created the task “{}”: {})", task.name, task.prompt)),
                 _ => {}
             }
         }

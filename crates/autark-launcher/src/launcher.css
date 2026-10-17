@@ -526,3 +526,29 @@ button.assistant-send {
   color: @danger;
   font-size: 12px;
 }
+
+.assistant-task-card {
+  border-radius: 14px;
+  background-color: @raised;
+  border: 1px dashed alpha(@accent, 0.45);
+}
+
+.assistant-task-card .assistant-caption {
+  color: @accent_text;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.assistant-key {
+  color: @text3;
+  font-size: 12px;
+}
+
+.assistant-task-card button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 12px;
+}

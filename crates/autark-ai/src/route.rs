@@ -1,7 +1,8 @@
 //! `Route`: a sentence typed into the launcher becomes the actions it asks for, each with how sure the model
 //! is, and the question it asks, with the files that question needs. "Dim the screen and mute, then tell me why
 //! my last build stopped" is two actions and a question. It also proposes a lasting fact about you to remember,
-//! which is kept only if you save it. The model only picks actions from the catalog below and files from the
+//! which is kept only if you save it, and a task when the sentence asks for something on a schedule ("every
+//! morning at 8, summarise last night's build log"), created only once you confirm its card. The model only picks actions from the catalog below and files from the
 //! ones named or remembered; code checks every argument, and `Act` runs the actions you choose.
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,8 @@ pub struct Routed {
     /// A lasting fact about you to propose remembering: one you asked Kith to remember, or one it noticed.
     /// Empty when there's none; it's saved only if you say so.
     pub remember: String,
+    /// A task to propose, with the files picked for it and the https pages the sentence names.
+    pub task: Option<crate::tasks::Task>,
     /// How sure the model is of the whole, 0 to 1.
     pub confidence: f64,
     /// Who answered: `ollama`, or `jev` once its client is built.
@@ -69,6 +72,9 @@ pub fn system_prompt(facts: &[String]) -> String {
          remember: a lasting fact about the user worth keeping, put briefly as a note about them (\"Works on Autark in the evenings\"): \
          what they ask you to remember, or something lasting they say about themselves, their work, their setup or their preferences. \
          Empty if there's none, if it's already remembered, or if it's a password, key, code or anything secret.\n\
+         task: only when the sentence asks for something to be done again and again on a schedule: a short name, the instruction to \
+         carry out each time (prompt), every (day, weekdays, weekends, a weekday such as monday, or month), day (of the month, for month) \
+         and time (24-hour, HH:MM). The files it needs go in files. Leave task out otherwise, and then leave the question empty.\n\
          confidence: how sure you are of the whole answer, from 0 to 1.\n\
          Actions:\n{}",
         actions.join("\n")
@@ -97,6 +103,17 @@ pub fn schema(candidates: &[String]) -> Value {
         }},
         "question": { "type": "string" },
         "remember": { "type": "string" },
+        "task": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "prompt": { "type": "string" },
+                "every": { "enum": ["day", "weekdays", "weekends", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "month"] },
+                "day": { "type": "number" },
+                "time": { "type": "string" },
+            },
+            "required": ["name", "prompt", "every", "time"],
+        },
         "confidence": { "type": "number" },
     });
     if !candidates.is_empty() {
@@ -125,7 +142,22 @@ struct Answer {
     files: Vec<String>,
     #[serde(default)]
     remember: String,
+    task: Option<RawTask>,
     confidence: f64,
+}
+
+#[derive(Deserialize)]
+struct RawTask {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    prompt: String,
+    #[serde(default)]
+    every: String,
+    #[serde(default)]
+    day: f64,
+    #[serde(default)]
+    time: String,
 }
 
 #[derive(Deserialize)]
@@ -154,17 +186,29 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
     if facts.iter().any(|fact| fact.eq_ignore_ascii_case(&remember)) {
         remember.clear();
     }
-    let mut question = answer.question.trim().to_owned();
-    if actions.is_empty() && question.is_empty() && remember.is_empty() {
-        question = text.trim().to_owned();
-    }
     let mut files: Vec<String> = Vec::new();
     for file in answer.files {
-        if candidates.contains(&file) && !files.contains(&file) && !question.is_empty() {
+        if candidates.contains(&file) && !files.contains(&file) {
             files.push(file);
         }
     }
-    Ok(Routed { actions, question, files, remember, confidence, engine: "ollama" })
+    // A task asks for later, so nothing is answered now; its files are the task's.
+    let task = match answer.task.filter(|task| !task.name.trim().is_empty() && !task.prompt.trim().is_empty()) {
+        Some(raw) => {
+            let when = crate::tasks::When { every: raw.every, day: raw.day.clamp(0.0, 31.0) as u8, time: raw.time };
+            let task = crate::tasks::Task { name: raw.name, prompt: raw.prompt, when, reads: std::mem::take(&mut files), urls: crate::web::named(text) };
+            Some(crate::tasks::check(task).map_err(|why| format!("the task doesn't fit: {why}"))?)
+        }
+        None => None,
+    };
+    let mut question = if task.is_some() { String::new() } else { answer.question.trim().to_owned() };
+    if actions.is_empty() && question.is_empty() && remember.is_empty() && task.is_none() {
+        question = text.trim().to_owned();
+    }
+    if question.is_empty() {
+        files.clear();
+    }
+    Ok(Routed { actions, question, files, remember, task, confidence, engine: "ollama" })
 }
 
 /// The files the sentence names, then the ones memories point to.
@@ -236,6 +280,21 @@ mod tests {
         let routed = parse(json!({ "confidence": 0.4, "question": " ", "actions": [] }), "how much swap do I have ", &[], &[]).unwrap();
         assert_eq!(routed.question, "how much swap do I have");
         assert!(routed.actions.is_empty());
+    }
+
+    #[test]
+    fn a_schedule_is_a_task() {
+        let answer = json!({ "confidence": 0.9, "question": "What's in the log?", "actions": [], "remember": "", "files": ["~/autark/log.md"],
+            "task": { "name": "Morning build summary", "prompt": "Summarise last night's build log", "every": "day", "time": "08:00" } });
+        let text = "every morning at 8, summarise last night's build log and https://example.org/news";
+        let routed = parse(answer, text, &["~/autark/log.md".to_owned()], &[]).unwrap();
+        let task = routed.task.unwrap();
+        assert_eq!(task.when.calendar().unwrap(), "*-*-* 08:00:00");
+        assert_eq!(task.reads, vec!["~/autark/log.md"]);
+        assert_eq!(task.urls, vec!["https://example.org/news"]);
+        assert!(routed.question.is_empty() && routed.files.is_empty());
+        let wrong = json!({ "confidence": 0.9, "question": "", "actions": [], "task": { "name": "x", "prompt": "y", "every": "day", "time": "8pm" } });
+        assert!(parse(wrong, "", &[], &[]).is_err());
     }
 
     #[test]

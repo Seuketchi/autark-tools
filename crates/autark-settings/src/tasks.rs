@@ -136,14 +136,20 @@ pub async fn set_on(connection: &zbus::Connection, task: &Task, on: bool) -> zbu
     Ok(())
 }
 
-/// Stops and disables the timer and removes the task's folder.
+/// Stops and disables the timer and removes the task's folder, and the timer `autark-ai` wrote for it.
 pub async fn delete(connection: &zbus::Connection, task: &Task) -> Result<(), String> {
     set_on(connection, task, false).await.map_err(|error| crate::bus::message(error, DAEMON))?;
-    let path = folder().join(&task.id);
-    match std::fs::remove_dir_all(&path) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("{}: {error}", path.display())),
-        _ => Ok(()),
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let timer = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("systemd/user").join(format!("autark-task@{}.timer", task.id));
+    let task_folder = folder().join(&task.id);
+    for (path, removed) in [(&task_folder, std::fs::remove_dir_all(&task_folder)), (&timer, std::fs::remove_file(&timer))] {
+        if let Err(error) = removed
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(format!("{}: {error}", path.display()));
+        }
     }
+    Ok(())
 }
 
 /// A calendar spec in words, for the common shapes Kith writes: "Every day · 08:00", "Mondays · 09:00",
