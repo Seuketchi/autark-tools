@@ -233,6 +233,15 @@ version = "0.0.0"
 [[package]]
 name = "autark-stats"
 version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "async-io",
+ "autark-common",
+ "blocking",
+ "futures-util",
+ "serde_json",
+ "zbus",
+]
 
 [[package]]
 name = "autocfg"
