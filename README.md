@@ -24,7 +24,7 @@ The Rust tools behind [Autark](https://github.com/Seuketchi/autark): the desktop
 | `autark-init` | Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup and tpm2-tss, then hands over to systemd |
 | `autark-pkg` | Autark's package manager (Autark-only): signed packages from recipes, with install, remove, upgrade, search and rollback |
 
-`autark-bar` has its first pieces: the Loop logo, the focused app's name, Wi-Fi (iwd, or NetworkManager elsewhere), volume (PipeWire), battery (UPower) and clock. Each monitor gets its own bar, all fed by one watcher per item. The app name needs the compositor's wlr-foreign-toplevel protocol (Wayfire: enable the `foreign-toplevel` plugin). `autark-notifyd` serves `org.freedesktop.Notifications`: banners at the top right, and a centre with Focus (do not disturb) and every kept notification, opened from the bar's button. `autark-dock` shows pinned apps and running ones after a separator, with magnification and dots under running apps; clicking focuses an app's window (the next one if it has focus) or launches it, and middle-click opens another window. `autark-launcher` stays resident and opens or closes each time it's run (bind Super+Space to `autark-launcher`; start it at login with `--daemon`): apps ranked by name and how often you open them, recent files, and lock, sleep, restart, shut down and log out. `autark-lock` locks every monitor through `ext-session-lock` (Wayfire: enable the `session-lock` plugin) and unlocks with your password through PAM, or with an enrolled fingerprint through fprintd; with `--daemon` it stays running, locks when logind asks (the launcher's Lock, `loginctl lock-session`) and before sleep. It needs a PAM file, `/etc/pam.d/autark-lock` by default, and won't lock without one. The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
+`autark-bar` has its first pieces: the Loop logo, the focused app's name, Wi-Fi (iwd, or NetworkManager elsewhere), volume (PipeWire), battery (UPower) and clock. Each monitor gets its own bar, all fed by one watcher per item. The app name needs the compositor's wlr-foreign-toplevel protocol (Wayfire: enable the `foreign-toplevel` plugin). `autark-notifyd` serves `org.freedesktop.Notifications`: banners at the top right, and a centre with Focus (do not disturb) and every kept notification, opened from the bar's button. `autark-dock` shows pinned apps and running ones after a separator, with magnification and dots under running apps; clicking focuses an app's window (the next one if it has focus) or launches it, and middle-click opens another window. `autark-launcher` stays resident and opens or closes each time it's run (bind Super+Space to `autark-launcher`; start it at login with `--daemon`): apps ranked by name and how often you open them, recent files, and lock, sleep, restart, shut down and log out. `autark-lock` locks every monitor through `ext-session-lock` (Wayfire: enable the `session-lock` plugin) and unlocks with your password through PAM, or with an enrolled fingerprint through fprintd; with `--daemon` it stays running, locks when logind asks (the launcher's Lock, `loginctl lock-session`) and before sleep. It needs a PAM file, `/etc/pam.d/autark-lock` by default, and won't lock without one. `autark-ai` serves `org.autark.AI1`: `Route` turns a sentence into actions from a fixed catalog (volume, brightness, Wi-Fi, Focus, lock, open an app and so on), a question or a search; `Rank` scores items against a query; `Check` rates a shell command's risk, with built-in rules for destructive commands that work even with AI off; and `Ask` streams an answer as signals. All of it runs on Ollama for now, is off until `enabled = true`, and logs every call to `~/.local/state/autark-ai/log`. Jev, chat, memory, tasks and the MCP server come next. The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
 
 ## Where it runs
 
@@ -78,6 +78,24 @@ For the lock screen:
 pam_service = "autark-lock"   # the file in /etc/pam.d
 lock_on_sleep = true          # with --daemon
 fingerprint = true            # if fprintd has a finger enrolled
+```
+
+For AI:
+
+```toml
+# ~/.config/autark/ai.toml
+enabled = false   # nothing but Check's rules answers until this is true
+
+[ollama]
+url = "http://localhost:11434"
+model = ""        # no default: choose after measuring on your laptop
+timeout_seconds = 120
+
+[features]        # each on once AI is enabled
+route = true
+rank = true
+check = true
+ask = true
 ```
 
 ## License
