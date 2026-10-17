@@ -264,6 +264,18 @@ dependencies = [
 [[package]]
 name = "autark-shot"
 version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "gtk4-layer-shell",
+ "rustix",
+ "serde",
+ "serde_json",
+ "toml",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+]
 
 [[package]]
 name = "autark-stats"

@@ -1,9 +1,19 @@
 [package]
 name = "autark-shot"
-description = "Screenshots and screen recording (Shift+Super+3/4/5)."
+description = "Screenshots: Shift+Super+3 (screen), 4 (area or window), 5 (options), saved to ~/Pictures/Screenshots."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common" }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
+gtk4-layer-shell = "0.8.1"
+rustix = { version = "1", features = ["fs"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+toml = "1.1.8"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }

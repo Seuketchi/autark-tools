@@ -1,0 +1,145 @@
+window.shot-overlay {
+  background-color: transparent;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+}
+
+.shot-bar {
+  padding: 6px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 14px;
+  background-color: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 16px 40px alpha(@text, 0.22);
+}
+
+.shot-bar button {
+  min-height: 34px;
+  min-width: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+}
+
+.shot-bar button:hover {
+  background-color: alpha(@text, 0.06);
+}
+
+.shot-bar button:disabled {
+  opacity: 0.35;
+}
+
+.shot-bar button.mode:checked {
+  background-color: @accent_soft;
+}
+
+.shot-bar button.options {
+  padding: 0 10px;
+  color: @text;
+}
+
+.shot-bar button.options:checked {
+  background-color: alpha(@text, 0.08);
+}
+
+.shot-bar button.capture {
+  margin-left: 2px;
+  padding: 0 16px;
+  background-color: @accent;
+  color: white;
+  font-weight: 600;
+}
+
+.shot-bar button.capture:hover {
+  background-color: shade(@accent, 0.92);
+}
+
+.bar-separator {
+  min-width: 1px;
+  margin: 6px 2px;
+  background-color: alpha(@text, 0.12);
+}
+
+/* The options menu, in Linen rather than the system theme, with the design's ticks for marks. */
+popover.shot-popover > contents {
+  padding: 6px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 10px;
+  background-color: @surface;
+  color: @text;
+  box-shadow: 0 8px 24px alpha(@text, 0.16);
+}
+
+popover.shot-popover > arrow {
+  border-color: alpha(@text, 0.10);
+  background-color: @surface;
+}
+
+.shot-menu {
+  min-width: 208px;
+  font-size: 13px;
+}
+
+.shot-menu .heading {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: @text2;
+}
+
+.shot-menu checkbutton {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: @text;
+}
+
+.shot-menu checkbutton:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+.shot-menu check,
+.shot-menu radio {
+  min-width: 12px;
+  min-height: 12px;
+  margin: 0 8px 0 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: @accent;
+  -gtk-icon-source: none;
+}
+
+.shot-menu check:checked,
+.shot-menu radio:checked {
+  -gtk-icon-source: -gtk-icontheme("object-select-symbolic");
+}
+
+window.shot-thumb {
+  background-color: transparent;
+  font-family: "Geist", "Inter", sans-serif;
+}
+
+.thumb-frame {
+  padding: 6px;
+  border-radius: 10px;
+  background-color: @surface;
+  box-shadow: 0 14px 36px alpha(@text, 0.28), 0 0 0 1px alpha(@text, 0.08);
+}
+
+.thumb-frame picture {
+  border-radius: 6px;
+}
+
+.thumb-label {
+  padding: 4px 10px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 7px;
+  background-color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  color: @text2;
+}
