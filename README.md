@@ -24,7 +24,7 @@ The Rust tools behind [Autark](https://github.com/Seuketchi/autark): the desktop
 | `autark-init` | Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup and tpm2-tss, then hands over to systemd |
 | `autark-pkg` | Autark's package manager (Autark-only): signed packages from recipes, with install, remove, upgrade, search and rollback |
 
-Every crate is an empty skeleton for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
+`autark-bar` has its first pieces: the Loop logo, battery (UPower) and clock. The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
 
 ## Where it runs
 
@@ -38,11 +38,21 @@ Every crate is an empty skeleton for now. What each must do is specified in the 
 The shell crates can be written and tested on Ubuntu before Autark exists:
 
 ```
-sudo apt install libgtk-4-dev libgtk4-layer-shell-dev wayfire
+sudo apt install libgtk-4-dev libgtk4-layer-shell-dev wayfire grim
 cargo check
 ```
 
-Run Wayfire in a nested window, then start a crate inside it with `cargo run -p autark-bar`.
+Run Wayfire in a nested window, then start a crate inside it with `cargo run -p autark-bar`. Without a window, `WLR_BACKENDS=headless wayfire` runs it off-screen and `grim` takes a screenshot.
+
+## Configuration
+
+Each tool reads `~/.config/autark/<tool>.toml`, then `/etc/autark/<tool>.toml`; every field is optional. For the bar:
+
+```toml
+# ~/.config/autark/bar.toml
+clock_format = "%a %-d %b  %H:%M"   # chrono strftime; add %S for seconds
+battery_percent = true
+```
 
 ## License
 

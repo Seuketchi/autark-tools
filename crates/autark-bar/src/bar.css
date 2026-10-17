@@ -1,0 +1,29 @@
+window {
+  background: none;
+}
+
+.bar {
+  min-height: 31px;
+  padding: 0 12px;
+  background-color: @bar;
+  border-bottom: 1px solid alpha(@text, 0.06);
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+.item {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+
+.logo {
+  min-width: 32px;
+  padding: 0;
+  color: @accent;
+}
+
+.clock {
+  font-feature-settings: "tnum";
+}
