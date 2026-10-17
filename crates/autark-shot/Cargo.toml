@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-autark-common = { version = "0.0.0", path = "../autark-common", features = ["style"] }
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["audio", "style"] }
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
 gtk4-layer-shell = "0.8.1"
 rustix = { version = "1", features = ["fs"] }

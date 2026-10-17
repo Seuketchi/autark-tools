@@ -1,5 +1,7 @@
 //! Shared code: config loading, D-Bus helpers and Linen theme tokens.
 
+#[cfg(feature = "audio")]
+pub mod audio;
 pub mod config;
 pub mod desktop;
 pub mod files;

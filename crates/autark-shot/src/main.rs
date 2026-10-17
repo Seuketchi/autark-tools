@@ -173,6 +173,9 @@ pub fn texture(image: &Image) -> gdk::MemoryTexture {
 
 /// Saves, copies and shows one picture as the options say. Only the first of several goes on the clipboard.
 fn deliver(app: &gtk::Application, image: &Image, options: &Options, first: bool) {
+    if first {
+        autark_common::audio::play(autark_common::audio::Effect::Shutter);
+    }
     let texture = texture(image);
     let mut saved: Option<PathBuf> = None;
     if options.save_to.folder() {

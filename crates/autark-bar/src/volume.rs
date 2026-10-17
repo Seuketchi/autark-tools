@@ -1,66 +1,23 @@
-//! Volume: the default output's level and mute, from PipeWire on a thread of its own, since
-//! PipeWire runs its own loop. Clicking opens Sound: a slider, mute and the output to use.
+//! Volume: the default output's level and mute, from PipeWire through `autark_common::audio`, which watches
+//! it on a thread of its own. Clicking opens Sound: a slider, mute and the output to use.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
-use std::ffi::OsStr;
 use std::rc::Rc;
 use std::time::Duration;
 
-use async_channel::Sender;
+pub use autark_common::audio::Snapshot;
+use autark_common::audio::{self, Level, wpctl};
 use gtk::cairo::{Context, LineCap, LineJoin};
-use gtk::{gio, glib};
+use gtk::glib;
 use gtk::prelude::*;
-use pipewire as pw;
-use pw::metadata::{Metadata, MetadataListener};
-use pw::node::{Node, NodeListener};
-use pw::spa::param::ParamType;
-use pw::spa::pod::deserialize::PodDeserializer;
-use pw::spa::pod::{Pod, Value, ValueArray};
-use pw::types::ObjectType;
 
 use crate::menu;
 use crate::shared::Shared;
 
-#[derive(Clone, Copy, Default, PartialEq)]
-struct Level {
-    /// As shown to people: the cube root of PipeWire's linear volume, the scale `wpctl` uses.
-    volume: f32,
-    muted: bool,
-}
-
-#[derive(Clone, PartialEq)]
-struct Sink {
-    id: u32,
-    description: String,
-}
-
-/// What the PipeWire thread reports: the outputs, which is the default, and its level.
-#[derive(Clone, Default, PartialEq)]
-pub struct Snapshot {
-    sinks: Vec<Sink>,
-    default: Option<u32>,
-    level: Option<Level>,
-}
-
-/// Changes go through `wpctl`: WirePlumber owns the hardware volume, so a volume set directly
-/// on the PipeWire node doesn't stick.
-fn wpctl(args: &[&str]) {
-    let argv: Vec<&OsStr> = std::iter::once(OsStr::new("wpctl")).chain(args.iter().map(OsStr::new)).collect();
-    if let Err(err) = gio::Subprocess::newv(&argv, gio::SubprocessFlags::NONE) {
-        eprintln!("volume: wpctl: {err}");
-    }
-}
-
-/// Watches PipeWire once for every bar, on a thread of its own.
+/// Watches PipeWire once for every bar.
 pub fn source() -> Shared<Snapshot> {
     let shared = Shared::new(Snapshot::default());
-    let (updates, received) = async_channel::unbounded();
-    std::thread::spawn(move || {
-        if let Err(err) = watch(updates) {
-            eprintln!("volume: {err}");
-        }
-    });
+    let received = audio::spawn();
     glib::spawn_future_local({
         let shared = shared.clone();
         async move {
@@ -125,18 +82,14 @@ pub fn view(source: &Shared<Snapshot>) -> gtk::MenuButton {
     let button = menu::button(&icon, &panel, &["icon"]);
     let shown = RefCell::new(Snapshot::default());
     source.watch(&button, move |button, update| {
-        let Some(current) = update.level else {
+        let Some(current) = update.output().and_then(|output| output.level) else {
             button.set_visible(false);
             return;
         };
         button.set_visible(true);
-        button.set_tooltip_text(Some(&if current.muted {
-            "Muted".to_owned()
-        } else {
-            format!("Volume {:.0}%", current.volume * 100.0)
-        }));
+        button.set_tooltip_text(Some(&if current.muted { "Muted".to_owned() } else { format!("Volume {:.0}%", current.volume * 100.0) }));
         level.set(current);
-        default.set(update.default);
+        default.set(update.default_output);
         if pending.get().is_none() {
             syncing.set(true);
             slider.set_value(f64::from(current.volume) * 100.0);
@@ -148,13 +101,14 @@ pub fn view(source: &Shared<Snapshot>) -> gtk::MenuButton {
             speaker.queue_draw();
         }
         let mut shown = shown.borrow_mut();
-        if (&update.sinks, update.default) != (&shown.sinks, shown.default) {
+        let names = |snapshot: &Snapshot| snapshot.outputs.iter().map(|output| (output.id, output.nick.clone())).collect::<Vec<_>>();
+        if (names(update), update.default_output) != (names(&shown), shown.default_output) {
             while let Some(child) = outputs.first_child() {
                 outputs.remove(&child);
             }
-            for sink in &update.sinks {
-                let row = menu::row(&sink.description, Some(sink.id) == update.default);
-                let id = sink.id.to_string();
+            for output in &update.outputs {
+                let row = menu::row(&output.nick, Some(output.id) == update.default_output);
+                let id = output.id.to_string();
                 row.connect_clicked(move |_| wpctl(&["set-default", &id]));
                 outputs.append(&row);
             }
@@ -165,174 +119,10 @@ pub fn view(source: &Shared<Snapshot>) -> gtk::MenuButton {
 }
 
 fn speaker(level: &Rc<Cell<Level>>) -> gtk::DrawingArea {
-    let icon = gtk::DrawingArea::builder()
-        .content_width(16)
-        .content_height(16)
-        .valign(gtk::Align::Center)
-        .build();
+    let icon = gtk::DrawingArea::builder().content_width(16).content_height(16).valign(gtk::Align::Center).build();
     let level = level.clone();
     icon.set_draw_func(move |area, cr, width, height| draw(area, cr, width.min(height), level.get()));
     icon
-}
-
-struct SinkState {
-    name: String,
-    description: String,
-    level: Option<Level>,
-}
-
-#[derive(Default)]
-struct State {
-    /// Every audio output; there are only a few, so all are watched.
-    sinks: BTreeMap<u32, SinkState>,
-    default_sink: Option<String>,
-    shown: Option<Snapshot>,
-    updates: Option<Sender<Snapshot>>,
-}
-
-impl State {
-    fn send(&mut self) {
-        let default = self
-            .sinks
-            .iter()
-            .find(|(_, sink)| Some(&sink.name) == self.default_sink.as_ref())
-            .map(|(id, _)| *id);
-        let snapshot = Snapshot {
-            sinks: self
-                .sinks
-                .iter()
-                .map(|(id, sink)| Sink { id: *id, description: sink.description.clone() })
-                .collect(),
-            default,
-            level: default.and_then(|id| self.sinks[&id].level),
-        };
-        if self.shown.as_ref() != Some(&snapshot) {
-            if let Some(updates) = &self.updates {
-                let _ = updates.send_blocking(snapshot.clone());
-            }
-            self.shown = Some(snapshot);
-        }
-    }
-}
-
-fn watch(updates: Sender<Snapshot>) -> Result<(), pw::Error> {
-    pw::init();
-    let main_loop = pw::main_loop::MainLoopRc::new(None)?;
-    let context = pw::context::ContextRc::new(&main_loop, None)?;
-    let core = context.connect_rc(None)?;
-    let registry = core.get_registry_rc()?;
-    let registry_weak = registry.downgrade();
-
-    let state = Rc::new(RefCell::new(State { updates: Some(updates), ..State::default() }));
-    // Proxies stop reporting once dropped, so they live here with their listeners.
-    let nodes: Rc<RefCell<HashMap<u32, (Node, NodeListener)>>> = Rc::default();
-    let metadata: Rc<RefCell<Option<(Metadata, MetadataListener)>>> = Rc::default();
-
-    let _registry_listener = registry
-        .add_listener_local()
-        .global({
-            let state = state.clone();
-            let nodes = nodes.clone();
-            move |global| {
-                let Some(registry) = registry_weak.upgrade() else {
-                    return;
-                };
-                let props = global.props;
-                match global.type_ {
-                    ObjectType::Node if props.and_then(|p| p.get("media.class")) == Some("Audio/Sink") => {
-                        let Some(name) = props.and_then(|p| p.get("node.name")) else {
-                            return;
-                        };
-                        // The short name ("Speaker", "HDMI 1"); descriptions repeat the sound card's long name.
-                        let description = props
-                            .and_then(|p| p.get("node.nick").or_else(|| p.get("node.description")))
-                            .unwrap_or(name);
-                        let Ok(node) = registry.bind::<Node, _>(global) else {
-                            return;
-                        };
-                        let id = global.id;
-                        let sink = SinkState { name: name.to_owned(), description: description.to_owned(), level: None };
-                        state.borrow_mut().sinks.insert(id, sink);
-                        let listener = node
-                            .add_listener_local()
-                            .param({
-                                let state = state.clone();
-                                move |_, _, _, _, param| {
-                                    let Some(level) = param.and_then(parse_props) else {
-                                        return;
-                                    };
-                                    let mut state = state.borrow_mut();
-                                    if let Some(sink) = state.sinks.get_mut(&id) {
-                                        sink.level = Some(level);
-                                    }
-                                    state.send();
-                                }
-                            })
-                            .register();
-                        node.subscribe_params(&[ParamType::Props]);
-                        nodes.borrow_mut().insert(id, (node, listener));
-                    }
-                    ObjectType::Metadata if props.and_then(|p| p.get("metadata.name")) == Some("default") => {
-                        let Ok(bound) = registry.bind::<Metadata, _>(global) else {
-                            return;
-                        };
-                        let listener = bound
-                            .add_listener_local()
-                            .property({
-                                let state = state.clone();
-                                move |_, key, _, value| {
-                                    if key == Some("default.audio.sink") {
-                                        let mut state = state.borrow_mut();
-                                        state.default_sink = value.and_then(sink_name);
-                                        state.send();
-                                    }
-                                    0
-                                }
-                            })
-                            .register();
-                        *metadata.borrow_mut() = Some((bound, listener));
-                    }
-                    _ => {}
-                }
-            }
-        })
-        .global_remove(move |id| {
-            nodes.borrow_mut().remove(&id);
-            let mut state = state.borrow_mut();
-            if state.sinks.remove(&id).is_some() {
-                state.send();
-            }
-        })
-        .register();
-
-    main_loop.run();
-    Ok(())
-}
-
-/// The volume and mute from a node's `Props`; channels can differ, so the loudest one counts.
-fn parse_props(param: &Pod) -> Option<Level> {
-    let (_, Value::Object(object)) = PodDeserializer::deserialize_any_from(param.as_bytes()).ok()? else {
-        return None;
-    };
-    let mut level = Level::default();
-    let mut found = false;
-    for property in object.properties {
-        match (property.key, property.value) {
-            (pw::spa::sys::SPA_PROP_channelVolumes, Value::ValueArray(ValueArray::Float(volumes))) => {
-                level.volume = volumes.into_iter().fold(0.0, f32::max).cbrt();
-                found = true;
-            }
-            (pw::spa::sys::SPA_PROP_mute, Value::Bool(muted)) => level.muted = muted,
-            _ => {}
-        }
-    }
-    found.then_some(level)
-}
-
-/// `default.audio.sink` holds JSON such as `{ "name": "alsa_output.pci-0000_00_1f.3.analog-stereo" }`.
-fn sink_name(value: &str) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(value).ok()?;
-    Some(json.get("name")?.as_str()?.to_owned())
 }
 
 /// The design's speaker with up to two waves by level, or a cross when muted.

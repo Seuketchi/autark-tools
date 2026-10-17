@@ -17,6 +17,7 @@ pub const EXPIRED: u32 = 1;
 pub const DISMISSED: u32 = 2;
 pub const CLOSED_BY_APP: u32 = 3;
 
+pub const LOW: u8 = 0;
 pub const CRITICAL: u8 = 2;
 
 #[derive(Clone)]
@@ -34,6 +35,8 @@ pub struct Notification {
     pub timeout: i32,
     /// Shown as a banner only, never kept in the centre.
     pub transient: bool,
+    /// The sender plays its own sound, or wants none.
+    pub silent: bool,
     pub received: SystemTime,
 }
 
@@ -89,6 +92,7 @@ impl Server {
             urgency: hint("urgency").and_then(|value| u8::try_from(value).ok()).unwrap_or(1),
             timeout: expire_timeout,
             transient: hint("transient").and_then(|value| bool::try_from(value).ok()).unwrap_or(false),
+            silent: hint("suppress-sound").and_then(|value| bool::try_from(value).ok()).unwrap_or(false) || hint("sound-file").is_some() || hint("sound-name").is_some(),
             received: SystemTime::now(),
         };
         let _ = self.events.send(Event::Notify(notification)).await;

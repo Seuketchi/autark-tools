@@ -11,15 +11,20 @@ publish = false
 toplevels = ["dep:glib", "dep:glib-unix", "dep:wayland-client", "dep:wayland-protocols-wlr"]
 # Watching config files from a GTK tool, so a change (from Settings or by hand) applies at once.
 watch = ["dep:gio", "dep:glib"]
+# Sound through PipeWire: devices and levels, the microphone's level and the sound effects.
+audio = ["dep:pipewire", "dep:async-channel", "dep:serde_json"]
 # Loading a GTK tool's stylesheet with the theme's colours, restyled live (see `theme::install`).
 style = ["dep:gtk", "watch"]
 
 [dependencies]
+async-channel = { version = "2.5.0", optional = true }
 gio = { version = "0.22", optional = true }
 glib = { version = "0.22", optional = true }
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"], optional = true }
 glib-unix = { version = "0.22", optional = true }
+pipewire = { version = "0.10.1", features = ["v0_3_49"], optional = true }
 wayland-client = { version = "0.31", optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", optional = true }
 toml = "1.1.8"

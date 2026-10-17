@@ -11,8 +11,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
-use gtk::prelude::*;
 use gtk::glib;
+use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 use zbus::object_server::SignalEmitter;
 
@@ -21,9 +21,7 @@ use server::{Event, Notification, Server};
 pub const WIDTH: i32 = 380;
 
 fn main() -> glib::ExitCode {
-    let app = gtk::Application::builder()
-        .application_id("org.autark.Notifyd")
-        .build();
+    let app = gtk::Application::builder().application_id("org.autark.Notifyd").build();
     app.connect_startup(|_| load_css());
     app.connect_activate(start);
     app.run()
@@ -142,8 +140,10 @@ impl Daemon {
     }
 
     fn notify(self: &Rc<Self>, notification: Notification) {
+        let update;
         {
             let mut kept = self.notifications.borrow_mut();
+            update = kept.iter().any(|kept| kept.id == notification.id) || self.banner(notification.id).is_some();
             kept.retain(|kept| kept.id != notification.id);
             if !notification.transient {
                 kept.insert(0, notification.clone());
@@ -153,6 +153,10 @@ impl Daemon {
         let quiet = self.do_not_disturb.get() && notification.urgency != server::CRITICAL;
         if !quiet && !self.centre.shows_notifications() {
             self.show_banner(&notification);
+        }
+        // A chime for something new; an update to one already shown (progress, say) comes quietly.
+        if !quiet && !update && !notification.silent && notification.urgency != server::LOW {
+            autark_common::audio::play(autark_common::audio::Effect::Alert);
         }
         self.centre.refresh();
     }
@@ -197,11 +201,13 @@ impl Daemon {
         std::iter::successors(self.banners.first_child(), |child| child.next_sibling()).count()
     }
 
-    fn remove_banner(&self, id: u32) {
+    fn banner(&self, id: u32) -> Option<gtk::Widget> {
         let name = id.to_string();
-        let found = std::iter::successors(self.banners.first_child(), |child| child.next_sibling())
-            .find(|child| child.widget_name() == name);
-        if let Some(card) = found {
+        std::iter::successors(self.banners.first_child(), |child| child.next_sibling()).find(|child| child.widget_name() == name)
+    }
+
+    fn remove_banner(&self, id: u32) {
+        if let Some(card) = self.banner(id) {
             self.banners.remove(&card);
         }
         self.hide_if_empty();
