@@ -9,7 +9,9 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib, pango};
 
 use crate::editor::Editor;
+use crate::graph::Graph;
 use crate::state::State;
+use crate::switcher::{Pick, Switcher};
 use crate::vault::{Note, Vault};
 
 /// A window action: what it runs when its shortcut is pressed.
@@ -40,6 +42,22 @@ pub struct Notes {
     pub editor: Rc<Editor>,
     backlinks_title: gtk::Label,
     backlinks: gtk::FlowBox,
+    graph: Rc<Graph>,
+    note_view: gtk::ToggleButton,
+    graph_view: gtk::ToggleButton,
+    switcher: Rc<Switcher>,
+    /// The switcher's pick opens in a new tab.
+    switch_to_new_tab: Cell<bool>,
+    /// Open notes, one per tab; the strip shows once there are two.
+    tabs: RefCell<Vec<String>>,
+    tab: Cell<usize>,
+    tab_strip: gtk::Box,
+    find: gtk::Revealer,
+    find_entry: gtk::SearchEntry,
+    find_count: gtk::Label,
+    replace_row: gtk::Box,
+    replace_entry: gtk::Entry,
+    find_index: Cell<usize>,
 }
 
 impl Notes {
@@ -103,6 +121,13 @@ impl Notes {
         toolbar.append(&path);
         toolbar.append(&checklist);
         toolbar.append(&link);
+        let note_view = gtk::ToggleButton::builder().label("Note").active(true).build();
+        let graph_view = gtk::ToggleButton::builder().label("Graph").group(&note_view).build();
+        let views = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        views.add_css_class("views");
+        views.append(&note_view);
+        views.append(&graph_view);
+        toolbar.append(&views);
 
         let editor = Editor::new();
         let backlinks_title = gtk::Label::builder().xalign(0.0).build();
@@ -112,7 +137,34 @@ impl Notes {
         footer.add_css_class("backlinks");
         footer.append(&backlinks_title);
         footer.append(&backlinks);
+        let find_entry = gtk::SearchEntry::builder().placeholder_text("Find").hexpand(true).build();
+        let find_count = gtk::Label::new(None);
+        find_count.add_css_class("count");
+        let previous = gtk::Button::from_icon_name("go-up-symbolic");
+        previous.set_tooltip_text(Some("Previous (Shift+Enter)"));
+        let next = gtk::Button::from_icon_name("go-down-symbolic");
+        next.set_tooltip_text(Some("Next (Enter)"));
+        let close_find = gtk::Button::from_icon_name("window-close-symbolic");
+        close_find.set_tooltip_text(Some("Close (Esc)"));
+        let find_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        for widget in [find_entry.upcast_ref::<gtk::Widget>(), find_count.upcast_ref(), previous.upcast_ref(), next.upcast_ref(), close_find.upcast_ref()] {
+            find_row.append(widget);
+        }
+        let replace_entry = gtk::Entry::builder().placeholder_text("Replace with").hexpand(true).build();
+        let replace_one = gtk::Button::with_label("Replace");
+        let replace_all = gtk::Button::with_label("All");
+        let replace_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        replace_row.append(&replace_entry);
+        replace_row.append(&replace_one);
+        replace_row.append(&replace_all);
+        let find_bar = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        find_bar.add_css_class("find");
+        find_bar.append(&find_row);
+        find_bar.append(&replace_row);
+        let find = gtk::Revealer::builder().child(&find_bar).reveal_child(false).build();
+
         let note_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        note_page.append(&find);
         note_page.append(&editor.widget);
         note_page.append(&footer);
         let empty = gtk::Label::new(Some("No note open. Press + to write one."));
@@ -120,18 +172,28 @@ impl Notes {
         let stack = gtk::Stack::builder().vexpand(true).build();
         stack.add_named(&note_page, Some("note"));
         stack.add_named(&empty, Some("empty"));
+        let graph = Graph::new();
+        stack.add_named(&graph.widget, Some("graph"));
+        let tab_strip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        tab_strip.add_css_class("tab-strip");
+        tab_strip.set_visible(false);
 
         let main = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main.add_css_class("main");
         main.set_hexpand(true);
         main.append(&gtk::WindowHandle::builder().child(&toolbar).build());
+        main.append(&tab_strip);
         main.append(&stack);
 
         let root_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root_box.append(&sidebar);
         root_box.append(&list_pane);
         root_box.append(&main);
-        window.set_child(Some(&root_box));
+        let switcher = Switcher::new();
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&root_box));
+        overlay.add_overlay(&switcher.widget);
+        window.set_child(Some(&overlay));
 
         let notes = Rc::new(Self {
             window,
@@ -155,7 +217,22 @@ impl Notes {
             editor,
             backlinks_title,
             backlinks,
+            graph,
+            note_view,
+            graph_view,
+            switcher,
+            switch_to_new_tab: Cell::new(false),
+            tabs: RefCell::default(),
+            tab: Cell::new(0),
+            tab_strip,
+            find,
+            find_entry,
+            find_count,
+            replace_row,
+            replace_entry,
+            find_index: Cell::new(0),
         });
+        notes.connect_find(&previous, &next, &close_find, &replace_one, &replace_all);
 
         let weak = Rc::downgrade(&notes);
         notes.search.connect_search_changed(move |_| {
@@ -182,9 +259,30 @@ impl Notes {
             }
         });
         let weak = Rc::downgrade(&notes);
-        notes.editor.connect_link(move |target| {
+        notes.editor.connect_link(move |target, new_tab| {
             if let Some(notes) = weak.upgrade() {
-                notes.follow(&target);
+                notes.follow(&target, new_tab);
+            }
+        });
+        let weak = Rc::downgrade(&notes);
+        notes.graph.connect_open(move |path| {
+            if let Some(notes) = weak.upgrade() {
+                notes.open(&path);
+            }
+        });
+        let weak = Rc::downgrade(&notes);
+        notes.graph_view.connect_toggled(move |button| {
+            if let Some(notes) = weak.upgrade() {
+                notes.show_view(button.is_active());
+            }
+        });
+        let weak = Rc::downgrade(&notes);
+        notes.switcher.connect_pick(move |pick| {
+            let Some(notes) = weak.upgrade() else { return };
+            let new_tab = notes.switch_to_new_tab.replace(false);
+            match pick {
+                Pick::Open(path) => notes.show(path, new_tab),
+                Pick::Create(title) => notes.follow(title, new_tab),
             }
         });
         let weak = Rc::downgrade(&notes);
@@ -206,13 +304,20 @@ impl Notes {
     }
 
     fn add_actions(self: &Rc<Self>, app: &gtk::Application) {
-        let actions: [(&str, &[&str], Action); 4] = [
+        let actions: [(&str, &[&str], Action); 11] = [
             ("new-note", &["<Control>n"], |notes| notes.new_note()),
             ("save", &["<Control>s"], |notes| notes.save()),
             ("search", &["<Control><Shift>f"], |notes| {
                 notes.search.grab_focus();
             }),
             ("open-vault", &["<Control><Shift>o"], |notes| notes.choose_vault()),
+            ("quick-open", &["<Control>o"], |notes| notes.quick_open(false)),
+            ("new-tab", &["<Control>t"], |notes| notes.quick_open(true)),
+            ("close-tab", &["<Control>w"], |notes| notes.close_tab(notes.tab.get())),
+            ("next-tab", &["<Control>Page_Down", "<Control>Tab"], |notes| notes.cycle_tab(1)),
+            ("previous-tab", &["<Control>Page_Up", "<Control><Shift>Tab"], |notes| notes.cycle_tab(-1)),
+            ("find", &["<Control>f"], |notes| notes.show_find(false)),
+            ("replace", &["<Control>h"], |notes| notes.show_find(true)),
         ];
         for (name, accels, run) in actions {
             let action = gio::SimpleAction::new(name, None);
@@ -232,6 +337,9 @@ impl Notes {
         self.vault_label.set_label(&display(&self.vault.borrow().root));
         self.watch();
         self.refresh_sidebar();
+        let tabs: Vec<String> = self.state.borrow().tabs.iter().filter(|path| self.vault.borrow().get(path).is_some()).cloned().collect();
+        self.tabs.replace(tabs);
+        self.tab.set(0);
         let remembered = self.state.borrow().open.clone().filter(|path| self.vault.borrow().get(path).is_some());
         match remembered.or_else(|| self.shown().first().cloned()) {
             Some(path) => self.open(&path),
@@ -251,6 +359,7 @@ impl Notes {
         self.tag.replace(None);
         self.current.replace(None);
         self.search.set_text("");
+        self.tabs.replace(Vec::new());
         self.start();
     }
 
@@ -472,10 +581,13 @@ impl Notes {
             state.pinned.retain(|pinned| pinned != path);
             state.save(&self.vault.borrow().root);
         }
-        if self.current.borrow().as_deref() == Some(path) {
+        let was_open = self.current.borrow().as_deref() == Some(path);
+        self.prune_tabs();
+        if was_open {
             self.current.replace(None);
-            match self.shown().first() {
-                Some(next) => self.open(next),
+            let next = self.tabs.borrow().get(self.tab.get()).cloned().or_else(|| self.shown().first().cloned());
+            match next {
+                Some(next) => self.open(&next),
                 None => self.stack.set_visible_child_name("empty"),
             }
         }
@@ -484,8 +596,30 @@ impl Notes {
     }
 
     pub fn open(self: &Rc<Self>, path: &str) {
+        self.show(path, false);
+    }
+
+    /// Opens a note in the current tab, or a new one. A note already open in a tab switches
+    /// to that tab instead.
+    pub fn show(self: &Rc<Self>, path: &str, new_tab: bool) {
         self.save();
         self.drop_fresh(path);
+        if self.vault.borrow().get(path).is_none() {
+            return;
+        }
+        {
+            let mut tabs = self.tabs.borrow_mut();
+            if let Some(index) = tabs.iter().position(|tab| tab == path) {
+                self.tab.set(index);
+            } else if new_tab || tabs.is_empty() {
+                tabs.push(path.to_owned());
+                self.tab.set(tabs.len() - 1);
+            } else {
+                let index = self.tab.get().min(tabs.len() - 1);
+                tabs[index] = path.to_owned();
+                self.tab.set(index);
+            }
+        }
         let (title, text) = {
             let vault = self.vault.borrow();
             let Some(note) = vault.get(path) else { return };
@@ -495,13 +629,217 @@ impl Notes {
         {
             let mut state = self.state.borrow_mut();
             state.open = Some(path.to_owned());
+            state.tabs = self.tabs.borrow().clone();
             state.save(&self.vault.borrow().root);
         }
         self.editor.load(&title, &text);
         self.path.set_label(&format!("{}/{path}", display(&self.vault.borrow().root)));
+        self.note_view.set_active(true);
         self.stack.set_visible_child_name("note");
         self.refresh_backlinks();
         self.refresh_list();
+        self.refresh_tabs();
+        if self.find.reveals_child() {
+            self.found(self.editor.match_from_cursor());
+        }
+    }
+
+    fn refresh_tabs(self: &Rc<Self>) {
+        while let Some(child) = self.tab_strip.first_child() {
+            self.tab_strip.remove(&child);
+        }
+        let tabs = self.tabs.borrow();
+        self.tab_strip.set_visible(tabs.len() > 1);
+        let vault = self.vault.borrow();
+        for (index, path) in tabs.iter().enumerate() {
+            let title = vault.get(path).map(|note| note.title.clone()).unwrap_or_default();
+            let label = gtk::Label::builder().label(&title).ellipsize(pango::EllipsizeMode::End).max_width_chars(18).build();
+            let select = gtk::Button::builder().child(&label).build();
+            let close = gtk::Button::from_icon_name("window-close-symbolic");
+            close.add_css_class("close");
+            close.set_tooltip_text(Some("Close tab (Ctrl+W)"));
+            let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            tab.add_css_class("tab");
+            if index == self.tab.get() {
+                tab.add_css_class("current");
+            }
+            tab.append(&select);
+            tab.append(&close);
+            let (weak, path) = (Rc::downgrade(self), path.clone());
+            select.connect_clicked(move |_| {
+                if let Some(notes) = weak.upgrade() {
+                    notes.open(&path);
+                }
+            });
+            let weak = Rc::downgrade(self);
+            close.connect_clicked(move |_| {
+                if let Some(notes) = weak.upgrade() {
+                    notes.close_tab(index);
+                }
+            });
+            self.tab_strip.append(&tab);
+        }
+    }
+
+    fn close_tab(self: &Rc<Self>, index: usize) {
+        if self.tabs.borrow().len() < 2 || index >= self.tabs.borrow().len() {
+            return;
+        }
+        self.save();
+        self.tabs.borrow_mut().remove(index);
+        let current = self.tab.get();
+        let next = if index < current { current - 1 } else { current.min(self.tabs.borrow().len() - 1) };
+        self.tab.set(next);
+        let path = self.tabs.borrow()[next].clone();
+        self.open(&path);
+    }
+
+    fn cycle_tab(self: &Rc<Self>, step: isize) {
+        let count = self.tabs.borrow().len();
+        if count < 2 {
+            return;
+        }
+        let next = (self.tab.get() as isize + step).rem_euclid(count as isize) as usize;
+        let path = self.tabs.borrow()[next].clone();
+        self.open(&path);
+    }
+
+    /// Forgets tabs for notes that are gone.
+    fn prune_tabs(self: &Rc<Self>) {
+        let current = self.tabs.borrow().get(self.tab.get()).cloned();
+        self.tabs.borrow_mut().retain(|path| self.vault.borrow().get(path).is_some());
+        let tabs = self.tabs.borrow();
+        let index = current.and_then(|current| tabs.iter().position(|tab| *tab == current)).unwrap_or(0);
+        self.tab.set(index.min(tabs.len().saturating_sub(1)));
+        drop(tabs);
+        self.refresh_tabs();
+    }
+
+    fn quick_open(self: &Rc<Self>, new_tab: bool) {
+        if self.switcher.is_shown() && self.switch_to_new_tab.get() == new_tab {
+            self.switcher.hide();
+            return;
+        }
+        self.switch_to_new_tab.set(new_tab);
+        self.switcher.show(&self.vault.borrow());
+    }
+
+    fn show_view(self: &Rc<Self>, graph: bool) {
+        if graph {
+            self.graph.show(&self.vault.borrow(), self.current.borrow().as_deref());
+            self.stack.set_visible_child_name("graph");
+        } else {
+            self.stack.set_visible_child_name(if self.current.borrow().is_some() { "note" } else { "empty" });
+        }
+    }
+
+    fn connect_find(self: &Rc<Self>, previous: &gtk::Button, next: &gtk::Button, close: &gtk::Button, replace_one: &gtk::Button, replace_all: &gtk::Button) {
+        let weak = Rc::downgrade(self);
+        self.find_entry.connect_search_changed(move |entry| {
+            if let Some(notes) = weak.upgrade() {
+                notes.editor.find(&entry.text());
+                notes.found(notes.editor.match_from_cursor());
+            }
+        });
+        let step = |notes: &Rc<Self>, forward: bool| {
+            let count = notes.editor.match_count();
+            if count > 0 {
+                let index = notes.find_index.get();
+                notes.found(if forward { (index + 1) % count } else { (index + count - 1) % count });
+            }
+        };
+        let weak = Rc::downgrade(self);
+        self.find_entry.connect_activate(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                step(&notes, true);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.find_entry.connect_next_match(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                step(&notes, true);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.find_entry.connect_previous_match(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                step(&notes, false);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        next.connect_clicked(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                step(&notes, true);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        previous.connect_clicked(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                step(&notes, false);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.find_entry.connect_stop_search(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                notes.hide_find();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        close.connect_clicked(move |_| {
+            if let Some(notes) = weak.upgrade() {
+                notes.hide_find();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        replace_one.connect_clicked(move |_| {
+            let Some(notes) = weak.upgrade() else { return };
+            notes.editor.replace_match(notes.find_index.get(), &notes.replace_entry.text());
+            let count = notes.editor.match_count();
+            notes.found(notes.find_index.get().min(count.saturating_sub(1)));
+        });
+        let weak = Rc::downgrade(self);
+        replace_all.connect_clicked(move |_| {
+            let Some(notes) = weak.upgrade() else { return };
+            let replaced = notes.editor.replace_all(&notes.replace_entry.text());
+            notes.find_count.set_label(&format!("Replaced {replaced}"));
+        });
+    }
+
+    fn show_find(self: &Rc<Self>, replace: bool) {
+        if self.current.borrow().is_none() {
+            return;
+        }
+        self.note_view.set_active(true);
+        self.replace_row.set_visible(replace);
+        self.find.set_reveal_child(true);
+        // Start from the selection, as most editors do.
+        if let Some((start, end)) = self.editor.buffer.selection_bounds() {
+            let selected = self.editor.buffer.text(&start, &end, false);
+            if !selected.contains('\n') {
+                self.find_entry.set_text(&selected);
+            }
+        }
+        self.find_entry.grab_focus();
+        self.editor.find(&self.find_entry.text());
+        self.found(self.editor.match_from_cursor());
+    }
+
+    fn hide_find(self: &Rc<Self>) {
+        self.find.set_reveal_child(false);
+        self.editor.find("");
+        self.editor.view.grab_focus();
+    }
+
+    /// Selects match `index` and shows where it is in the count.
+    fn found(&self, index: usize) {
+        let count = self.editor.match_count();
+        self.find_index.set(index);
+        if count == 0 {
+            self.find_count.set_label(if self.find_entry.text().is_empty() { "" } else { "No matches" });
+            return;
+        }
+        self.editor.select_match(index);
+        self.find_count.set_label(&format!("{} of {count}", index + 1));
     }
 
     fn refresh_backlinks(self: &Rc<Self>) {
@@ -589,6 +927,7 @@ impl Notes {
         let full = self.vault.borrow().full_path(&fresh);
         if std::fs::read_to_string(&full).is_ok_and(|text| text.trim().is_empty()) && std::fs::remove_file(&full).is_ok() {
             self.vault.borrow_mut().notes.retain(|note| note.path != fresh);
+            self.tabs.borrow_mut().retain(|tab| *tab != fresh);
             self.refresh_sidebar();
         }
     }
@@ -608,7 +947,7 @@ impl Notes {
 
     /// Opens the note a link points at, creating it in the vault's top folder if it doesn't
     /// exist yet, as Obsidian does.
-    pub fn follow(self: &Rc<Self>, target: &str) {
+    pub fn follow(self: &Rc<Self>, target: &str, new_tab: bool) {
         self.save();
         let found = self.vault.borrow().resolve(target).map(|note| note.path.clone());
         let path = match found {
@@ -623,7 +962,7 @@ impl Notes {
                 path
             }
         };
-        self.open(&path);
+        self.show(&path, new_tab);
     }
 
     /// Renames the open note's file and points every link to it at the new name.
@@ -668,10 +1007,15 @@ impl Notes {
             for pinned in state.pinned.iter_mut().filter(|pinned| **pinned == old_path) {
                 *pinned = new_path.clone();
             }
+            for tab in self.tabs.borrow_mut().iter_mut().filter(|tab| **tab == old_path) {
+                *tab = new_path.clone();
+            }
             state.open = Some(new_path.clone());
+            state.tabs = self.tabs.borrow().clone();
             state.save(&self.vault.borrow().root);
         }
         self.current.replace(Some(new_path.clone()));
+        self.refresh_tabs();
         self.path.set_label(&format!("{}/{new_path}", display(&self.vault.borrow().root)));
         self.refresh_sidebar();
         self.refresh_list();
@@ -746,10 +1090,14 @@ impl Notes {
                 }
             }
         }
+        self.prune_tabs();
         self.watch();
         self.refresh_sidebar();
         self.refresh_list();
         self.refresh_backlinks();
+        if self.graph_view.is_active() {
+            self.show_view(true);
+        }
     }
 }
 

@@ -11,6 +11,8 @@ pub struct State {
     /// Note paths, relative to the vault.
     pub pinned: Vec<String>,
     pub open: Option<String>,
+    /// Notes open in tabs, in order.
+    pub tabs: Vec<String>,
 }
 
 fn file(root: &Path) -> PathBuf {

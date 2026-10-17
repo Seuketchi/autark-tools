@@ -310,3 +310,172 @@ button.backlink {
   font-size: 12px;
   color: #7A736A;
 }
+
+/* Note and Graph */
+
+.views {
+  padding: 2px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+}
+
+.views button {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.views button:checked {
+  background-color: @surface;
+  box-shadow: 0 1px 2px alpha(@text, 0.12);
+}
+
+.graph {
+  background-color: #FBFAF7;
+}
+
+.graph .caption {
+  margin: 0 0 14px 18px;
+  font-size: 12px;
+  color: #7A736A;
+}
+
+button.node label {
+  font-size: 12px;
+  color: #7A736A;
+}
+
+button.node label.current,
+button.node label.near {
+  color: @text;
+}
+
+button.node label.current {
+  font-weight: 600;
+}
+
+.dot {
+  border-radius: 999px;
+  background-color: #C9C2B6;
+}
+
+.dot.near {
+  background-color: #7FB89A;
+}
+
+.dot.current {
+  background-color: @accent;
+  box-shadow: 0 0 0 4px alpha(@accent, 0.20);
+}
+
+/* Tabs */
+
+.tab-strip {
+  padding: 6px 18px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+  background-color: #FBFAF7;
+}
+
+.tab {
+  padding: 0 4px 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: #7A736A;
+}
+
+.tab button {
+  min-height: 26px;
+}
+
+.tab.current {
+  background-color: @surface;
+  color: @text;
+  box-shadow: 0 1px 2px alpha(@text, 0.12);
+}
+
+.tab button.close {
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 5px;
+  opacity: 0.5;
+}
+
+.tab button.close:hover {
+  background-color: alpha(@text, 0.08);
+  opacity: 1;
+}
+
+/* Find and replace */
+
+.find {
+  padding: 10px 44px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+  background-color: #FBFAF7;
+}
+
+.find entry {
+  min-height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 7px;
+  background-color: alpha(@text, 0.06);
+  box-shadow: none;
+  outline: none;
+  color: @text;
+}
+
+.find button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+}
+
+.find button:hover {
+  background-color: alpha(@text, 0.06);
+}
+
+.find .count {
+  font-size: 12px;
+  color: #7A736A;
+  margin: 0 6px;
+}
+
+/* Quick switcher */
+
+.switcher {
+  margin-top: 90px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid alpha(@text, 0.10);
+  background-color: @surface;
+  box-shadow: 0 30px 80px rgba(70, 58, 40, 0.22);
+}
+
+.switcher entry {
+  min-height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 9px;
+  background-color: alpha(@text, 0.06);
+  box-shadow: none;
+  outline: none;
+  color: @text;
+  font-size: 15px;
+}
+
+.switcher button.result {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+}
+
+.switcher button.result.selected {
+  background-color: @accent_soft;
+}
+
+.switcher .folder-name {
+  font-size: 12px;
+  color: #7A736A;
+}

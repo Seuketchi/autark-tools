@@ -6,8 +6,10 @@
 
 mod config;
 mod editor;
+mod graph;
 mod markdown;
 mod state;
+mod switcher;
 mod vault;
 mod window;
 

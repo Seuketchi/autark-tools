@@ -11,7 +11,8 @@ use gtk::{gdk, pango};
 
 use crate::markdown::{self, Span, Style};
 
-type Callback<T> = RefCell<Option<Box<dyn Fn(T)>>>;
+/// A handler set once by the window.
+pub type Callback<T> = RefCell<Option<Box<dyn Fn(T)>>>;
 
 pub struct Editor {
     pub widget: gtk::ScrolledWindow,
@@ -25,9 +26,12 @@ pub struct Editor {
     loading: Cell<bool>,
     /// What the pointer pressed on, kept until release: the click itself moves the cursor and
     /// would reveal the markers it was aimed at.
-    pressed: RefCell<Option<(Span, bool)>>,
+    pressed: RefCell<Option<(Span, bool, bool)>>,
+    /// What the find bar looks for, and where it was found, as character ranges.
+    query: RefCell<String>,
+    matches: RefCell<Vec<(usize, usize)>>,
     on_edit: Callback<()>,
-    on_link: Callback<String>,
+    on_link: Callback<(String, bool)>,
     on_rename: Callback<String>,
 }
 
@@ -60,6 +64,8 @@ impl Editor {
             editing: Cell::new(None),
             loading: Cell::new(false),
             pressed: RefCell::default(),
+            query: RefCell::default(),
+            matches: RefCell::default(),
             on_edit: RefCell::default(),
             on_link: RefCell::default(),
             on_rename: RefCell::default(),
@@ -111,12 +117,12 @@ impl Editor {
             let span = (presses == 1).then(|| editor.span_at(x, y)).flatten();
             let ctrl = gesture.current_event_state().contains(gdk::ModifierType::CONTROL_MASK);
             let live = span.as_ref().is_some_and(|span| ctrl || editor.editing.get() != Some(editor.line_at(span.start)));
-            *editor.pressed.borrow_mut() = span.map(|span| (span, live));
+            *editor.pressed.borrow_mut() = span.map(|span| (span, live, ctrl));
         });
         let weak = Rc::downgrade(self);
         click.connect_released(move |_, _, x, y| {
             let Some(editor) = weak.upgrade() else { return };
-            let Some((span, live)) = editor.pressed.take() else { return };
+            let Some((span, live, ctrl)) = editor.pressed.take() else { return };
             if editor.span_at(x, y).as_ref() != Some(&span) {
                 return;
             }
@@ -124,7 +130,7 @@ impl Editor {
                 Style::Checkbox(checked) => editor.set_checked(span.start, !checked),
                 Style::Link(target) if live => {
                     if let Some(on_link) = &*editor.on_link.borrow() {
-                        on_link(target);
+                        on_link((target, ctrl));
                     }
                 }
                 _ => {}
@@ -163,8 +169,9 @@ impl Editor {
         *self.on_edit.borrow_mut() = Some(Box::new(move |()| f()));
     }
 
-    pub fn connect_link(&self, f: impl Fn(String) + 'static) {
-        *self.on_link.borrow_mut() = Some(Box::new(f));
+    /// Called with a link's target, and whether Ctrl was held (open it in a new tab).
+    pub fn connect_link(&self, f: impl Fn(String, bool) + 'static) {
+        *self.on_link.borrow_mut() = Some(Box::new(move |(target, new_tab)| f(target, new_tab)));
     }
 
     /// Called when the title loses focus, with the title as typed.
@@ -226,6 +233,61 @@ impl Editor {
             self.buffer.apply_tag_by_name(name, &from, &to);
         }
         self.spans.replace(spans);
+        let matches = find_all(&text, &self.query.borrow());
+        for &(start, end) in &matches {
+            self.buffer.apply_tag_by_name("match", &self.buffer.iter_at_offset(start as i32), &self.buffer.iter_at_offset(end as i32));
+        }
+        self.matches.replace(matches);
+    }
+
+    /// Marks every place `query` appears, ignoring case, and returns how many there are.
+    pub fn find(&self, query: &str) -> usize {
+        self.query.replace(query.to_owned());
+        self.highlight();
+        self.matches.borrow().len()
+    }
+
+    pub fn match_count(&self) -> usize {
+        self.matches.borrow().len()
+    }
+
+    /// The first match at or after the cursor, wrapping to the first one.
+    pub fn match_from_cursor(&self) -> usize {
+        let cursor = self.buffer.cursor_position() as usize;
+        self.matches.borrow().iter().position(|&(start, _)| start >= cursor).unwrap_or(0)
+    }
+
+    pub fn select_match(&self, index: usize) {
+        let Some(&(start, end)) = self.matches.borrow().get(index) else { return };
+        let (from, to) = (self.buffer.iter_at_offset(start as i32), self.buffer.iter_at_offset(end as i32));
+        self.buffer.select_range(&from, &to);
+        let mut from = from;
+        self.view.scroll_to_iter(&mut from, 0.1, false, 0.0, 0.0);
+    }
+
+    pub fn replace_match(&self, index: usize, with: &str) {
+        let Some(&(start, end)) = self.matches.borrow().get(index) else { return };
+        self.replace_range(start, end, with);
+    }
+
+    /// Replaces every match, as one step to undo, and returns how many there were.
+    pub fn replace_all(&self, with: &str) -> usize {
+        let matches = self.matches.borrow().clone();
+        self.buffer.begin_user_action();
+        for &(start, end) in matches.iter().rev() {
+            self.replace_range(start, end, with);
+        }
+        self.buffer.end_user_action();
+        matches.len()
+    }
+
+    fn replace_range(&self, start: usize, end: usize, with: &str) {
+        let mut from = self.buffer.iter_at_offset(start as i32);
+        let mut to = self.buffer.iter_at_offset(end as i32);
+        self.buffer.begin_user_action();
+        self.buffer.delete(&mut from, &mut to);
+        self.buffer.insert(&mut from, with);
+        self.buffer.end_user_action();
     }
 
     fn follow_cursor(&self) {
@@ -303,6 +365,27 @@ impl Editor {
     }
 }
 
+/// Where `query` appears in `text`, ignoring case, as character ranges that don't overlap.
+fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
+    let fold = |c: char| c.to_lowercase().next().unwrap_or(c);
+    let query: Vec<char> = query.chars().map(fold).collect();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let text: Vec<char> = text.chars().map(fold).collect();
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i + query.len() <= text.len() {
+        if text[i..i + query.len()] == query[..] {
+            found.push((i, i + query.len()));
+            i += query.len();
+        } else {
+            i += 1;
+        }
+    }
+    found
+}
+
 fn create_tags(buffer: &gtk::TextBuffer) {
     let table = buffer.tag_table();
     let tag = |name: &str| {
@@ -344,4 +427,16 @@ fn create_tags(buffer: &gtk::TextBuffer) {
     done.set_foreground(Some("#7A736A"));
     // Find matches, used by the find bar.
     tag("match").set_background(Some("#F1E3B5"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_all;
+
+    #[test]
+    fn find_ignores_case_and_counts_characters() {
+        assert_eq!(find_all("Kith’s kith KITH", "kith"), [(0, 4), (7, 11), (12, 16)]);
+        assert_eq!(find_all("aaaa", "aa"), [(0, 2), (2, 4)]);
+        assert!(find_all("text", "").is_empty());
+    }
 }
