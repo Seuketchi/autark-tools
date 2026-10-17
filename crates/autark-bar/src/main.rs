@@ -1,9 +1,10 @@
-//! Top bar: app menu, clock, Wi-Fi, battery, volume, notification centre button.
+//! Top bar: app menu, clock, Wi-Fi, battery, volume, Kith, notification centre button.
 
 mod app_name;
 mod battery;
 mod clock;
 mod config;
+mod kith;
 mod logo;
 mod menu;
 mod notifications;
@@ -38,6 +39,7 @@ struct Sources {
     battery: Shared<Option<battery::Level>>,
     clock: Shared<String>,
     notifications: Shared<bool>,
+    kith: Shared<kith::Kith>,
 }
 
 fn start(app: &gtk::Application) {
@@ -58,6 +60,7 @@ fn start(app: &gtk::Application) {
         battery: battery::source(),
         clock: clock::source(&config.clock_format),
         notifications: notifications::source(),
+        kith: kith::source(),
     });
 
     let watched = sources.clone();
@@ -118,6 +121,7 @@ fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk
     end.append(&wifi::view(&sources.wifi));
     end.append(&volume::view(&sources.volume));
     end.append(&battery::view(&sources.battery, &sources.battery_percent));
+    end.append(&kith::view(&sources.kith));
     end.append(&clock::view(&sources.clock));
     end.append(&notifications::view(&sources.notifications));
 

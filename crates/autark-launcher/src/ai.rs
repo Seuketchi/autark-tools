@@ -17,6 +17,10 @@ pub trait Ai {
     fn history(&self) -> zbus::Result<String>;
     fn clear_history(&self) -> zbus::Result<()>;
     fn stop(&self, id: u32) -> zbus::Result<()>;
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn state(&self) -> zbus::Result<String>;
+    #[zbus(signal)]
+    fn state_changed(&self, state: String) -> zbus::Result<()>;
     #[zbus(signal)]
     fn answer_piece(&self, id: u32, offset: u32, text: String) -> zbus::Result<()>;
     #[zbus(signal)]

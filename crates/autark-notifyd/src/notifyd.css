@@ -266,21 +266,6 @@ window.notifications {
   font-feature-settings: "tnum";
 }
 
-.kith-face {
-  min-height: 22px;
-  padding: 0 6px;
-  border-radius: 7px;
-  background-color: #1F2A25;
-}
-
-.kith-face .eye {
-  min-width: 4px;
-  min-height: 4px;
-  border-radius: 2px;
-  background-color: #9FD3B5;
-  box-shadow: 0 0 4px #9FD3B5;
-}
-
 .widget .when {
   font-size: 12px;
   font-weight: 600;

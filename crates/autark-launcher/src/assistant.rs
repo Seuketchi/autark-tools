@@ -15,6 +15,7 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use serde_json::Value;
 
 use crate::ai::{self, describe, said};
+use crate::face::Face;
 
 /// An answer still being written, so its pieces can be added as they arrive.
 struct Writing {
@@ -36,6 +37,7 @@ pub struct Panel {
     thinking: gtk::Label,
     sending: Cell<bool>,
     listening: Cell<bool>,
+    _face: Rc<Face>,
 }
 
 impl Panel {
@@ -50,7 +52,7 @@ impl Panel {
         window.set_keyboard_mode(KeyboardMode::OnDemand);
         window.add_css_class("assistant-window");
 
-        let face = face();
+        let face = Face::new(34);
         let title = gtk::Label::new(Some("Kith"));
         title.add_css_class("assistant-title");
         let pill = gtk::Label::new(Some("Ollama · on this laptop"));
@@ -64,7 +66,7 @@ impl Panel {
         spacer.set_hexpand(true);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         header.add_css_class("assistant-header");
-        for widget in [face.upcast_ref::<gtk::Widget>(), title.upcast_ref(), pill.upcast_ref(), spacer.upcast_ref(), memory.upcast_ref(), clear.upcast_ref()] {
+        for widget in [face.visor.widget().upcast_ref::<gtk::Widget>(), title.upcast_ref(), pill.upcast_ref(), spacer.upcast_ref(), memory.upcast_ref(), clear.upcast_ref()] {
             header.append(widget);
         }
 
@@ -78,6 +80,7 @@ impl Panel {
         let status = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(30).visible(false).build();
         status.add_css_class("assistant-status");
         let entry = gtk::Entry::builder().placeholder_text("Message Kith").hexpand(true).build();
+        face.listen_to(&entry);
         let send = gtk::Button::builder().icon_name("go-up-symbolic").focus_on_click(false).tooltip_text("Send").valign(gtk::Align::Center).build();
         send.add_css_class("assistant-send");
         let input = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -101,8 +104,20 @@ impl Panel {
         panel_box.append(&bottom);
         window.set_child(Some(&panel_box));
 
-        let panel =
-            Rc::new(Self { window, list, scroller, entry, memory, status, shown: RefCell::default(), writing: RefCell::default(), thinking, sending: Cell::new(false), listening: Cell::new(false) });
+        let panel = Rc::new(Self {
+            window,
+            list,
+            scroller,
+            entry,
+            memory,
+            status,
+            shown: RefCell::default(),
+            writing: RefCell::default(),
+            thinking,
+            sending: Cell::new(false),
+            listening: Cell::new(false),
+            _face: face,
+        });
 
         let send_message = {
             let panel = Rc::downgrade(&panel);
@@ -396,20 +411,6 @@ impl Panel {
 enum Event {
     Changed,
     Piece(u32, u32, String),
-}
-
-/// Kith's face as the design draws it: a dark visor with two eyes.
-fn face() -> gtk::Box {
-    let face = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-    face.add_css_class("kith-face");
-    face.set_valign(gtk::Align::Center);
-    for _ in 0..2 {
-        let eye = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        eye.add_css_class("eye");
-        eye.set_valign(gtk::Align::Center);
-        face.append(&eye);
-    }
-    face
 }
 
 fn bubble_label(text: &str) -> gtk::Label {

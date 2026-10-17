@@ -4,6 +4,7 @@
 //! Kith's own box arrive through `autark-ai` once it serves them. Suggestions are `autark-ai`'s,
 //! read again whenever its conversation changes, and answered through it.
 
+use autark_common::visor::{State, Visor};
 use gtk::glib;
 use gtk::prelude::*;
 
@@ -79,6 +80,10 @@ fn when(next: u64, now: &glib::DateTime) -> String {
 pub trait Ai {
     fn open_suggestions(&self) -> zbus::Result<String>;
     fn answer_suggestion(&self, entry: u64, answer: &str) -> zbus::Result<String>;
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn state(&self) -> zbus::Result<String>;
+    #[zbus(signal)]
+    fn state_changed(&self, state: String) -> zbus::Result<()>;
     #[zbus(signal)]
     fn history_changed(&self) -> zbus::Result<()>;
 }
@@ -120,21 +125,12 @@ impl Answer {
     }
 }
 
-pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion: &Shared<Option<Suggestion>>, on_answer: impl Fn(Answer) + 'static) -> gtk::Box {
-    let face = gtk::Box::new(gtk::Orientation::Horizontal, 3);
-    face.add_css_class("kith-face");
-    face.set_valign(gtk::Align::Center);
-    face.set_halign(gtk::Align::Start);
-    for _ in 0..2 {
-        let eye = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        eye.add_css_class("eye");
-        eye.set_valign(gtk::Align::Center);
-        face.append(&eye);
-    }
+pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion: &Shared<Option<Suggestion>>, kith: &Shared<State>, on_answer: impl Fn(Answer) + 'static) -> gtk::Box {
+    let face = Visor::new(24);
     let up_next = gtk::Label::builder().label("Up next").xalign(1.0).hexpand(true).build();
     up_next.add_css_class("detail");
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header.append(&face);
+    header.append(face.widget());
     header.append(&super::caption("KITH"));
     header.append(&up_next);
 
@@ -201,6 +197,7 @@ pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion:
     // "Sun" becomes "18:30" on the day.
     let tasks_now = tasks.clone();
     now.watch(&card, move |_, _| refresh(&tasks_now.get()));
+    kith.watch(&card, move |_, state| face.set_state(*state));
     suggestion.watch(&card, move |_, suggestion| {
         suggestion_box.set_visible(suggestion.is_some());
         if let Some(suggestion) = suggestion {

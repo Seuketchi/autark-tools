@@ -35,6 +35,8 @@ pub struct Sources {
     feed: Shared<Feed>,
     tasks: Shared<Vec<kith::Task>>,
     suggestion: Shared<Option<kith::Suggestion>>,
+    /// What Kith is doing, for its face.
+    kith: Shared<autark_common::visor::State>,
     note: Rc<note::Source>,
     weather: Shared<Option<weather::Weather>>,
     settings: Shared<Settings>,
@@ -54,6 +56,7 @@ impl Sources {
             feed: Shared::new(Feed::Waiting),
             tasks: Shared::new(Vec::new()),
             suggestion: Shared::new(None),
+            kith: Shared::new(autark_common::visor::State::Idle),
             note: note::Source::new(config.note.clone()),
             weather: Shared::new(None),
             settings: Shared::new(Settings::load()),
@@ -181,15 +184,30 @@ async fn follow_suggestions(sources: Weak<Sources>) {
         let connection = zbus::Connection::session().await?;
         let ai = kith::AiProxy::new(&connection).await?;
         let mut changes = ai.receive_history_changed().await?;
+        let mut states = ai.receive_state_changed().await?;
+        if let (Some(sources), Ok(state)) = (sources.upgrade(), ai.state().await) {
+            sources.kith.set(autark_common::visor::State::from_word(&state));
+        }
         loop {
-            let Some(sources) = sources.upgrade() else { return Ok::<(), zbus::Error>(()) };
+            let Some(live) = sources.upgrade() else { return Ok::<(), zbus::Error>(()) };
             let found = ai.open_suggestions().await.ok().and_then(|json| kith::newest(&json));
-            if sources.suggestion.get() != found {
-                sources.suggestion.set(found);
+            if live.suggestion.get() != found {
+                live.suggestion.set(found);
             }
-            drop(sources);
-            let again = std::pin::pin!(glib::timeout_future(SUGGESTIONS_AGAIN));
-            futures_util::future::select(again, changes.next()).await;
+            drop(live);
+            // Kith's state changes often while it answers, so it's handled here without reading suggestions again.
+            loop {
+                let again = std::pin::pin!(glib::timeout_future(SUGGESTIONS_AGAIN));
+                let state = std::pin::pin!(states.next());
+                let changed = std::pin::pin!(changes.next());
+                match futures_util::future::select(futures_util::future::select(again, changed), state).await {
+                    futures_util::future::Either::Right((Some(signal), _)) => {
+                        let Some(live) = sources.upgrade() else { return Ok(()) };
+                        live.kith.set(autark_common::visor::State::from_word(&signal.args()?.state));
+                    }
+                    _ => break,
+                }
+            }
         }
     };
     if let Err(err) = followed.await {
@@ -236,7 +254,7 @@ pub fn page(sources: &Rc<Sources>) -> (gtk::Box, gtk::MenuButton) {
 
     let weather = weather::view(&sources.weather);
     let me = Rc::downgrade(sources);
-    let kith = kith::view(&sources.tasks, &sources.now, &sources.suggestion, move |answer| {
+    let kith = kith::view(&sources.tasks, &sources.now, &sources.suggestion, &sources.kith, move |answer| {
         if let Some(sources) = me.upgrade() {
             sources.answer(answer);
         }

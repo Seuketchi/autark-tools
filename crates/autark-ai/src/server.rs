@@ -1,7 +1,7 @@
 //! `org.autark.AI1` on the session bus.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -35,6 +35,40 @@ pub struct Ai {
     stopped: Arc<Mutex<HashSet<u32>>>,
     chat: Arc<Mutex<Chat>>,
     suggestions: Mutex<suggest::Policy>,
+    busy: Arc<Busy>,
+}
+
+/// What Kith is doing, for its face: thinking while a sentence is routed or an answer hasn't started, speaking
+/// while one is written. Counted, since several can be under way.
+#[derive(Default)]
+struct Busy {
+    thinking: AtomicI32,
+    speaking: AtomicI32,
+    said: Mutex<&'static str>,
+}
+
+impl Busy {
+    fn state(&self) -> &'static str {
+        if self.speaking.load(Ordering::SeqCst) > 0 {
+            "speaking"
+        } else if self.thinking.load(Ordering::SeqCst) > 0 {
+            "thinking"
+        } else {
+            "idle"
+        }
+    }
+
+    /// Adds to the counts, and returns the new state if it changed.
+    fn change(&self, thinking: i32, speaking: i32) -> Option<&'static str> {
+        self.thinking.fetch_add(thinking, Ordering::SeqCst);
+        self.speaking.fetch_add(speaking, Ordering::SeqCst);
+        let state = self.state();
+        let mut said = self.said.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        (*said != state).then(|| {
+            *said = state;
+            state
+        })
+    }
 }
 
 impl Ai {
@@ -47,6 +81,7 @@ impl Ai {
             stopped: Arc::default(),
             chat: Arc::new(Mutex::new(Chat::load())),
             suggestions: Mutex::new(suggest::Policy::load()),
+            busy: Arc::new(Busy { said: Mutex::new("idle"), ..Default::default() }),
         }
     }
 
@@ -94,6 +129,7 @@ impl Ai {
         let emitter = emitter.into_owned();
         let ollama = self.ollama();
         let stopped = self.stopped.clone();
+        let busy = self.busy.clone();
         let chat = ask.entry.map(|entry| (self.chat.clone(), entry));
         if let Some((chat, entry)) = &chat {
             let mut chat = lock(chat);
@@ -102,12 +138,25 @@ impl Ai {
             }
         }
         std::thread::spawn(move || {
+            let announce = |state: Option<&'static str>| {
+                if let Some(state) = state
+                    && let Err(err) = async_io::block_on(Ai::state_changed(&emitter, state))
+                {
+                    eprintln!("ai: sending Kith's state: {err}");
+                }
+            };
+            announce(busy.change(1, 0));
+            let mut started = false;
             let user = if ask.context.is_empty() { ask.prompt.clone() } else { format!("{}\n\nQuestion: {}", ask.context, ask.prompt) };
             let start = Instant::now();
             let mut text = String::new();
             let result = ollama.stream(&ask.system, &user, |piece| {
                 if stopped.lock().map(|mut stopped| stopped.remove(&id)).unwrap_or(false) {
                     return false;
+                }
+                if !started {
+                    started = true;
+                    announce(busy.change(-1, 1));
                 }
                 let offset = text.len() as u32;
                 text.push_str(piece);
@@ -127,6 +176,7 @@ impl Ai {
                 input.extend(logged);
             }
             log::record(if chat.is_some() { "chat" } else { "ask" }, "ollama", input, &answer, start.elapsed());
+            announce(if started { busy.change(0, -1) } else { busy.change(-1, 0) });
             let error = answer.err().unwrap_or_default();
             if let Ok(mut stopped) = stopped.lock() {
                 stopped.remove(&id);
@@ -152,13 +202,23 @@ impl Ai {
     }
 
     /// Routes `text`, with the conversation so far when there is one.
-    async fn routed(&self, text: &str, conversation: &str) -> Result<route::Routed, Error> {
+    async fn routed(&self, emitter: &SignalEmitter<'_>, text: &str, conversation: &str) -> Result<route::Routed, Error> {
         self.allowed(self.config().features.route, "route")?;
         let facts = memory::facts();
         let candidates = route::candidates(text, &facts);
         let user = route::user(text, &candidates, conversation);
+        self.announce(emitter, self.busy.change(1, 0)).await;
         let answer = self.json("route", json!(text), route::system_prompt(&facts), user, route::schema(&candidates)).await;
+        self.announce(emitter, self.busy.change(-1, 0)).await;
         answer.and_then(|answer| route::parse(answer, text, &candidates, &facts)).map_err(Error::Engine)
+    }
+
+    async fn announce(&self, emitter: &SignalEmitter<'_>, state: Option<&'static str>) {
+        if let Some(state) = state
+            && let Err(err) = Ai::state_changed(emitter, state).await
+        {
+            eprintln!("ai: sending Kith's state: {err}");
+        }
     }
 
     pub fn limits(&self) -> suggest::Limits {
@@ -262,8 +322,8 @@ impl Ai {
     /// Turns a sentence into the actions it asks for, the question it asks and a fact to propose remembering,
     /// as JSON: `{"actions":[{"action":"mute","on":true,"confidence":0.97}],"question":"Why did my build stop?",
     /// "files":["~/autark/log.md"],"remember":"","confidence":0.9,"engine":"ollama"}`.
-    async fn route(&self, text: String) -> Result<String, Error> {
-        let routed = self.routed(&text, "").await?;
+    async fn route(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
+        let routed = self.routed(&emitter, &text, "").await?;
         serde_json::to_string(&routed).map_err(|err| Error::Engine(err.to_string()))
     }
 
@@ -272,7 +332,7 @@ impl Ai {
     /// `memory_entry` (0 for none). Then `ChatAnswer`, `ChatAct` and `Remember` carry on from here.
     async fn chat(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
         let conversation = lock(&self.chat).transcript();
-        let routed = self.routed(&text, &conversation).await;
+        let routed = self.routed(&emitter, &text, &conversation).await;
         let entries = self
             .change(&emitter, |chat| {
                 chat.said(&text);
@@ -570,6 +630,16 @@ impl Ai {
 
     #[zbus(signal)]
     async fn answer_done(emitter: &SignalEmitter<'_>, id: u32, error: &str) -> zbus::Result<()>;
+
+    /// What Kith is doing, for its face: `idle`, `thinking` or `speaking`.
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn state(&self) -> &str {
+        self.busy.state()
+    }
+
+    /// `State` changed.
+    #[zbus(signal)]
+    async fn state_changed(emitter: &SignalEmitter<'_>, state: &str) -> zbus::Result<()>;
 
     /// A new suggestion, as conversation entry `entry`.
     #[zbus(signal)]

@@ -10,6 +10,8 @@ pub mod desktop;
 pub mod files;
 pub mod stats;
 pub mod theme;
+#[cfg(feature = "style")]
+pub mod visor;
 pub mod wallpaper;
 #[cfg(feature = "toplevels")]
 pub mod toplevels;

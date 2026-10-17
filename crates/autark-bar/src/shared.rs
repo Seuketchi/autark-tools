@@ -23,6 +23,13 @@ impl<T: 'static> Shared<T> {
         Self { inner: Rc::new(RefCell::new((value, Vec::new()))) }
     }
 
+    pub fn get(&self) -> T
+    where
+        T: Clone,
+    {
+        self.inner.borrow().0.clone()
+    }
+
     pub fn set(&self, value: T) {
         // Listeners run without the borrow held, so they may read the value themselves.
         let mut listeners = {

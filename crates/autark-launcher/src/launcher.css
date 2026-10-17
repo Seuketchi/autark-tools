@@ -135,10 +135,6 @@ window.launcher {
   font-size: 18px;
 }
 
-.header .kith-mark {
-  font-size: 20px;
-}
-
 .kith {
   padding: 4px 20px 16px;
   border-top: 1px solid alpha(@text, 0.08);
@@ -339,21 +335,6 @@ window.assistant-window {
 .assistant-title {
   font-size: 15px;
   font-weight: 600;
-}
-
-.kith-face {
-  min-width: 18px;
-  min-height: 22px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background-color: #24221E;
-}
-
-.kith-face .eye {
-  min-width: 5px;
-  min-height: 9px;
-  border-radius: 3px;
-  background-color: #7FC1A1;
 }
 
 button.assistant-memory {

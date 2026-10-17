@@ -151,6 +151,7 @@ dependencies = [
  "gtk4",
  "gtk4-layer-shell",
  "serde",
+ "serde_json",
  "zbus",
 ]
 

@@ -7,6 +7,7 @@
 mod actions;
 mod ai;
 mod assistant;
+mod face;
 mod kith;
 mod search;
 
@@ -76,7 +77,8 @@ struct Launcher {
     window: gtk::ApplicationWindow,
     dialog: gtk::Box,
     search_icon: gtk::Image,
-    kith_mark: gtk::Label,
+    /// Kith's face, in place of the search icon while Kith answers.
+    kith_face: Rc<face::Face>,
     entry: gtk::Entry,
     results: gtk::Box,
     scroller: gtk::ScrolledWindow,
@@ -112,8 +114,8 @@ impl Launcher {
         let search_icon = gtk::Image::from_icon_name("system-search-symbolic");
         search_icon.set_pixel_size(20);
         search_icon.add_css_class("search-icon");
-        let kith_mark = kith_mark();
-        kith_mark.set_visible(false);
+        let kith_face = face::Face::new(30);
+        kith_face.visor.widget().set_visible(false);
         let entry = gtk::Entry::builder()
             .placeholder_text("Search apps, files and actions")
             .hexpand(true)
@@ -124,7 +126,7 @@ impl Launcher {
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         header.add_css_class("header");
         header.append(&search_icon);
-        header.append(&kith_mark);
+        header.append(kith_face.visor.widget());
         header.append(&entry);
         header.append(&esc);
 
@@ -188,7 +190,7 @@ impl Launcher {
             window,
             dialog: dialog.clone(),
             search_icon,
-            kith_mark,
+            kith_face,
             entry,
             results,
             scroller,
@@ -302,7 +304,7 @@ impl Launcher {
         self.asking.set(true);
         self.dialog.add_css_class("asking");
         self.search_icon.set_visible(false);
-        self.kith_mark.set_visible(true);
+        self.kith_face.visor.widget().set_visible(true);
         self.scroller.set_visible(false);
         self.footer.set_visible(false);
         self.kith.root.set_visible(true);
@@ -324,7 +326,7 @@ impl Launcher {
         self.kith.cancel();
         self.dialog.remove_css_class("asking");
         self.search_icon.set_visible(true);
-        self.kith_mark.set_visible(false);
+        self.kith_face.visor.widget().set_visible(false);
         self.scroller.set_visible(true);
         self.footer.set_visible(true);
         self.kith.root.set_visible(false);

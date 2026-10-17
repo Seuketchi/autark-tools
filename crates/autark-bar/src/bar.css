@@ -162,3 +162,10 @@ popover.panel switch {
 popover.panel switch:checked {
   background-color: @accent;
 }
+
+.kith-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 3px;
+  background-color: @accent;
+}
