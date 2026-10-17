@@ -130,6 +130,7 @@ version = "0.0.0"
 dependencies = [
  "async-channel",
  "autark-common",
+ "bindgen 0.69.5",
  "chrono",
  "futures-util",
  "gtk4",

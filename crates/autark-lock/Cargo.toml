@@ -17,3 +17,8 @@ pam-client = "0.5.0"
 serde = { version = "1.0.229", features = ["derive"] }
 zbus = "6.0.0"
 zeroize = "1.9.1"
+
+# pam-sys's bindgen and PipeWire's share clang-sys, whose `runtime` feature PipeWire turns on;
+# this turns on the matching bindgen feature so a whole-workspace build loads libclang.
+[build-dependencies]
+bindgen = { version = "0.69", default-features = false, features = ["runtime"] }
