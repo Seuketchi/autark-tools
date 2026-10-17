@@ -23,8 +23,10 @@ cd "$srcdir"
 source "$RECIPES/$PACKAGE.sh"
 case "${1:-}" in
   *.tar.*|*.tgz|*.tbz2)
-    # sed reads all of tar's output: head would kill tar with SIGPIPE, which pipefail makes fatal.
-    dir=$(tar -tf "$1" | sed -n '1s|/.*||p')
+    # The first entry's top folder, which OpenSSH lists without a slash. sed reads all of tar's output: head
+    # would kill tar with SIGPIPE, which pipefail makes fatal.
+    dir=$(tar -tf "$1" | sed -n '1{s|^\./||;s|/.*||;p}')
+    [ -n "$dir" ] || { echo "can't tell $1's top folder"; exit 1; }
     tar -xf "$1"
     cd "$dir" ;;
 esac
