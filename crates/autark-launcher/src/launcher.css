@@ -1,0 +1,125 @@
+window.launcher {
+  background: none;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+.backdrop {
+  background-color: rgba(246, 244, 239, 0.40);
+}
+
+.dialog {
+  min-width: 640px;
+  margin-top: 144px;
+  background-color: rgba(255, 255, 255, 0.82);
+  border: 1px solid alpha(@text, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(70, 58, 40, 0.2);
+}
+
+.header {
+  min-height: 60px;
+  padding: 0 20px;
+}
+
+.search-icon {
+  color: @text2;
+}
+
+.header entry {
+  min-height: 40px;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: @text;
+  font-size: 20px;
+}
+
+.header entry text placeholder {
+  color: #7A736A;
+}
+
+.key {
+  padding: 2px 8px;
+  border: 1px solid alpha(@text, 0.14);
+  border-radius: 6px;
+  color: @text2;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+}
+
+.results {
+  padding: 8px;
+  border-top: 1px solid alpha(@text, 0.08);
+}
+
+.group {
+  padding: 10px 12px 4px;
+  color: #7A736A;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.row {
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 10px;
+}
+
+.row .title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.row .detail {
+  color: @text2;
+  font-size: 12px;
+}
+
+.row .open {
+  opacity: 0;
+  color: @accent_soft;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+}
+
+.row.selected {
+  background-color: @accent;
+  color: @surface;
+}
+
+.row.selected .detail {
+  color: @accent_soft;
+}
+
+.row.selected .open {
+  opacity: 1;
+}
+
+.glyph {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.10);
+}
+
+.row.selected .glyph {
+  background-color: rgba(20, 23, 28, 0.14);
+}
+
+.empty {
+  padding: 28px 12px;
+  color: @text2;
+  font-size: 14px;
+}
+
+.footer {
+  padding: 10px 20px;
+  border-top: 1px solid alpha(@text, 0.08);
+  color: #7A736A;
+  font-size: 12px;
+}

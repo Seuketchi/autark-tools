@@ -116,6 +116,13 @@ version = "0.0.0"
 [[package]]
 name = "autark-launcher"
 version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "gtk4-layer-shell",
+ "serde",
+ "zbus",
+]
 
 [[package]]
 name = "autark-lock"
