@@ -127,6 +127,15 @@ button.result .pane-name {
   font-weight: 600;
 }
 
+.about {
+  padding-top: 12px;
+}
+
+.about-name {
+  font-size: 28px;
+  font-weight: 600;
+}
+
 .pane-note {
   font-size: 13px;
   color: @text2;
