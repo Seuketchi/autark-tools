@@ -9,7 +9,7 @@ use zbus::object_server::SignalEmitter;
 
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{check, log, route};
+use crate::{act, check, log, route};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -150,6 +150,16 @@ impl Ai {
             }
         });
         Ok(id)
+    }
+
+    /// Runs actions as `Route` gives them (a JSON array of `{"action": …}`), once you've chosen them, and
+    /// says how each went: empty for done, else why not. Code runs them, with AI on or off.
+    async fn act(&self, #[zbus(connection)] connection: &zbus::Connection, actions: String) -> Result<Vec<String>, Error> {
+        let parsed: Vec<route::Action> = serde_json::from_str(&actions).map_err(|err| Error::Engine(format!("not actions from the catalog: {err}")))?;
+        let start = Instant::now();
+        let results = act::run(connection, &parsed).await;
+        log::record("act", "code", serde_json::from_str(&actions).unwrap_or(Value::Null), &Ok(json!(results)), start.elapsed());
+        Ok(results)
     }
 
     /// The models pulled into Ollama, for Settings to choose from. Asks nothing of a model, so it answers

@@ -1,0 +1,149 @@
+//! `Act`: runs the actions `Route` picked, once you've chosen them, through each tool's own interface:
+//! volume through WirePlumber's `wpctl`, brightness, lock and sleep through logind, Wi-Fi through iwd, Focus
+//! through the notification centre and night light through `autark-nightlight`. Apps open from their
+//! desktop entries. The model never reaches here; only actions from the catalog, checked again.
+
+use std::collections::HashMap;
+
+use autark_common::backlight::Backlight;
+use zbus::{OwnedObjectPath, OwnedVariant};
+
+use crate::route::Action;
+
+#[zbus::proxy(interface = "org.freedesktop.login1.Session", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1/session/auto")]
+trait Session {
+    fn lock(&self) -> zbus::Result<()>;
+    fn set_brightness(&self, subsystem: &str, name: &str, brightness: u32) -> zbus::Result<()>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.login1.Manager", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1")]
+trait Login {
+    fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+}
+
+#[zbus::proxy(interface = "net.connman.iwd.Device", default_service = "net.connman.iwd")]
+trait WifiDevice {
+    #[zbus(property)]
+    fn set_powered(&self, value: bool) -> zbus::Result<()>;
+}
+
+#[zbus::proxy(interface = "org.autark.Notifications1", default_service = "org.freedesktop.Notifications", default_path = "/org/autark/Notifications")]
+trait Notifications {
+    fn set_focus(&self, on: bool) -> zbus::Result<()>;
+}
+
+#[zbus::proxy(interface = "org.autark.NightLight1", default_service = "org.autark.NightLight1", default_path = "/org/autark/NightLight1")]
+trait NightLight {
+    fn set_active(&self, on: bool) -> zbus::Result<()>;
+}
+
+/// Runs each action and says how each went: empty for done, else why not, in the order given. Lock and
+/// sleep go last, so "mute and lock" mutes first.
+pub async fn run(session: &zbus::Connection, actions: &[Action]) -> Vec<String> {
+    let mut order: Vec<usize> = (0..actions.len()).collect();
+    order.sort_by_key(|at| matches!(actions[*at], Action::Lock | Action::Sleep));
+    let mut results = vec![String::new(); actions.len()];
+    let mut system = None;
+    for at in order {
+        results[at] = one(session, &mut system, &actions[at]).await.err().unwrap_or_default();
+    }
+    results
+}
+
+async fn one(session: &zbus::Connection, system: &mut Option<zbus::Connection>, action: &Action) -> Result<(), String> {
+    match action {
+        Action::SetVolume { percent } => wpctl(&["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{}%", (*percent).min(100))]).await,
+        Action::Mute { on } => wpctl(&["set-mute", "@DEFAULT_AUDIO_SINK@", if *on { "1" } else { "0" }]).await,
+        Action::SetBrightness { percent } => {
+            let backlight = Backlight::find().ok_or("this laptop has no backlight to set")?;
+            let value = backlight.value(f64::from((*percent).clamp(5, 100)));
+            let connection = system_bus(system).await?;
+            let result = async { SessionProxy::new(&connection).await?.set_brightness("backlight", &backlight.name, value).await };
+            result.await.map_err(|error| said("logind", error))
+        }
+        Action::Wifi { on } => {
+            let connection = system_bus(system).await?;
+            let devices = wifi_devices(&connection).await.map_err(|error| said("iwd", error))?;
+            if devices.is_empty() {
+                return Err("there's no Wi-Fi device".to_owned());
+            }
+            for device in devices {
+                let result = async { WifiDeviceProxy::builder(&connection).path(device).build().await?.set_powered(*on).await };
+                result.await.map_err(|error| said("iwd", error))?;
+            }
+            Ok(())
+        }
+        Action::Focus { on } => {
+            let result = async { NotificationsProxy::new(session).await?.set_focus(*on).await };
+            result.await.map_err(|error| said("the notification centre", error))
+        }
+        Action::NightLight { on } => {
+            let result = async { NightLightProxy::new(session).await?.set_active(*on).await };
+            result.await.map_err(|error| said("autark-nightlight", error))
+        }
+        Action::Lock => {
+            let connection = system_bus(system).await?;
+            let result = async { SessionProxy::new(&connection).await?.lock().await };
+            result.await.map_err(|error| said("logind", error))
+        }
+        Action::Sleep => {
+            let connection = system_bus(system).await?;
+            let result = async { LoginProxy::new(&connection).await?.suspend(true).await };
+            result.await.map_err(|error| said("logind", error))
+        }
+        Action::OpenApp { name } => open(name),
+    }
+}
+
+async fn system_bus(system: &mut Option<zbus::Connection>) -> Result<zbus::Connection, String> {
+    if let Some(connection) = system {
+        return Ok(connection.clone());
+    }
+    let connection = zbus::Connection::system().await.map_err(|error| format!("the system bus: {error}"))?;
+    *system = Some(connection.clone());
+    Ok(connection)
+}
+
+async fn wifi_devices(connection: &zbus::Connection) -> zbus::Result<Vec<OwnedObjectPath>> {
+    let objects = zbus::fdo::ObjectManagerProxy::builder(connection).destination("net.connman.iwd").path("/").build().await?.get_managed_objects().await?;
+    let devices = objects
+        .into_iter()
+        .filter(|(_, interfaces): &(OwnedObjectPath, std::collections::BTreeMap<zbus::names::OwnedInterfaceName, HashMap<String, OwnedVariant>>)| {
+            interfaces.keys().any(|name| name.as_str() == "net.connman.iwd.Device")
+        })
+        .map(|(path, _)| path)
+        .collect();
+    Ok(devices)
+}
+
+/// WirePlumber owns the hardware volume, so a volume set on the PipeWire node directly doesn't stick.
+async fn wpctl(args: &[&str]) -> Result<(), String> {
+    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+    let status = blocking::unblock(move || std::process::Command::new("wpctl").args(&args).status()).await.map_err(|error| format!("wpctl: {error}"))?;
+    if status.success() { Ok(()) } else { Err(format!("wpctl failed ({status})")) }
+}
+
+/// Starts the app in a process group of its own, so it outlives `autark-ai` restarting.
+fn open(name: &str) -> Result<(), String> {
+    let app = autark_common::desktop::find_app(name).ok_or_else(|| format!("no app called “{name}”"))?;
+    let (program, args) = app.command.split_first().ok_or_else(|| format!("{} has no command", app.name))?;
+    std::os::unix::process::CommandExt::process_group(
+        std::process::Command::new(program).args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()),
+        0,
+    )
+    .spawn()
+    .map(drop)
+    .map_err(|error| format!("{}: {error}", app.name))
+}
+
+/// A D-Bus error in words, naming the service when it isn't there.
+fn said(service: &str, error: zbus::Error) -> String {
+    match &error {
+        zbus::Error::MethodError(name, ..) if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" || name.as_str().starts_with("org.freedesktop.DBus.Error.Spawn.") => {
+            format!("{service} isn't running")
+        }
+        zbus::Error::FDO(inner) if matches!(**inner, zbus::fdo::Error::ServiceUnknown(_)) => format!("{service} isn't running"),
+        zbus::Error::MethodError(_, Some(message), _) => format!("{service}: {message}"),
+        _ => format!("{service}: {error}"),
+    }
+}

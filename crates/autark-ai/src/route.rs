@@ -1,6 +1,6 @@
 //! `Route`: a sentence typed into the launcher becomes actions with arguments, a question or a
-//! search. The model only picks from the catalog below; code checks every argument, and the
-//! launcher runs the actions.
+//! search. The model only picks from the catalog below; code checks every argument, and `Act`
+//! runs the actions you choose.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -22,7 +22,7 @@ pub enum Route {
     Search { query: String },
 }
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Action {
     SetVolume { percent: u8 },

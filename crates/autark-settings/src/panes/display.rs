@@ -590,43 +590,22 @@ fn snap(size: (i32, i32), wanted: (i32, i32), others: &[(i32, i32, i32, i32)]) -
     candidates.into_iter().filter(|candidate| !overlaps(*candidate)).min_by_key(|candidate| distance(*candidate)).unwrap_or(wanted)
 }
 
-/// The laptop's backlight in `/sys/class/backlight`, set through logind.
+/// The laptop's backlight, set through logind.
 #[derive(Clone)]
-struct Backlight {
-    name: String,
-    max: u32,
-}
+struct Backlight(autark_common::backlight::Backlight);
 
 impl Backlight {
-    /// The firmware's interface if there is one, as it's the one that works best, then the platform's, then raw.
     fn find() -> Option<Self> {
-        let mut found: Vec<(u8, Self)> = std::fs::read_dir("/sys/class/backlight")
-            .ok()?
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                let read = |file: &str| std::fs::read_to_string(path.join(file)).map(|text| text.trim().to_owned()).ok();
-                let max = read("max_brightness")?.parse().ok().filter(|max| *max > 0)?;
-                let rank = match read("type").as_deref() {
-                    Some("firmware") => 0,
-                    Some("platform") => 1,
-                    _ => 2,
-                };
-                Some((rank, Self { name: entry.file_name().to_string_lossy().into_owned(), max }))
-            })
-            .collect();
-        found.sort_by_key(|(rank, _)| *rank);
-        found.into_iter().next().map(|(_, backlight)| backlight)
+        autark_common::backlight::Backlight::find().map(Self)
     }
 
     fn percent(&self) -> f64 {
-        let now: f64 = std::fs::read_to_string(format!("/sys/class/backlight/{}/brightness", self.name)).ok().and_then(|text| text.trim().parse().ok()).unwrap_or(f64::from(self.max));
-        (now / f64::from(self.max) * 100.0).clamp(5.0, 100.0)
+        self.0.percent()
     }
 
     fn set(&self, percent: f64) {
-        let value = ((f64::from(self.max) * percent / 100.0).round() as u32).max(1);
-        let name = self.name.clone();
+        let value = self.0.value(percent);
+        let name = self.0.name.clone();
         glib::spawn_future_local(async move {
             let set = async {
                 let connection = bus::system().await?;

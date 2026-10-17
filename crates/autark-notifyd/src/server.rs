@@ -47,6 +47,7 @@ pub enum Event {
     Close(u32),
     Toggle,
     EditWidgets,
+    Focus(bool),
 }
 
 pub struct Server {
@@ -143,6 +144,11 @@ impl Control {
     /// Opens the centre on its Widgets view with Edit widgets showing.
     async fn edit_widgets(&self) {
         let _ = self.events.send(Event::EditWidgets).await;
+    }
+
+    /// Focus (do not disturb) on or off, as its toggle in the centre does.
+    async fn set_focus(&self, on: bool) {
+        let _ = self.events.send(Event::Focus(on)).await;
     }
 
     /// The notifications kept in the centre, newest first.

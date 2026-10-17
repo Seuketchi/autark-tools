@@ -19,6 +19,8 @@ pub struct Centre {
     /// The switch's Widgets button, and Edit widgets on that view.
     widgets: gtk::ToggleButton,
     edit: gtk::MenuButton,
+    /// Focus, in the quick settings.
+    focus: gtk::ToggleButton,
 }
 
 impl Centre {
@@ -71,7 +73,8 @@ impl Centre {
 
         let list = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        content.append(&quick_settings(daemon.clone()));
+        let (quick, focus) = quick_settings(daemon.clone());
+        content.append(&quick);
         content.append(&header);
         content.append(&list);
         let scroller = |child: &gtk::Box| gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(child).build();
@@ -124,7 +127,7 @@ impl Centre {
         stack.connect_visible_child_name_notify(move |_| showing());
 
         let widgets = widgets_button.expect("the switch has a Widgets button");
-        Self { window, stack, list, daemon, widgets, edit }
+        Self { window, stack, list, daemon, widgets, edit, focus }
     }
 
     pub fn is_open(&self) -> bool {
@@ -137,6 +140,11 @@ impl Centre {
     }
 
     /// Opens on the Widgets view with Edit widgets showing, for Settings' Edit widgets button.
+    /// Focus on or off from elsewhere (Kith), as if its toggle were pressed.
+    pub fn set_focus(&self, on: bool) {
+        self.focus.set_active(on);
+    }
+
     pub fn edit_widgets(&self) {
         if !self.window.is_visible() {
             self.window.set_visible(true);
@@ -188,7 +196,7 @@ impl Centre {
 
 /// The quick settings card. Focus (do not disturb) for now; Wi-Fi, Bluetooth, night light and
 /// the sliders join it as their services are written.
-fn quick_settings(daemon: Weak<Daemon>) -> gtk::Box {
+fn quick_settings(daemon: Weak<Daemon>) -> (gtk::Box, gtk::ToggleButton) {
     let state = gtk::Label::builder().label("Off").xalign(0.0).build();
     state.add_css_class("state");
     let label = gtk::Label::builder().label("Focus").xalign(0.0).build();
@@ -239,5 +247,5 @@ fn quick_settings(daemon: Weak<Daemon>) -> gtk::Box {
     card.add_css_class("card");
     card.add_css_class("quick");
     card.append(&grid);
-    card
+    (card, focus)
 }
