@@ -13,6 +13,7 @@ pub struct Ai {
     pub features: Features,
     pub jev: Jev,
     pub tasks: crate::tasks::Limits,
+    pub suggestions: crate::suggest::Limits,
 }
 
 #[derive(Deserialize)]
@@ -38,11 +39,13 @@ pub struct Features {
     pub rank: bool,
     pub check: bool,
     pub ask: bool,
+    /// Kith's suggestion cards.
+    pub suggest: bool,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Self { route: true, rank: true, check: true, ask: true }
+        Self { route: true, rank: true, check: true, ask: true, suggest: true }
     }
 }
 

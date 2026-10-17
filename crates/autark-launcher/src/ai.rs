@@ -13,6 +13,7 @@ pub trait Ai {
     fn remember(&self, entry: u64, text: &str, save: bool) -> zbus::Result<()>;
     fn create_task(&self, entry: u64, task: &str) -> zbus::Result<(String, u64)>;
     fn cancel_task(&self, entry: u64) -> zbus::Result<()>;
+    fn answer_suggestion(&self, entry: u64, answer: &str) -> zbus::Result<String>;
     fn history(&self) -> zbus::Result<String>;
     fn clear_history(&self) -> zbus::Result<()>;
     fn stop(&self, id: u32) -> zbus::Result<()>;

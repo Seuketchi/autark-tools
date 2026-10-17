@@ -104,6 +104,7 @@ pub fn build(config: &Config, recipe: &Recipe, sources: &[PathBuf], owners: &Has
     let before = if recipe.mode == Mode::Tracked { existing(config)? } else { HashSet::new() };
     let status = command.status().ctx("bash")?;
     if !status.success() {
+        outcome(&log_path, &format!("{} {} failed ({status})", recipe.name, recipe.full_version()));
         let text = std::fs::read_to_string(&log_path).unwrap_or_default();
         let tail: Vec<&str> = text.lines().rev().take(25).collect();
         for line in tail.into_iter().rev() {
@@ -118,7 +119,9 @@ pub fn build(config: &Config, recipe: &Recipe, sources: &[PathBuf], owners: &Has
         previous.push_str(&text);
         std::fs::write(&all, previous).ctx(&all)?;
     }
-    println!("   built in {}s", started.elapsed().map_or(0, |taken| taken.as_secs()));
+    let taken = started.elapsed().map_or(0, |taken| taken.as_secs());
+    println!("   built in {taken}s");
+    outcome(&log_path, &format!("{} {} built in {taken}s", recipe.name, recipe.full_version()));
 
     let info = PkgInfo { name: recipe.name.clone(), version: recipe.full_version(), depends: recipe.depends.clone(), mode: recipe.mode.name().into(), built: db::now() };
     std::fs::create_dir_all(&config.cache).ctx(&config.cache)?;
@@ -244,4 +247,14 @@ fn changed(config: &Config, since: SystemTime, before: &HashSet<PathBuf>, owners
     }
     out.sort();
     Ok(out)
+}
+
+/// Ends the log with how the build went, the line Kith's suggestions watch the log folder for:
+/// `== autark-pkg: gcc 15.2.0 built in 812s`.
+fn outcome(log: &Path, text: &str) {
+    use std::io::Write;
+    let written = std::fs::OpenOptions::new().append(true).open(log).and_then(|mut file| writeln!(file, "== autark-pkg: {text}"));
+    if let Err(err) = written {
+        eprintln!("autark-pkg: {}: {err}", log.display());
+    }
 }

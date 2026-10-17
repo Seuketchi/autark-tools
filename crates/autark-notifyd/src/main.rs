@@ -9,6 +9,7 @@ mod widgets;
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -38,13 +39,14 @@ fn start(app: &gtk::Application) {
 
     let (events, received) = async_channel::unbounded();
     let kept = Arc::new(Mutex::new(Vec::new()));
+    let focus = Arc::new(AtomicBool::new(false));
     let app = app.clone();
     glib::spawn_future_local(async move {
         let connection = zbus::connection::Builder::session()
             .name("org.freedesktop.Notifications")
             .name("org.autark.Notifications1")
             .serve_at(server::PATH, Server::new(events.clone()))
-            .serve_at(server::CONTROL_PATH, server::Control { events, kept: kept.clone() })
+            .serve_at(server::CONTROL_PATH, server::Control { events, kept: kept.clone(), focus: focus.clone() })
             .build()
             .await;
         let connection = match connection {
@@ -55,7 +57,7 @@ fn start(app: &gtk::Application) {
                 return;
             }
         };
-        let daemon = Daemon::new(&app, connection, kept);
+        let daemon = Daemon::new(&app, connection, kept, focus);
         while let Ok(event) = received.recv().await {
             match event {
                 Event::Notify(notification) => daemon.notify(notification),
@@ -75,7 +77,8 @@ pub struct Daemon {
     notifications: RefCell<Vec<Notification>>,
     /// The same, as `org.autark.Notifications1.Kept` gives them to the lock screen.
     kept: Arc<Mutex<Vec<server::Kept>>>,
-    pub do_not_disturb: Cell<bool>,
+    /// Focus, shared with `org.autark.Notifications1`'s `Focus` property.
+    pub do_not_disturb: Arc<AtomicBool>,
     banner_window: gtk::ApplicationWindow,
     banners: gtk::Box,
     centre: centre::Centre,
@@ -86,7 +89,7 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    fn new(app: &gtk::Application, connection: zbus::Connection, kept: Arc<Mutex<Vec<server::Kept>>>) -> Rc<Self> {
+    fn new(app: &gtk::Application, connection: zbus::Connection, kept: Arc<Mutex<Vec<server::Kept>>>, focus: Arc<AtomicBool>) -> Rc<Self> {
         Rc::new_cyclic(|daemon: &Weak<Self>| {
             let banners = gtk::Box::new(gtk::Orientation::Vertical, 8);
             let banner_window = gtk::ApplicationWindow::new(app);
@@ -126,7 +129,7 @@ impl Daemon {
                 config,
                 notifications: RefCell::default(),
                 kept,
-                do_not_disturb: Cell::new(false),
+                do_not_disturb: focus,
                 banner_window,
                 banners,
                 centre: centre::Centre::new(app, daemon.clone(), &sources),
@@ -157,7 +160,7 @@ impl Daemon {
         }
         self.share_kept();
         // With the centre open on them, new notifications show up there instead of as banners.
-        let quiet = (self.do_not_disturb.get() && notification.urgency != server::CRITICAL) || notification.quiet;
+        let quiet = (self.do_not_disturb.load(Ordering::Relaxed) && notification.urgency != server::CRITICAL) || notification.quiet;
         if !quiet && !self.centre.shows_notifications() {
             self.show_banner(&notification);
         }

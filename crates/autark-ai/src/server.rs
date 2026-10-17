@@ -8,10 +8,10 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use zbus::object_server::SignalEmitter;
 
-use crate::chat::{Chat, Proposal, TaskState, What};
+use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, check, files, log, memory, route, tasks};
+use crate::{act, chat, check, events, files, log, memory, route, suggest, tasks};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -34,12 +34,20 @@ pub struct Ai {
     /// Answers to stop at their next piece.
     stopped: Arc<Mutex<HashSet<u32>>>,
     chat: Arc<Mutex<Chat>>,
+    suggestions: Mutex<suggest::Policy>,
 }
 
 impl Ai {
     pub fn new(config: Config) -> Self {
         let ollama = Arc::new(Ollama::new(&config.ollama));
-        Self { config: RwLock::new(Arc::new(config)), ollama: RwLock::new(ollama), next_answer: AtomicU32::new(1), stopped: Arc::default(), chat: Arc::new(Mutex::new(Chat::load())) }
+        Self {
+            config: RwLock::new(Arc::new(config)),
+            ollama: RwLock::new(ollama),
+            next_answer: AtomicU32::new(1),
+            stopped: Arc::default(),
+            chat: Arc::new(Mutex::new(Chat::load())),
+            suggestions: Mutex::new(suggest::Policy::load()),
+        }
     }
 
     /// Takes a changed ai.toml.
@@ -151,6 +159,63 @@ impl Ai {
         let user = route::user(text, &candidates, conversation);
         let answer = self.json("route", json!(text), route::system_prompt(&facts), user, route::schema(&candidates)).await;
         answer.and_then(|answer| route::parse(answer, text, &candidates, &facts)).map_err(Error::Engine)
+    }
+
+    pub fn limits(&self) -> suggest::Limits {
+        self.config().suggestions.clone()
+    }
+
+    /// The limits, while AI and suggestions are on.
+    pub fn suggesting(&self) -> Option<suggest::Limits> {
+        let config = self.config();
+        (config.enabled && config.features.suggest).then(|| config.suggestions.clone())
+    }
+
+    fn policy(&self) -> std::sync::MutexGuard<'_, suggest::Policy> {
+        self.suggestions.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Takes what one look found: the first event the policy lets through is rated, and shown if it's worth it,
+    /// as an entry in the conversation, a quiet notification and the `Suggestion` signal.
+    pub async fn consider(&self, emitter: &SignalEmitter<'_>, connection: &zbus::Connection, found: Vec<events::Event>) {
+        let Some(limits) = self.suggesting() else { return };
+        let Some(event) = self.policy().pick(found, suggest::now(), Instant::now(), limits.per_hour) else { return };
+        let focus = suggest::focus(connection).await;
+        let input = json!({ "kind": event.kind, "facts": event.facts, "offer": event.offer.as_ref().map(|(_, label)| label), "focus": focus });
+        let answer = match self.json("suggest", input, suggest::SYSTEM.to_owned(), suggest::user(&event, focus, &memory::facts()), suggest::schema()).await {
+            Ok(answer) => answer,
+            Err(err) => return eprintln!("ai: rating a suggestion: {err}"),
+        };
+        let worth = answer["worth"].as_f64().unwrap_or_default().clamp(0.0, 1.0);
+        if worth < suggest::BAR {
+            return;
+        }
+        let text = answer["text"].as_str().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(&event.facts).to_owned();
+        self.policy().shown(suggest::now());
+        let notification = suggest::notify(connection, &text).await.unwrap_or_else(|err| {
+            eprintln!("ai: sending a suggestion's notification: {err}");
+            0
+        });
+        let (offer, offer_label) = match &event.offer {
+            Some((action, label)) => (serde_json::to_value(action).ok(), label.clone()),
+            None => (None, String::new()),
+        };
+        let suggestion = What::Suggestion {
+            event: event.kind,
+            key: event.key(),
+            label: event.label.clone(),
+            text: text.clone(),
+            offer,
+            offer_label,
+            worth,
+            state: SuggestionState::Open,
+            result: String::new(),
+            notification,
+        };
+        let entry = self.change(emitter, |chat| chat.push(suggestion)).await;
+        if let Err(err) = Ai::suggestion(emitter, entry, &text).await {
+            eprintln!("ai: sending a suggestion: {err}");
+        }
     }
 
     /// Changes the conversation, saves it and says so.
@@ -349,6 +414,66 @@ impl Ai {
         Ok(())
     }
 
+    /// Answers a suggestion: `accept` runs its offer through `Act` and returns how it went (empty for done, else
+    /// why not); `not_now` passes; `never` also stops this kind and subject being suggested again.
+    async fn answer_suggestion(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, answer: String) -> Result<String, Error> {
+        let (offer, key, label, notification) = match lock(&self.chat).get(entry) {
+            Some(found) => match &found.what {
+                What::Suggestion { .. } if suggest::now().saturating_sub(found.time) > suggest::STANDS => return Err(Error::Engine("that suggestion has passed by".to_owned())),
+                What::Suggestion { state: SuggestionState::Open, offer, key, label, notification, .. } => (offer.clone(), key.clone(), label.clone(), *notification),
+                What::Suggestion { .. } => return Err(Error::Engine("that suggestion has been answered already".to_owned())),
+                _ => return Err(Error::Engine("there's no such suggestion".to_owned())),
+            },
+            None => return Err(Error::Engine("there's no such suggestion".to_owned())),
+        };
+        let (state, result) = match answer.as_str() {
+            "accept" => {
+                let offer = offer.ok_or_else(|| Error::Engine("that suggestion offers nothing".to_owned()))?;
+                let action: route::Action = serde_json::from_value(offer.clone()).map_err(|err| Error::Engine(format!("not an action: {err}")))?;
+                let start = Instant::now();
+                let ran = act::run(connection, &[action]).await;
+                log::record("act", "code", json!([offer]), &Ok(json!(ran)), start.elapsed());
+                (SuggestionState::Accepted, ran.into_iter().next().unwrap_or_default())
+            }
+            "not_now" => (SuggestionState::NotNow, String::new()),
+            "never" => {
+                self.policy().never(&key, &label);
+                (SuggestionState::Never, String::new())
+            }
+            _ => return Err(Error::Engine(format!("“{answer}” isn't an answer: accept, not_now or never"))),
+        };
+        self.change(&emitter, |chat| {
+            if let Some(What::Suggestion { state: kept, result: why, .. }) = chat.get_mut(entry) {
+                *kept = state;
+                why.clone_from(&result);
+            }
+        })
+        .await;
+        if notification != 0 {
+            suggest::close(connection, notification).await;
+        }
+        Ok(result)
+    }
+
+    /// The suggestions still open and standing, newest last, as a JSON array of conversation entries.
+    async fn open_suggestions(&self) -> Result<String, Error> {
+        let now = suggest::now();
+        let mut chat = lock(&self.chat);
+        let open: Vec<&chat::Entry> =
+            chat.entries().iter().filter(|entry| matches!(entry.what, What::Suggestion { state: SuggestionState::Open, .. }) && now.saturating_sub(entry.time) <= suggest::STANDS).collect();
+        serde_json::to_string(&open).map_err(|err| Error::Engine(err.to_string()))
+    }
+
+    /// What you said never to suggest again: each one's key and how to name it.
+    async fn never_suggested(&self) -> Vec<(String, String)> {
+        self.policy().nevers().iter().map(|never| (never.key.clone(), never.label.clone())).collect()
+    }
+
+    /// Lets something you said never to suggest be suggested again.
+    async fn suggest_again(&self, key: String) {
+        self.policy().again(&key);
+    }
+
     /// The conversation, as a JSON array of entries.
     async fn history(&self) -> Result<String, Error> {
         serde_json::to_string(lock(&self.chat).entries()).map_err(|err| Error::Engine(err.to_string()))
@@ -445,6 +570,10 @@ impl Ai {
 
     #[zbus(signal)]
     async fn answer_done(emitter: &SignalEmitter<'_>, id: u32, error: &str) -> zbus::Result<()>;
+
+    /// A new suggestion, as conversation entry `entry`.
+    #[zbus(signal)]
+    pub async fn suggestion(emitter: &SignalEmitter<'_>, entry: u64, text: &str) -> zbus::Result<()>;
 
     /// The conversation changed: read it again with `History`.
     #[zbus(signal)]

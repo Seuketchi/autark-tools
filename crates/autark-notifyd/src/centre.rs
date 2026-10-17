@@ -235,7 +235,7 @@ fn quick_settings(daemon: Weak<Daemon>) -> (gtk::Box, gtk::ToggleButton) {
         let on = focus.is_active();
         state.set_label(if on { "Do not disturb" } else { "Off" });
         if let Some(daemon) = daemon.upgrade() {
-            daemon.do_not_disturb.set(on);
+            daemon.do_not_disturb.store(on, std::sync::atomic::Ordering::Relaxed);
         }
     });
 

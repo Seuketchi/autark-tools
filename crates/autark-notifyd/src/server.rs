@@ -3,7 +3,7 @@
 //! Methods run on zbus's thread and hand events to GTK.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -140,6 +140,8 @@ pub struct Control {
     pub events: Sender<Event>,
     /// The centre's notifications, newest first, copied over whenever they change.
     pub kept: Arc<Mutex<Vec<Kept>>>,
+    /// Whether Focus is on, as the centre keeps it.
+    pub focus: Arc<AtomicBool>,
 }
 
 #[zbus::interface(name = "org.autark.Notifications1")]
@@ -157,6 +159,12 @@ impl Control {
     /// Focus (do not disturb) on or off, as its toggle in the centre does.
     async fn set_focus(&self, on: bool) {
         let _ = self.events.send(Event::Focus(on)).await;
+    }
+
+    /// Whether Focus (do not disturb) is on, for Kith's suggestions to weigh.
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn focus(&self) -> bool {
+        self.focus.load(Ordering::Relaxed)
     }
 
     /// The notifications kept in the centre, newest first.

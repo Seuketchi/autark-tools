@@ -1,7 +1,8 @@
 //! `Act`: runs the actions `Route` picked, once you've chosen them, through each tool's own interface:
 //! volume through WirePlumber's `wpctl`, brightness, lock and sleep through logind, Wi-Fi through iwd, Focus
 //! through the notification centre and night light through `autark-nightlight`. Apps open from their
-//! desktop entries. The model never reaches here; only actions from the catalog, checked again.
+//! desktop entries, files through `gio open`. The model never reaches here; only actions from the catalog,
+//! and the three a suggestion offers, checked again.
 
 use std::collections::HashMap;
 
@@ -92,6 +93,17 @@ async fn one(session: &zbus::Connection, system: &mut Option<zbus::Connection>, 
             result.await.map_err(|error| said("logind", error))
         }
         Action::OpenApp { name } => open(name),
+        Action::QuitApp { app } => quit(app),
+        Action::OpenFile { path } => {
+            let path = openable(path)?;
+            spawn("gio", &["open".to_owned(), path.to_string_lossy().into_owned()])
+        }
+        Action::OpenSettings { pane } => {
+            if !PANES.contains(&pane.as_str()) {
+                return Err(format!("Settings has no pane “{pane}”"));
+            }
+            spawn("autark-settings", std::slice::from_ref(pane))
+        }
     }
 }
 
@@ -123,17 +135,54 @@ async fn wpctl(args: &[&str]) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("wpctl failed ({status})")) }
 }
 
-/// Starts the app in a process group of its own, so it outlives `autark-ai` restarting.
 fn open(name: &str) -> Result<(), String> {
     let app = autark_common::desktop::find_app(name).ok_or_else(|| format!("no app called “{name}”"))?;
     let (program, args) = app.command.split_first().ok_or_else(|| format!("{} has no command", app.name))?;
+    spawn(program, args).map_err(|error| format!("{}: {error}", app.name))
+}
+
+/// Starts a program in a process group of its own, so it outlives `autark-ai` restarting.
+fn spawn(program: &str, args: &[String]) -> Result<(), String> {
     std::os::unix::process::CommandExt::process_group(
         std::process::Command::new(program).args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()),
         0,
     )
     .spawn()
     .map(drop)
-    .map_err(|error| format!("{}: {error}", app.name))
+    .map_err(|error| format!("{program}: {error}"))
+}
+
+/// The panes `autark-settings <pane>` opens.
+const PANES: [&str; 11] = ["wifi", "bluetooth", "appearance", "dock", "display", "sound", "power", "lock", "keyboard", "ai", "about"];
+
+/// Asks an app to quit, as closing its windows would: a TERM to each process in its cgroup, read now, so one
+/// it started since is asked too. Only apps you started, under `app.slice`, and never `autark-ai` itself.
+fn quit(app: &str) -> Result<(), String> {
+    if !app.starts_with("/user.slice/") || !app.contains("/app.slice/") || app.split('/').any(|part| part == "..") {
+        return Err(format!("{app} isn't an app you started"));
+    }
+    let procs = std::fs::read_to_string(format!("/sys/fs/cgroup{app}/cgroup.procs")).map_err(|_| "that app isn't running any more".to_owned())?;
+    let me = std::process::id().to_string();
+    let pids: Vec<String> = procs.split_whitespace().filter(|pid| *pid != me).map(str::to_owned).collect();
+    if pids.is_empty() {
+        return Err("that app isn't running any more".to_owned());
+    }
+    let status = std::process::Command::new("kill").arg("-TERM").args(&pids).status().map_err(|error| format!("kill: {error}"))?;
+    if status.success() { Ok(()) } else { Err(format!("kill failed ({status})")) }
+}
+
+/// A file Kith may open: one it may read (see `files`), or an `autark-pkg` build log.
+fn openable(path: &str) -> Result<std::path::PathBuf, String> {
+    let config: crate::config::Ai = autark_common::config::load("ai");
+    let logs = std::fs::canonicalize(&config.suggestions.build_logs).ok();
+    if let Ok(real) = std::fs::canonicalize(path)
+        && logs.is_some()
+        && real.parent() == logs.as_deref()
+        && real.extension().is_some_and(|extension| extension == "log")
+    {
+        return Ok(real);
+    }
+    crate::files::allowed(path).map_err(|why| format!("{path}: {why}"))
 }
 
 /// A D-Bus error in words, naming the service when it isn't there.

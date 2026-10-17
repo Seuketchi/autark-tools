@@ -261,6 +261,7 @@ impl Panel {
             "answer" => answer_card(entry),
             "memory" => memory_card(id, entry["text"].as_str().unwrap_or_default(), entry["state"].as_str().unwrap_or_default()).upcast(),
             "task" => task_card(id, &entry["task"], entry["state"].as_str().unwrap_or_default(), entry["unit"].as_str().unwrap_or_default(), entry["next"].as_u64().unwrap_or(0)).upcast(),
+            "suggestion" => suggestion_card(entry).upcast(),
             _ => gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
         }
     }
@@ -550,6 +551,99 @@ pub fn memory_card(entry: u64, text: &str, state: &str) -> gtk::Box {
     });
     skip.connect_clicked(move |_| answer(false));
     card
+}
+
+/// How long a suggestion stands, as `autark-ai` keeps it.
+const SUGGESTION_STANDS: u64 = 60 * 60;
+
+/// A suggestion Kith made from something it noticed, from the design's suggestion card: what happened, its one
+/// offer, Not now and Don't suggest again until you answer, then what you chose.
+fn suggestion_card(entry: &Value) -> gtk::Box {
+    let card = card("assistant-suggestion-card");
+    let id = entry["id"].as_u64().unwrap_or(0);
+    let caption = gtk::Label::builder().label("SUGGESTION").xalign(0.0).build();
+    caption.add_css_class("assistant-caption");
+    let rated = gtk::Label::builder().label("Ollama rated this worth a quick look").xalign(0.0).build();
+    rated.add_css_class("assistant-key");
+    let text = bubble_label(entry["text"].as_str().unwrap_or_default());
+    text.add_css_class("assistant-fact");
+    card.append(&caption);
+    card.append(&rated);
+    card.append(&text);
+    let offer_label = entry["offer_label"].as_str().unwrap_or_default().to_owned();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |now| now.as_secs());
+    let passed = now.saturating_sub(entry["time"].as_u64().unwrap_or(0)) > SUGGESTION_STANDS;
+    match entry["state"].as_str().unwrap_or_default() {
+        "open" if !passed => {}
+        "open" => {
+            card.append(&pill("Passed by"));
+            return card;
+        }
+        state => {
+            card.append(&suggestion_outcome(state, &offer_label, entry["result"].as_str().unwrap_or_default()));
+            return card;
+        }
+    }
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let offer = gtk::Button::builder().label(&offer_label).focus_on_click(false).visible(!entry["offer"].is_null()).build();
+    offer.add_css_class("assistant-save");
+    let not_now = gtk::Button::builder().label("Not now").focus_on_click(false).build();
+    not_now.add_css_class("assistant-edit");
+    let never = gtk::Button::builder().label("Don’t suggest again").focus_on_click(false).build();
+    never.add_css_class("assistant-skip");
+    buttons.append(&offer);
+    buttons.append(&not_now);
+    buttons.append(&never);
+    card.append(&buttons);
+    let why = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).visible(false).build();
+    why.add_css_class("assistant-error");
+    card.append(&why);
+    for (button, answer) in [(&offer, "accept"), (&not_now, "not_now"), (&never, "never")] {
+        let (card, buttons, why, offer_label) = (card.clone(), buttons.clone(), why.clone(), offer_label.clone());
+        button.connect_clicked(move |_| {
+            buttons.set_sensitive(false);
+            let (card, buttons, why, offer_label) = (card.clone(), buttons.clone(), why.clone(), offer_label.clone());
+            glib::spawn_future_local(async move {
+                match async { ai::proxy().await?.answer_suggestion(id, answer).await }.await {
+                    Ok(result) => {
+                        buttons.set_visible(false);
+                        why.set_visible(false);
+                        let state = match answer {
+                            "accept" => "accepted",
+                            other => other,
+                        };
+                        card.append(&suggestion_outcome(state, &offer_label, &result));
+                    }
+                    Err(error) => {
+                        why.set_label(&said(error));
+                        why.set_visible(true);
+                        buttons.set_sensitive(true);
+                    }
+                }
+            });
+        });
+    }
+    card
+}
+
+/// What became of a suggestion: its offer done or why not, Not now, or never again.
+fn suggestion_outcome(state: &str, offer: &str, result: &str) -> gtk::Widget {
+    match state {
+        "accepted" if result.is_empty() => pill(&format!("{offer} · done")).upcast(),
+        "accepted" => {
+            let why = gtk::Label::builder().label(format!("{offer} didn’t work: {result}")).xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).build();
+            why.add_css_class("assistant-error");
+            why.upcast()
+        }
+        "never" => pill("Won’t suggest this again · undo in Settings › AI").upcast(),
+        _ => pill("Not now").upcast(),
+    }
+}
+
+fn pill(text: &str) -> gtk::Label {
+    let label = gtk::Label::builder().label(text).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(40).halign(gtk::Align::Start).build();
+    label.add_css_class("assistant-outcome");
+    label
 }
 
 /// The schedules a task can have, as `autark-ai` takes them and as the card says them.

@@ -1,14 +1,9 @@
-//! Kith's widget: its next scheduled tasks and its suggestion to quit a runaway app.
+//! Kith's widget: its next scheduled tasks and its newest suggestion.
 //!
 //! Tasks are the `autark-task@<id>.timer` user timers of standalone mode; tasks that run on
-//! Kith's own box arrive through `autark-ai` once it serves them. Runaway apps come from one
-//! reading of `autark-stats` a minute, each an average over that minute, so spotting them costs
-//! almost nothing and still works with the centre closed.
+//! Kith's own box arrive through `autark-ai` once it serves them. Suggestions are `autark-ai`'s,
+//! read again whenever its conversation changes, and answered through it.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
-use autark_common::stats::{App, Snapshot};
 use gtk::glib;
 use gtk::prelude::*;
 
@@ -80,85 +75,49 @@ fn when(next: u64, now: &glib::DateTime) -> String {
     time.format(format).map(String::from).unwrap_or_default()
 }
 
-/// An app above this, in percent of a core, counts as busy.
-const BUSY: f64 = 80.0;
-/// On battery, an app drawing this many watts counts as busy too.
-const DRAIN_WATTS: f64 = 5.0;
-/// How long an app stays busy before Kith says so.
-const SUGGEST_AFTER: Duration = Duration::from_secs(120);
-/// How long "Not now" keeps quiet about an app.
-const SNOOZE: Duration = Duration::from_secs(30 * 60);
+#[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
+pub trait Ai {
+    fn open_suggestions(&self) -> zbus::Result<String>;
+    fn answer_suggestion(&self, entry: u64, answer: &str) -> zbus::Result<String>;
+    #[zbus(signal)]
+    fn history_changed(&self) -> zbus::Result<()>;
+}
 
+/// Kith's newest open suggestion, as `autark-ai` keeps it in the conversation.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Suggestion {
-    pub app: String,
-    pub name: String,
-    /// What "Don't suggest again" remembers: the desktop ID, or the name.
-    pub key: String,
+    pub entry: u64,
     pub text: String,
-    pub pids: Vec<u32>,
+    /// The offer's button, empty when it offers nothing.
+    pub offer: String,
 }
 
-#[derive(Default)]
-pub struct Runaways {
-    busy_since: HashMap<String, Instant>,
-    snoozed: HashMap<String, Instant>,
+/// The newest of `OpenSuggestions`' entries.
+pub fn newest(json: &str) -> Option<Suggestion> {
+    let entries: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    let entry = entries.last()?;
+    Some(Suggestion {
+        entry: entry["id"].as_u64()?,
+        text: entry["text"].as_str().unwrap_or_default().to_owned(),
+        offer: if entry["offer"].is_null() { String::new() } else { entry["offer_label"].as_str().unwrap_or_default().to_owned() },
+    })
 }
 
-impl Runaways {
-    /// Takes one reading and returns the app worth suggesting, if any: the busiest one that has
-    /// stayed busy long enough, isn't snoozed, and isn't one you said never to suggest.
-    pub fn add(&mut self, snapshot: &Snapshot, at: Instant, never: &[String], me: u32) -> Option<Suggestion> {
-        let draining = snapshot.battery.as_ref().is_some_and(|battery| battery.status == "Discharging");
-        let busy = |app: &App| app.cpu >= BUSY || (draining && app.watts.is_some_and(|watts| watts >= DRAIN_WATTS));
-        self.busy_since.retain(|id, _| snapshot.apps.iter().any(|app| &app.id == id && busy(app)));
-        for app in snapshot.apps.iter().filter(|app| busy(app)) {
-            self.busy_since.entry(app.id.clone()).or_insert(at);
-        }
-        self.snoozed.retain(|_, until| *until > at);
-
-        let app = snapshot
-            .apps
-            .iter()
-            .filter(|app| self.busy_since.get(&app.id).is_some_and(|since| at.duration_since(*since) >= SUGGEST_AFTER))
-            // Only apps you started, and never this one.
-            .filter(|app| app.id.contains("/app.slice/") && !app.processes.iter().any(|process| process.pid == me))
-            .filter(|app| !self.snoozed.contains_key(&app.id) && !never.contains(&key(app)))
-            .max_by(|a, b| a.cpu.total_cmp(&b.cpu))?;
-        let minutes = at.duration_since(self.busy_since[&app.id]).as_secs() / 60;
-        let text = if app.cpu >= BUSY {
-            let battery = if draining { " and is draining the battery" } else { "" };
-            format!("{} has kept a core busy for {minutes} minutes{battery}.", app.name)
-        } else {
-            format!("{} has been draining the battery for {minutes} minutes.", app.name)
-        };
-        Some(Suggestion { app: app.id.clone(), name: app.name.clone(), key: key(app), text, pids: app.processes.iter().map(|process| process.pid).collect() })
-    }
-
-    pub fn snooze(&mut self, app: &str, at: Instant) {
-        self.snoozed.insert(app.to_owned(), at + SNOOZE);
-    }
-}
-
-fn key(app: &App) -> String {
-    app.desktop_id.clone().unwrap_or_else(|| app.name.clone())
-}
-
-/// Asks the app to quit, as closing its windows would: a TERM to each of its processes.
-pub fn quit(suggestion: &Suggestion) {
-    let pids: Vec<String> = suggestion.pids.iter().map(u32::to_string).collect();
-    if pids.is_empty() {
-        return;
-    }
-    if let Err(err) = std::process::Command::new("kill").arg("-TERM").args(&pids).status() {
-        eprintln!("notifyd: quitting {}: {err}", suggestion.name);
-    }
-}
-
+#[derive(Clone, Copy)]
 pub enum Answer {
-    Quit,
+    Accept,
     NotNow,
     Never,
+}
+
+impl Answer {
+    pub fn word(self) -> &'static str {
+        match self {
+            Answer::Accept => "accept",
+            Answer::NotNow => "not_now",
+            Answer::Never => "never",
+        }
+    }
 }
 
 pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion: &Shared<Option<Suggestion>>, on_answer: impl Fn(Answer) + 'static) -> gtk::Box {
@@ -206,14 +165,14 @@ pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion:
 
     let text = gtk::Label::builder().xalign(0.0).wrap(true).build();
     text.add_css_class("suggestion-text");
-    let quit = gtk::Button::with_label("Quit");
-    quit.add_css_class("primary");
+    let offer = gtk::Button::new();
+    offer.add_css_class("primary");
     let not_now = gtk::Button::with_label("Not now");
     not_now.add_css_class("secondary");
     let never = gtk::Button::builder().label("Don't suggest again").hexpand(true).halign(gtk::Align::End).build();
     never.add_css_class("quiet");
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    buttons.append(&quit);
+    buttons.append(&offer);
     buttons.append(&not_now);
     buttons.append(&never);
     let suggestion_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -222,15 +181,9 @@ pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion:
     suggestion_box.append(&buttons);
 
     let on_answer = std::rc::Rc::new(on_answer);
-    for (button, answer) in [(&quit, 0), (&not_now, 1), (&never, 2)] {
+    for (button, answer) in [(&offer, Answer::Accept), (&not_now, Answer::NotNow), (&never, Answer::Never)] {
         let on_answer = on_answer.clone();
-        button.connect_clicked(move |_| {
-            on_answer(match answer {
-                0 => Answer::Quit,
-                1 => Answer::NotNow,
-                _ => Answer::Never,
-            })
-        });
+        button.connect_clicked(move |_| on_answer(answer));
     }
 
     let card = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -252,7 +205,8 @@ pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion:
         suggestion_box.set_visible(suggestion.is_some());
         if let Some(suggestion) = suggestion {
             text.set_label(&suggestion.text);
-            quit.set_label(&format!("Quit {}", suggestion.name));
+            offer.set_label(&suggestion.offer);
+            offer.set_visible(!suggestion.offer.is_empty());
         }
     });
     card
@@ -261,86 +215,12 @@ pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use autark_common::stats::{Battery, Process};
-
-    fn app(name: &str, cpu: f64, watts: Option<f64>) -> App {
-        App {
-            id: format!("/user.slice/user-1000.slice/user@1000.service/app.slice/app-{name}.scope"),
-            name: name.to_owned(),
-            cpu,
-            watts,
-            processes: vec![Process { pid: 4242, name: name.to_owned(), ..Default::default() }],
-            ..Default::default()
-        }
-    }
-
-    fn snapshot(apps: Vec<App>, discharging: bool) -> Snapshot {
-        let battery = discharging.then(|| Battery { status: "Discharging".to_owned(), ..Default::default() });
-        Snapshot { apps, battery, ..Default::default() }
-    }
 
     #[test]
-    fn suggests_after_two_busy_minutes() {
-        let mut runaways = Runaways::default();
-        let start = Instant::now();
-        let busy = snapshot(vec![app("kitchend", 150.0, None), app("editor", 3.0, None)], false);
-        assert_eq!(runaways.add(&busy, start, &[], 1), None);
-        assert_eq!(runaways.add(&busy, start + Duration::from_secs(60), &[], 1), None);
-        let suggestion = runaways.add(&busy, start + Duration::from_secs(120), &[], 1).unwrap();
-        assert_eq!(suggestion.name, "kitchend");
-        assert_eq!(suggestion.text, "kitchend has kept a core busy for 2 minutes.");
-        assert_eq!(suggestion.pids, vec![4242]);
-    }
-
-    #[test]
-    fn a_quiet_reading_starts_over() {
-        let mut runaways = Runaways::default();
-        let start = Instant::now();
-        let busy = snapshot(vec![app("kitchend", 150.0, None)], false);
-        let quiet = snapshot(vec![app("kitchend", 10.0, None)], false);
-        runaways.add(&busy, start, &[], 1);
-        runaways.add(&quiet, start + Duration::from_secs(60), &[], 1);
-        assert_eq!(runaways.add(&busy, start + Duration::from_secs(120), &[], 1), None);
-    }
-
-    #[test]
-    fn battery_drain_counts_only_on_battery() {
-        let start = Instant::now();
-        let hungry = |discharging| snapshot(vec![app("renderer", 40.0, Some(9.0))], discharging);
-        let mut plugged = Runaways::default();
-        plugged.add(&hungry(false), start, &[], 1);
-        assert_eq!(plugged.add(&hungry(false), start + Duration::from_secs(180), &[], 1), None);
-        let mut unplugged = Runaways::default();
-        unplugged.add(&hungry(true), start, &[], 1);
-        let suggestion = unplugged.add(&hungry(true), start + Duration::from_secs(180), &[], 1).unwrap();
-        assert_eq!(suggestion.text, "renderer has been draining the battery for 3 minutes.");
-    }
-
-    #[test]
-    fn snoozed_never_and_own_apps_are_left_alone() {
-        let start = Instant::now();
-        let later = start + Duration::from_secs(120);
-        let busy = snapshot(vec![app("kitchend", 150.0, None)], false);
-
-        let mut snoozed = Runaways::default();
-        snoozed.add(&busy, start, &[], 1);
-        snoozed.snooze(&busy.apps[0].id, start);
-        assert_eq!(snoozed.add(&busy, later, &[], 1), None);
-        assert!(snoozed.add(&busy, start + SNOOZE + Duration::from_secs(1), &[], 1).is_some());
-
-        let mut never = Runaways::default();
-        never.add(&busy, start, &[], 1);
-        assert_eq!(never.add(&busy, later, &["kitchend".to_owned()], 1), None);
-
-        let mut mine = Runaways::default();
-        mine.add(&busy, start, &[], 4242);
-        assert_eq!(mine.add(&busy, later, &[], 4242), None);
-    }
-
-    #[test]
-    fn task_names() {
-        assert_eq!(task_name("autark-task@learning\\x2ddigest.timer", "autark-task@learning\\x2ddigest.timer"), "Learning digest");
-        assert_eq!(task_name("autark-task@digest.timer", "Learning digest"), "Learning digest");
-        assert_eq!(task_name("autark-task@weekly_review.timer", ""), "Weekly review");
+    fn the_newest_open_suggestion() {
+        let json = r#"[{"id":4,"kind":"suggestion","text":"Old.","offer":null,"offer_label":""},
+                       {"id":9,"kind":"suggestion","text":"kitchend has kept a core busy for 14 minutes. Quit it?","offer":{"action":"quit_app","app":"/x"},"offer_label":"Quit kitchend"}]"#;
+        assert_eq!(newest(json), Some(Suggestion { entry: 9, text: "kitchend has kept a core busy for 14 minutes. Quit it?".into(), offer: "Quit kitchend".into() }));
+        assert_eq!(newest("[]"), None);
     }
 }

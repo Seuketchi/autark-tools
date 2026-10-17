@@ -9,7 +9,7 @@ pub struct Notifyd {
     pub banner_seconds: u32,
     /// Banners shown at once; older ones go straight to the centre.
     pub max_banners: usize,
-    /// Kith's suggestions to quit runaway apps, from a reading of `autark-stats` once a minute.
+    /// Kith's suggestions in its widget; `autark-ai` makes them.
     pub suggestions: bool,
     /// The note in the Pinned note widget, as a path inside the Notes vault. Without it, the
     /// first note pinned in Notes.

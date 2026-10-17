@@ -63,6 +63,36 @@ pub enum What {
         #[serde(default)]
         next: u64,
     },
+    /// A suggestion Kith made from something it noticed, with its one offer (an action as `Act` takes it,
+    /// and its button) and, once answered, how its offer went: empty for done, else why not.
+    Suggestion {
+        /// What kind of event it came from.
+        event: crate::events::Kind,
+        /// What "Don't suggest again" covers, and how Settings lists it.
+        key: String,
+        label: String,
+        text: String,
+        offer: Option<Value>,
+        #[serde(default)]
+        offer_label: String,
+        /// How the model rated it, 0 to 1.
+        worth: f64,
+        state: SuggestionState,
+        #[serde(default)]
+        result: String,
+        /// Its quiet notification in the centre, closed once it's answered.
+        #[serde(default)]
+        notification: u32,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SuggestionState {
+    Open,
+    Accepted,
+    NotNow,
+    Never,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -140,6 +170,10 @@ impl Chat {
         id
     }
 
+    pub fn get(&self, id: u64) -> Option<&Entry> {
+        self.entries.iter().find(|entry| entry.id == id)
+    }
+
     pub fn get_mut(&mut self, id: u64) -> Option<&mut What> {
         self.entries.iter_mut().find(|entry| entry.id == id).map(|entry| &mut entry.what)
     }
@@ -169,6 +203,11 @@ impl Chat {
                 }
                 What::Memory { text, state: Proposal::Saved } => lines.push(format!("(Kith remembered: {text})")),
                 What::Task { task, state: TaskState::Created, .. } => lines.push(format!("(Kith created the task “{}”: {})", task.name, task.prompt)),
+                What::Suggestion { text, offer_label, state, .. } => lines.push(match state {
+                    SuggestionState::Open => format!("(Kith suggested: {text})"),
+                    SuggestionState::Accepted => format!("(Kith suggested: {text} The user chose {offer_label}.)"),
+                    SuggestionState::NotNow | SuggestionState::Never => format!("(Kith suggested: {text} The user declined.)"),
+                }),
                 _ => {}
             }
         }

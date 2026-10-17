@@ -34,18 +34,45 @@ pub struct Chosen {
     pub confidence: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Action {
-    SetVolume { percent: u8 },
-    Mute { on: bool },
-    SetBrightness { percent: u8 },
-    Wifi { on: bool },
-    Focus { on: bool },
-    NightLight { on: bool },
+    SetVolume {
+        percent: u8,
+    },
+    Mute {
+        on: bool,
+    },
+    SetBrightness {
+        percent: u8,
+    },
+    Wifi {
+        on: bool,
+    },
+    Focus {
+        on: bool,
+    },
+    NightLight {
+        on: bool,
+    },
     Lock,
     Sleep,
-    OpenApp { name: String },
+    OpenApp {
+        name: String,
+    },
+    /// Only a suggestion offers these three; they aren't in the catalog the model picks from.
+    /// Asks an app you started to quit, by its cgroup under `app.slice`.
+    QuitApp {
+        app: String,
+    },
+    /// Opens a file in its default app.
+    OpenFile {
+        path: String,
+    },
+    /// Opens a pane of Settings.
+    OpenSettings {
+        pane: String,
+    },
 }
 
 const CATALOG: [(&str, &str); 9] = [

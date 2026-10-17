@@ -2,12 +2,14 @@
 //!
 //! So far: `Route`, `Rank`, `Check`, `Ask`, `AskFiles` and `Models`, answered by Ollama; `Act`, which runs
 //! routed actions; and the conversation (`Chat`, `ChatAnswer`, `ChatAct`, `Remember`, `History`), which proposes
-//! facts for memory.toml. ai.toml is reread when it changes. Jev, tasks and the MCP server come next.
+//! facts for memory.toml and tasks; `autark-ai task <id>` runs one. Suggestions come from what code notices
+//! (`events`), rated by Ollama (`suggest`). ai.toml is reread when it changes. Jev and the MCP server come next.
 
 mod act;
 mod chat;
 mod check;
 mod config;
+mod events;
 mod files;
 mod log;
 mod memory;
@@ -15,6 +17,7 @@ mod ollama;
 mod route;
 mod runner;
 mod server;
+mod suggest;
 mod tasks;
 mod web;
 
@@ -36,19 +39,22 @@ fn main() {
     }
     let result = async_io::block_on(async {
         let connection = zbus::connection::Builder::session().name("org.autark.AI1").serve_at(server::PATH, server::Ai::new(config)).build().await?;
+        let suggestions = suggest::watch(connection.clone());
         // Settings and hand edits apply at once.
-        let mut changes = match autark_common::changes::Changes::config("ai") {
-            Ok(changes) => changes,
-            Err(err) => {
-                eprintln!("ai: watching ai.toml: {err}");
-                return std::future::pending::<zbus::Result<()>>().await;
-            }
-        };
         let ai = connection.object_server().interface::<_, server::Ai>(server::PATH).await?;
-        while changes.next().await.is_ok() {
-            ai.get().await.reload(autark_common::config::load("ai"));
-        }
-        std::future::pending::<zbus::Result<()>>().await
+        let reloads = async {
+            match autark_common::changes::Changes::config("ai") {
+                Ok(mut changes) => {
+                    while changes.next().await.is_ok() {
+                        ai.get().await.reload(autark_common::config::load("ai"));
+                    }
+                }
+                Err(err) => eprintln!("ai: watching ai.toml: {err}"),
+            }
+            std::future::pending::<()>().await
+        };
+        futures_util::future::join(reloads, suggestions).await;
+        Ok::<(), zbus::Error>(())
     });
     if let Err(err) = result {
         eprintln!("ai: {err}");

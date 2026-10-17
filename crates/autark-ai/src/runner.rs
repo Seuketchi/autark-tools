@@ -13,9 +13,10 @@ use crate::ollama::Ollama;
 use crate::{files, log, tasks, web};
 
 #[zbus::proxy(interface = "org.freedesktop.Notifications", default_service = "org.freedesktop.Notifications", default_path = "/org/freedesktop/Notifications")]
-trait Notifications {
+pub trait Notifications {
     #[allow(clippy::too_many_arguments)]
     fn notify(&self, app_name: &str, replaces_id: u32, app_icon: &str, summary: &str, body: &str, actions: &[&str], hints: HashMap<&str, Variant<'_>>, expire_timeout: i32) -> zbus::Result<u32>;
+    fn close_notification(&self, id: u32) -> zbus::Result<()>;
 }
 
 /// How many past results a task keeps.

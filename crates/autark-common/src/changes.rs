@@ -13,7 +13,7 @@ use rustix::fs::inotify;
 
 pub struct Changes {
     fd: Async<OwnedFd>,
-    /// The file names that count; the folders may hold others.
+    /// The file names that count; the folders may hold others. Empty for every file in the folder.
     names: Vec<OsString>,
 }
 
@@ -40,6 +40,13 @@ impl Changes {
         Ok(Self { fd: Async::new_nonblocking(fd)?, names })
     }
 
+    /// Watches every file in `folder`, which isn't made if it's missing: then this fails.
+    pub fn folder(folder: &std::path::Path) -> std::io::Result<Self> {
+        let fd = inotify::init(inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK)?;
+        inotify::add_watch(&fd, folder, inotify::WatchFlags::CLOSE_WRITE | inotify::WatchFlags::MOVED_TO)?;
+        Ok(Self { fd: Async::new_nonblocking(fd)?, names: Vec::new() })
+    }
+
     /// Waits until one of the files changes. Several changes close together come back as one.
     pub async fn next(&mut self) -> std::io::Result<()> {
         loop {
@@ -51,7 +58,7 @@ impl Changes {
                 match reader.next() {
                     Ok(event) => {
                         let name = event.file_name().map(|name| OsString::from(name.to_string_lossy().into_owned()));
-                        changed |= name.is_some_and(|name| self.names.contains(&name));
+                        changed |= name.is_some_and(|name| self.names.is_empty() || self.names.contains(&name));
                     }
                     Err(rustix::io::Errno::AGAIN) => break,
                     Err(error) => return Err(error.into()),

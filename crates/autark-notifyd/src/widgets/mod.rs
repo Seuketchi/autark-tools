@@ -1,5 +1,5 @@
 //! Widgets, built in: the centre's Widgets view and the optional desktop layer. Each source is
-//! read only while something shows it, except Kith's once-a-minute look for runaway apps.
+//! read only while something shows it, except Kith's suggestions, followed as `autark-ai` makes them.
 
 mod battery;
 mod clock;
@@ -13,20 +13,21 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
-use autark_common::stats::Snapshot;
+use futures_util::StreamExt;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::config::{Location, Notifyd};
 use crate::shared::Shared;
-use resources::{Feed, StatsProxy};
+use resources::Feed;
 use settings::Settings;
 
 /// How often batteries and tasks are reread while shown.
 const REFRESH: Duration = Duration::from_secs(30);
 const WEATHER_EVERY: Duration = Duration::from_secs(30 * 60);
-const RUNAWAY_CHECK: Duration = Duration::from_secs(60);
+/// How often suggestions are read again with nothing changed, as each stands for an hour.
+const SUGGESTIONS_AGAIN: Duration = Duration::from_secs(5 * 60);
 
 pub struct Sources {
     now: Shared<glib::DateTime>,
@@ -38,7 +39,6 @@ pub struct Sources {
     weather: Shared<Option<weather::Weather>>,
     settings: Shared<Settings>,
     location: Option<Location>,
-    runaways: RefCell<kith::Runaways>,
     /// Dropped to stop what runs while the widgets are shown.
     showing: RefCell<Option<async_channel::Sender<()>>>,
     weather_fetched: Cell<Option<Instant>>,
@@ -58,7 +58,6 @@ impl Sources {
             weather: Shared::new(None),
             settings: Shared::new(Settings::load()),
             location: config.weather.clone(),
-            runaways: RefCell::default(),
             showing: RefCell::default(),
             weather_fetched: Cell::new(None),
             _watch: RefCell::default(),
@@ -74,7 +73,7 @@ impl Sources {
             }
         }));
         if config.suggestions {
-            glib::spawn_future_local(watch_runaways(Rc::downgrade(&sources)));
+            glib::spawn_future_local(follow_suggestions(Rc::downgrade(&sources)));
         }
         sources
     }
@@ -163,45 +162,38 @@ impl Sources {
 
     fn answer(&self, answer: kith::Answer) {
         let Some(suggestion) = self.suggestion.get() else { return };
-        match answer {
-            kith::Answer::Quit => kith::quit(&suggestion),
-            kith::Answer::NotNow => self.runaways.borrow_mut().snooze(&suggestion.app, Instant::now()),
-            kith::Answer::Never => self.change_settings(|settings| settings.never_suggest.push(suggestion.key.clone())),
-        }
         self.suggestion.set(None);
-    }
-
-    fn consider(&self, snapshot: &Snapshot) {
-        let never = self.settings.get().never_suggest;
-        let found = self.runaways.borrow_mut().add(snapshot, Instant::now(), &never, std::process::id());
-        if self.suggestion.get() != found {
-            self.suggestion.set(found);
-        }
+        glib::spawn_future_local(async move {
+            let answered = async { kith::AiProxy::new(&zbus::Connection::session().await?).await?.answer_suggestion(suggestion.entry, answer.word()).await };
+            match answered.await {
+                Ok(result) if !result.is_empty() => eprintln!("notifyd: {}: {result}", suggestion.offer),
+                Ok(_) => {}
+                Err(err) => eprintln!("notifyd: answering Kith's suggestion: {err}"),
+            }
+        });
     }
 }
 
-/// One `Snapshot()` a minute; the service averages it over the minute since the last one.
-async fn watch_runaways(sources: Weak<Sources>) {
-    let mut reported = false;
-    loop {
-        glib::timeout_future(RUNAWAY_CHECK).await;
-        let reading = async {
-            let connection = zbus::Connection::session().await?;
-            let json = StatsProxy::new(&connection).await?.snapshot().await?;
-            serde_json::from_str::<Snapshot>(&json).map_err(|err| zbus::Error::Failure(err.to_string()))
-        };
-        let Some(sources) = sources.upgrade() else { return };
-        match reading.await {
-            Ok(snapshot) => {
-                reported = false;
-                sources.consider(&snapshot);
+/// Reads Kith's open suggestions whenever its conversation changes, and every few minutes, since each
+/// stands only an hour.
+async fn follow_suggestions(sources: Weak<Sources>) {
+    let followed = async {
+        let connection = zbus::Connection::session().await?;
+        let ai = kith::AiProxy::new(&connection).await?;
+        let mut changes = ai.receive_history_changed().await?;
+        loop {
+            let Some(sources) = sources.upgrade() else { return Ok::<(), zbus::Error>(()) };
+            let found = ai.open_suggestions().await.ok().and_then(|json| kith::newest(&json));
+            if sources.suggestion.get() != found {
+                sources.suggestion.set(found);
             }
-            Err(err) if !reported => {
-                reported = true;
-                eprintln!("notifyd: no readings for Kith's suggestions: {err}");
-            }
-            Err(_) => {}
+            drop(sources);
+            let again = std::pin::pin!(glib::timeout_future(SUGGESTIONS_AGAIN));
+            futures_util::future::select(again, changes.next()).await;
         }
+    };
+    if let Err(err) = followed.await {
+        eprintln!("notifyd: following Kith's suggestions: {err}");
     }
 }
 
@@ -365,8 +357,6 @@ pub fn desktop(app: &gtk::Application, sources: &Rc<Sources>) -> gtk::Applicatio
     column.append(&note);
     window.set_child(Some(&column));
 
-    show_while(&window, settings, &sources.note.note, |settings, note| {
-        settings.desktop && (settings.shows("clock") || (settings.shows("note") && note.is_some()))
-    });
+    show_while(&window, settings, &sources.note.note, |settings, note| settings.desktop && (settings.shows("clock") || (settings.shows("note") && note.is_some())));
     window
 }

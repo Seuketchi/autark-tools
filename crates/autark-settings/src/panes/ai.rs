@@ -1,7 +1,7 @@
 //! AI: the switch that turns `autark-ai` on, local-only mode, the Ollama model (listed by `autark-ai`'s
 //! `Models`), Jev's API key (in the keyring) and which features Jev answers, all in `ai.toml`, which
-//! `autark-ai` rereads; Kith's tasks (systemd user timers); what the assistant remembers (`memory.toml`); and
-//! the last calls from the call log. Until Jev's client is built, Ollama answers every feature.
+//! `autark-ai` rereads; Kith's tasks (systemd user timers); its suggestions, with what you said never to suggest
+//! again; what the assistant remembers (`memory.toml`); and the last calls from the call log. Until Jev's client is built, Ollama answers every feature.
 
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom};
@@ -21,6 +21,8 @@ use crate::{bus, config, secrets, ui};
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
 trait Ai {
     fn models(&self) -> zbus::Result<Vec<String>>;
+    fn never_suggested(&self) -> zbus::Result<Vec<(String, String)>>;
+    fn suggest_again(&self, key: &str) -> zbus::Result<()>;
 }
 
 /// Jev's features as `ai.toml`'s `[jev]` names them, with the design's words.
@@ -48,12 +50,15 @@ struct AiPane {
     top: gtk::Box,
     features: gtk::Box,
     tasks: gtk::Box,
+    suggestions: gtk::Box,
     memory: gtk::Box,
     log: gtk::Box,
     status: gtk::Label,
     models: RefCell<Result<Vec<String>, String>>,
     key: RefCell<Key>,
     task_list: RefCell<Result<Vec<Task>, String>>,
+    /// What's never suggested again: each one's key and name.
+    nevers: RefCell<Result<Vec<(String, String)>, String>>,
     /// Tasks started with Run now that systemd hasn't reported running yet.
     starting: RefCell<Vec<String>>,
     /// The fact being corrected, by position, and the text typed so far.
@@ -74,19 +79,21 @@ pub fn build() -> gtk::Widget {
         top: ui::group(),
         features: gtk::Box::new(gtk::Orientation::Vertical, 0),
         tasks: gtk::Box::new(gtk::Orientation::Vertical, 0),
+        suggestions: gtk::Box::new(gtk::Orientation::Vertical, 0),
         memory: gtk::Box::new(gtk::Orientation::Vertical, 0),
         log: gtk::Box::new(gtk::Orientation::Vertical, 0),
         status: status.clone(),
         models: RefCell::new(Ok(Vec::new())),
         key: RefCell::new(Key::Unknown),
         task_list: RefCell::new(Ok(Vec::new())),
+        nevers: RefCell::new(Ok(Vec::new())),
         starting: RefCell::default(),
         editing: RefCell::default(),
         draft: RefCell::default(),
         shown: Cell::new(false),
         ticks: Cell::new(0),
     });
-    for part in [&ai.top, &ai.features, &ai.tasks, &ai.memory, &ai.log] {
+    for part in [&ai.top, &ai.features, &ai.tasks, &ai.suggestions, &ai.memory, &ai.log] {
         column.append(part);
     }
     column.append(&status);
@@ -128,6 +135,9 @@ impl AiPane {
         self.render_memory();
         self.render_log();
         self.render_tasks();
+        self.render_suggestions();
+        let ai = self.clone();
+        glib::spawn_future_local(async move { ai.load_nevers().await });
         let ai = self.clone();
         glib::spawn_future_local(async move {
             let models = async { AiProxy::new(&bus::session().await?).await?.models().await };
@@ -162,6 +172,7 @@ impl AiPane {
     fn set(self: &Rc<Self>, key: &'static str, value: impl Into<toml_edit::Value> + 'static) {
         self.report(config::edit("ai", |document| config::set_in(document, key, value)));
         self.render_top();
+        self.render_suggestions();
     }
 
     fn render_top(self: &Rc<Self>) {
@@ -416,6 +427,56 @@ impl AiPane {
         }
         let aside = ui::note("Scheduled prompts, run on this laptop");
         self.tasks.append(&ui::section("Tasks", Some(&aside), &group));
+    }
+
+    async fn load_nevers(self: &Rc<Self>) {
+        let nevers = async { AiProxy::new(&bus::session().await?).await?.never_suggested().await };
+        *self.nevers.borrow_mut() = nevers.await.map_err(|error| bus::message(error, "autark-ai"));
+        self.render_suggestions();
+    }
+
+    fn render_suggestions(self: &Rc<Self>) {
+        ui::rebuild_keeping_focus(&[&self.suggestions], || self.build_suggestions());
+    }
+
+    fn build_suggestions(self: &Rc<Self>) {
+        ui::clear(&self.suggestions);
+        let document = config::read("ai");
+        let enabled = config::get_bool(&document, "enabled").unwrap_or(false);
+        let on = config::get_bool(&document, "features.suggest").unwrap_or(true);
+        let group = ui::group();
+        let ai = self.clone();
+        let switch = ui::switch(on, move |on| {
+            ai.report(config::edit("ai", |document| config::set_in(document, "features.suggest", on)));
+            ai.render_suggestions();
+        });
+        switch.set_widget_name("ai:suggest");
+        switch.update_property(&[gtk::accessible::Property::Label("Suggestions")]);
+        let row = ui::row("Suggestions", Some("A card when Kith notices something worth a look: an app running away, the battery low, a build ending, a new network. Never a banner"), &switch);
+        row.set_sensitive(enabled);
+        group.append(&row);
+        let nevers = self.nevers.borrow().clone();
+        match nevers {
+            Err(error) => group.append(&empty_row(&format!("What’s never suggested comes from autark-ai, and {error}"))),
+            Ok(nevers) => {
+                for (key, label) in nevers {
+                    let ai = self.clone();
+                    let again = ui::button("Suggest again", move |_| {
+                        let (ai, key) = (ai.clone(), key.clone());
+                        glib::spawn_future_local(async move {
+                            let result = async { AiProxy::new(&bus::session().await?).await?.suggest_again(&key).await };
+                            ai.report(result.await.map_err(|error| bus::message(error, "autark-ai")));
+                            ai.load_nevers().await;
+                        });
+                    });
+                    again.update_property(&[gtk::accessible::Property::Label(&format!("Suggest again: {label}"))]);
+                    group.append(&ui::row(&label, Some("Never suggested again"), &again));
+                }
+            }
+        }
+        let per_hour = config::get_int(&document, "suggestions.per_hour").unwrap_or(3);
+        let aside = ui::note(&format!("At most {per_hour} an hour, rated by Ollama"));
+        self.suggestions.append(&ui::section("Suggestions", Some(&aside), &group));
     }
 
     fn run_task(self: &Rc<Self>, task: Task) {

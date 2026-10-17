@@ -14,8 +14,6 @@ pub struct Settings {
     /// Shows the clock and the pinned note on the desktop too.
     pub desktop: bool,
     pub weather: bool,
-    /// Apps Kith never suggests quitting, by desktop ID or name.
-    pub never_suggest: Vec<String>,
 }
 
 /// Every widget that can be switched off, with its name in Edit widgets.
