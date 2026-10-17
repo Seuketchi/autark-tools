@@ -1,0 +1,398 @@
+window.files {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+/* Below the rules for each kind of button, which are more specific. */
+button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: @text;
+  min-height: 0;
+  padding: 0;
+}
+
+window.files .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* Sidebar */
+
+.sidebar {
+  background-color: @sidebar;
+  border-right: 1px solid alpha(@text, 0.06);
+  padding: 14px 10px;
+}
+
+.sidebar windowcontrols {
+  margin: 2px 6px 0;
+}
+
+.sidebar windowcontrols button {
+  min-width: 12px;
+  min-height: 12px;
+  margin: 0 8px 0 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.sidebar windowcontrols button image {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  -gtk-icon-size: 0;
+}
+
+.sidebar windowcontrols button.close {
+  background-color: #E5684F;
+}
+
+.sidebar windowcontrols button.minimize {
+  background-color: #E8B04A;
+}
+
+.sidebar windowcontrols button.maximize {
+  background-color: #6FAF7A;
+}
+
+.sidebar .heading {
+  padding: 16px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #7A736A;
+}
+
+button.place {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+
+button.place:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+button.place.current {
+  background-color: alpha(@text, 0.08);
+  font-weight: 600;
+}
+
+button.place .glyph {
+  color: @accent;
+}
+
+button.place .note {
+  font-size: 11px;
+  color: #7A736A;
+}
+
+/* Toolbar */
+
+.files-toolbar {
+  min-height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid alpha(@text, 0.06);
+}
+
+button.back {
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+}
+
+button.back:disabled {
+  color: #C9C2B6;
+}
+
+.crumbs {
+  font-size: 14px;
+}
+
+.crumbs .separator {
+  color: #C9C2B6;
+}
+
+button.crumb {
+  min-height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: @text2;
+}
+
+button.crumb:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+button.crumb.current {
+  color: @text;
+  font-weight: 600;
+}
+
+button.empty-trash {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+  font-size: 12px;
+}
+
+.view-switch {
+  padding: 2px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+}
+
+.view-switch button {
+  min-width: 30px;
+  min-height: 26px;
+  border-radius: 6px;
+}
+
+.view-switch button:checked {
+  background-color: @surface;
+  box-shadow: 0 1px 2px alpha(@text, 0.12);
+}
+
+entry.search {
+  min-height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+  box-shadow: none;
+  outline: none;
+  color: @text;
+}
+
+entry.search image {
+  color: #7A736A;
+}
+
+/* Views */
+
+.views scrolledwindow,
+gridview.icons,
+columnview.rows,
+columnview.rows listview {
+  background: none;
+  color: @text;
+}
+
+gridview.icons {
+  padding: 20px;
+}
+
+gridview.icons > child {
+  margin: 0;
+  padding: 10px 4px;
+  border-radius: 10px;
+  background: none;
+}
+
+gridview.icons > child:selected {
+  background-color: alpha(@accent, 0.12);
+}
+
+gridview.icons .name {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+gridview.icons > child:selected .name {
+  background-color: @accent;
+  color: @surface;
+}
+
+/* Something in the themes pads plain boxes inside grid items; the icon holders stay tight. */
+.tile box {
+  padding: 0;
+  margin: 0;
+  border: none;
+  min-height: 0;
+}
+
+.badge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: @accent;
+  color: @surface;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+columnview.rows {
+  margin: 12px 20px;
+  font-size: 13px;
+}
+
+columnview.rows > header {
+  border-bottom: 1px solid alpha(@text, 0.06);
+}
+
+columnview.rows > header > button {
+  padding: 0 12px 8px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #7A736A;
+}
+
+columnview.rows listview > row {
+  min-height: 36px;
+  border-radius: 8px;
+  background: none;
+}
+
+columnview.rows listview > row:selected {
+  background-color: @accent;
+  color: @surface;
+}
+
+columnview.rows listview > row > cell {
+  padding: 0 12px;
+}
+
+columnview.rows .sub {
+  color: @text2;
+}
+
+columnview.rows listview > row:selected .sub {
+  color: @accent_soft;
+}
+
+/* Info pane */
+
+.info {
+  padding: 28px 20px;
+  border-left: 1px solid alpha(@text, 0.06);
+}
+
+.info-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.info-kind {
+  font-size: 12px;
+  color: @text2;
+}
+
+.info .details {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid alpha(@text, 0.06);
+  font-size: 12px;
+}
+
+.info .details .label {
+  color: #7A736A;
+}
+
+button.open {
+  min-height: 32px;
+  margin-top: 6px;
+  border-radius: 8px;
+  background-color: @accent;
+  color: @surface;
+  font-weight: 600;
+}
+
+.info .preview {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.04);
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+  color: #3E3A34;
+}
+
+.info .empty {
+  color: #7A736A;
+}
+
+/* Status bar */
+
+.status-bar {
+  min-height: 30px;
+  border-top: 1px solid alpha(@text, 0.06);
+}
+
+.status {
+  font-size: 12px;
+  color: #7A736A;
+}
+
+button.undo {
+  padding: 0 8px;
+  border-radius: 6px;
+  color: @accent;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+button.undo:hover {
+  background-color: alpha(@accent, 0.1);
+}
+
+/* Menus and the rename popover, in Linen rather than the system theme. */
+popover > contents {
+  padding: 6px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 10px;
+  background-color: @surface;
+  color: @text;
+  box-shadow: 0 8px 24px alpha(@text, 0.16);
+}
+
+popover > arrow {
+  border-color: alpha(@text, 0.10);
+  background-color: @surface;
+}
+
+popover.menu modelbutton {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: @text;
+}
+
+popover.menu modelbutton:hover,
+popover.menu modelbutton:selected {
+  background-color: @accent;
+  color: @surface;
+}
+
+popover.menu separator {
+  margin: 4px 6px;
+  background-color: alpha(@text, 0.08);
+}
+
+popover entry {
+  min-height: 30px;
+  border: 1px solid alpha(@text, 0.14);
+  border-radius: 6px;
+  background-color: @surface;
+  box-shadow: none;
+  color: @text;
+}
+
+popover entry selection,
+entry.search selection {
+  background-color: alpha(@accent, 0.25);
+  color: @text;
+}

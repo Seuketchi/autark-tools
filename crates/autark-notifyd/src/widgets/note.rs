@@ -116,16 +116,9 @@ pub fn toggle(note: &Note, item: &Item) -> std::io::Result<()> {
     let (from, to) = if item.done { (if line.contains("[x] ") { "[x] " } else { "[X] " }, "[ ] ") } else { ("[ ] ", "[x] ") };
     let flipped = line.replacen(from, to, 1);
     lines[item.line] = &flipped;
-    write_atomically(&note.path, &lines.concat())
+    autark_common::files::write_atomically(&note.path, lines.concat().as_bytes())
 }
 
-/// Through a temporary file beside it, as Notes saves, so a reader never sees half a note.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    let temporary = path.with_file_name(format!(".{name}.saving"));
-    std::fs::write(&temporary, text)?;
-    std::fs::rename(&temporary, path)
-}
 
 #[derive(Deserialize, Default)]
 #[serde(default)]

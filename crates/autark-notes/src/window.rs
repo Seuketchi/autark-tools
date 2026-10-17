@@ -1103,10 +1103,7 @@ impl Notes {
 
 /// Writes through a hidden temporary file and a rename, so a crash never leaves half a note.
 fn write(path: &Path, text: &str) -> std::io::Result<()> {
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    let temp = path.with_file_name(format!(".{name}.saving"));
-    std::fs::write(&temp, text)?;
-    std::fs::rename(&temp, path)
+    autark_common::files::write_atomically(path, text.as_bytes())
 }
 
 /// A path with the home folder shown as `~`.

@@ -154,6 +154,13 @@ dependencies = [
 [[package]]
 name = "autark-files"
 version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "serde",
+ "toml",
+ "zbus",
+]
 
 [[package]]
 name = "autark-init"
