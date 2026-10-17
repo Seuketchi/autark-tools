@@ -24,7 +24,7 @@ The Rust tools behind [Autark](https://github.com/Seuketchi/autark): the desktop
 | `autark-init` | Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup and tpm2-tss, then hands over to systemd |
 | `autark-pkg` | Autark's package manager (Autark-only): signed packages from recipes, with install, remove, upgrade, search and rollback |
 
-`autark-bar` has its first pieces: the Loop logo, the focused app's name, Wi-Fi (iwd, or NetworkManager elsewhere), volume (PipeWire), battery (UPower) and clock. Each monitor gets its own bar, all fed by one watcher per item. The app name needs the compositor's wlr-foreign-toplevel protocol (Wayfire: enable the `foreign-toplevel` plugin). `autark-notifyd` serves `org.freedesktop.Notifications`: banners at the top right, and a centre with Focus (do not disturb) and every kept notification, opened from the bar's button. `autark-dock` shows pinned apps and running ones after a separator, with magnification and dots under running apps; clicking focuses an app's window (the next one if it has focus) or launches it, and middle-click opens another window. `autark-launcher` stays resident and opens or closes each time it's run (bind Super+Space to `autark-launcher`; start it at login with `--daemon`): apps ranked by name and how often you open them, recent files, and lock, sleep, restart, shut down and log out. The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
+`autark-bar` has its first pieces: the Loop logo, the focused app's name, Wi-Fi (iwd, or NetworkManager elsewhere), volume (PipeWire), battery (UPower) and clock. Each monitor gets its own bar, all fed by one watcher per item. The app name needs the compositor's wlr-foreign-toplevel protocol (Wayfire: enable the `foreign-toplevel` plugin). `autark-notifyd` serves `org.freedesktop.Notifications`: banners at the top right, and a centre with Focus (do not disturb) and every kept notification, opened from the bar's button. `autark-dock` shows pinned apps and running ones after a separator, with magnification and dots under running apps; clicking focuses an app's window (the next one if it has focus) or launches it, and middle-click opens another window. `autark-launcher` stays resident and opens or closes each time it's run (bind Super+Space to `autark-launcher`; start it at login with `--daemon`): apps ranked by name and how often you open them, recent files, and lock, sleep, restart, shut down and log out. `autark-lock` locks every monitor through `ext-session-lock` (Wayfire: enable the `session-lock` plugin) and unlocks with your password through PAM, or with an enrolled fingerprint through fprintd; with `--daemon` it stays running, locks when logind asks (the launcher's Lock, `loginctl lock-session`) and before sleep. It needs a PAM file, `/etc/pam.d/autark-lock` by default, and won't lock without one. The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
 
 ## Where it runs
 
@@ -38,7 +38,7 @@ The Rust tools behind [Autark](https://github.com/Seuketchi/autark): the desktop
 The shell crates can be written and tested on Ubuntu before Autark exists:
 
 ```
-sudo apt install libgtk-4-dev libgtk4-layer-shell-dev libpipewire-0.3-dev libclang-dev wayfire grim
+sudo apt install libgtk-4-dev libgtk4-layer-shell-dev libgtk4-session-lock-dev libpam0g-dev libpipewire-0.3-dev libclang-dev wayfire grim
 cargo check
 ```
 
@@ -69,6 +69,15 @@ And for notifications:
 # ~/.config/autark/notifyd.toml
 banner_seconds = 5   # when the app doesn't say
 max_banners = 3
+```
+
+For the lock screen:
+
+```toml
+# ~/.config/autark/lock.toml
+pam_service = "autark-lock"   # the file in /etc/pam.d
+lock_on_sleep = true          # with --daemon
+fingerprint = true            # if fprintd has a finger enrolled
 ```
 
 ## License

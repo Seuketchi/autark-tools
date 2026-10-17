@@ -1,0 +1,104 @@
+window.lock-window {
+  background-color: @wall;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+}
+
+.backdrop {
+  background-color: rgba(246, 244, 239, 0.35);
+}
+
+.clock {
+  margin-top: 120px;
+}
+
+.date {
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.time {
+  font-size: 120px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-feature-settings: "tnum";
+}
+
+.form {
+  margin-bottom: 140px;
+}
+
+.avatar {
+  min-width: 72px;
+  min-height: 72px;
+  border-radius: 36px;
+  background-color: @accent;
+  color: @surface;
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.field {
+  min-width: 260px;
+  min-height: 40px;
+  padding: 0 6px 0 16px;
+  border: 1px solid alpha(@text, 0.16);
+  border-radius: 20px;
+  background-color: alpha(@text, 0.14);
+}
+
+.field.error {
+  border-color: #C4503C;
+}
+
+.field entry {
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: @text;
+  font-size: 14px;
+}
+
+.field entry text placeholder {
+  color: @text2;
+}
+
+.submit,
+.power button {
+  border: none;
+  border-radius: 50%;
+  background-image: none;
+  box-shadow: none;
+  color: @text;
+}
+
+.submit {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  background-color: alpha(@text, 0.18);
+}
+
+.hint {
+  font-size: 13px;
+  color: #3E3A34;
+}
+
+.power {
+  margin: 0 32px 28px 0;
+}
+
+.power button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background-color: alpha(@text, 0.12);
+}
