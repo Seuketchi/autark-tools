@@ -198,6 +198,13 @@ version = "0.0.0"
 [[package]]
 name = "autark-notes"
 version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "chrono",
+ "gtk4",
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "autark-notifyd"

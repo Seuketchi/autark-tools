@@ -1,0 +1,312 @@
+window.notes {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+/* Below the rules for each kind of button, which are more specific. */
+button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: @text;
+  min-height: 0;
+  padding: 0;
+}
+
+window.notes .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.heading {
+  padding: 16px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #7A736A;
+}
+
+/* Folders and tags */
+
+.sidebar {
+  background-color: @sidebar;
+  border-right: 1px solid alpha(@text, 0.08);
+  padding: 14px 10px;
+}
+
+.sidebar windowcontrols {
+  margin: 2px 6px 0;
+}
+
+.sidebar windowcontrols button {
+  min-width: 12px;
+  min-height: 12px;
+  margin-right: 8px;
+  border-radius: 50%;
+}
+
+.sidebar windowcontrols button image {
+  opacity: 0;
+}
+
+.sidebar windowcontrols button.close {
+  background-color: #E5684F;
+}
+
+.sidebar windowcontrols button.minimize {
+  background-color: #E8B04A;
+}
+
+.sidebar windowcontrols button.maximize {
+  background-color: #6FAF7A;
+}
+
+.sidebar > scrolledwindow .heading:first-child {
+  padding-top: 14px;
+}
+
+button.folder {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+
+button.folder image {
+  color: @accent;
+}
+
+button.folder .count {
+  font-size: 11px;
+  color: #7A736A;
+}
+
+button.folder:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+button.folder.current {
+  background-color: @accent;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+button.folder.current image,
+button.folder.current label {
+  color: #FFFFFF;
+}
+
+button.folder.current .count {
+  color: @accent_soft;
+  font-weight: 400;
+}
+
+.tags {
+  padding: 0 8px;
+}
+
+.tags flowboxchild {
+  padding: 0;
+}
+
+button.tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background-color: @accent_soft;
+  color: @accent_text;
+  font-size: 12px;
+}
+
+button.tag.current {
+  background-color: @accent;
+  color: #FFFFFF;
+}
+
+/* Note list */
+
+.list-pane {
+  border-right: 1px solid alpha(@text, 0.08);
+}
+
+.list-header {
+  padding: 14px 14px 10px;
+}
+
+.list-header entry {
+  min-height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.06);
+  box-shadow: none;
+  color: @text;
+  outline: none;
+}
+
+.list-header entry image {
+  color: #7A736A;
+}
+
+button.new {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  background-color: @accent;
+  color: #FFFFFF;
+}
+
+.note-list {
+  padding: 0 8px 8px;
+}
+
+.note-list .heading {
+  padding: 10px 8px 4px;
+}
+
+button.note {
+  padding: 10px;
+  border-radius: 10px;
+}
+
+button.note:hover {
+  background-color: alpha(@text, 0.04);
+}
+
+button.note.current {
+  background-color: @accent_soft;
+}
+
+button.note image {
+  color: @accent;
+  -gtk-icon-size: 12px;
+}
+
+.note-title {
+  font-weight: 600;
+}
+
+.date,
+.preview {
+  font-size: 12px;
+  color: #7A736A;
+}
+
+button.note.current .date,
+button.note.current .preview {
+  color: @accent_text;
+}
+
+.empty {
+  padding: 24px;
+  color: #7A736A;
+}
+
+popover.menu > contents {
+  padding: 4px;
+  border-radius: 10px;
+  background-color: @surface;
+  border: 1px solid alpha(@text, 0.10);
+}
+
+popover.menu button {
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+popover.menu button:hover {
+  background-color: @accent_soft;
+}
+
+/* Editor */
+
+.toolbar {
+  min-height: 52px;
+  padding: 0 18px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+.path {
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+  color: #7A736A;
+}
+
+button.tool {
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 7px;
+  color: #3E3A34;
+}
+
+button.tool:hover {
+  background-color: alpha(@text, 0.06);
+}
+
+button.link-tool {
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.article {
+  padding: 28px 44px 20px;
+}
+
+entry.title {
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: @text;
+}
+
+textview.body,
+textview.body text {
+  background: none;
+  color: @text;
+  font-size: 15px;
+}
+
+textview.body text selection {
+  background-color: alpha(@accent, 0.22);
+  color: @text;
+}
+
+.backlinks {
+  padding: 14px 44px 18px;
+  border-top: 1px solid alpha(@text, 0.08);
+  background-color: #FBFAF7;
+}
+
+.backlinks .heading {
+  padding: 0;
+}
+
+.backlinks flowboxchild {
+  padding: 0;
+}
+
+button.backlink {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 7px;
+  background-color: @surface;
+  color: @accent_text;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.backlinks .none {
+  font-size: 12px;
+  color: #7A736A;
+}
