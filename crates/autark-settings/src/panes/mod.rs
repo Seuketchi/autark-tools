@@ -4,6 +4,7 @@ mod appearance;
 mod display;
 mod dock;
 mod night;
+mod power;
 mod sound;
 
 use gtk::prelude::*;
@@ -110,6 +111,7 @@ pub fn build(id: &str) -> gtk::Widget {
         "display" => display::build(),
         "dock" => dock::build(),
         "sound" => sound::build(),
+        "power" => power::build(),
         _ => {
             let (page, column) = ui::page();
             column.append(&ui::title(find(id).map_or(id, |pane| pane.label), None));

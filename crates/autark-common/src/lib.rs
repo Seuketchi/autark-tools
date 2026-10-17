@@ -2,6 +2,8 @@
 
 #[cfg(feature = "audio")]
 pub mod audio;
+#[cfg(feature = "changes")]
+pub mod changes;
 pub mod config;
 pub mod desktop;
 pub mod files;

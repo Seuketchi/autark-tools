@@ -1,0 +1,217 @@
+//! Idle timers and the low-battery warning. After `power.toml`'s minutes with no one at the laptop the screens
+//! go off (back on at a touch), and later it sleeps through logind; the battery's timers apply while UPower
+//! says it's on battery, the plugged-in ones otherwise. An app holding an idle inhibitor (a playing video)
+//! holds both off. When the battery falls to the warning level, a notification says so, once per discharge.
+//! `power.toml` is watched, so Settings' changes apply at once. Start it with the session.
+
+mod config;
+mod idle;
+
+use futures_util::StreamExt;
+use futures_util::future::{Either, select};
+
+use config::Power;
+use idle::{Event, Idle, Timer};
+
+#[zbus::proxy(interface = "org.freedesktop.UPower", default_service = "org.freedesktop.UPower", default_path = "/org/freedesktop/UPower")]
+trait UPower {
+    #[zbus(property)]
+    fn on_battery(&self) -> zbus::Result<bool>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.UPower.Device", default_service = "org.freedesktop.UPower", default_path = "/org/freedesktop/UPower/devices/DisplayDevice")]
+trait Device {
+    #[zbus(property)]
+    fn percentage(&self) -> zbus::Result<f64>;
+    #[zbus(property)]
+    fn state(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn is_present(&self) -> zbus::Result<bool>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.login1.Manager", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1")]
+trait Manager {
+    fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.Notifications", default_service = "org.freedesktop.Notifications", default_path = "/org/freedesktop/Notifications")]
+trait Notifications {
+    #[allow(clippy::too_many_arguments)]
+    fn notify(
+        &self,
+        app_name: &str,
+        replaces_id: u32,
+        app_icon: &str,
+        summary: &str,
+        body: &str,
+        actions: &[&str],
+        hints: std::collections::HashMap<&str, zbus::Variant<'_>>,
+        expire_timeout: i32,
+    ) -> zbus::Result<u32>;
+}
+
+enum Woken {
+    Idle(Vec<Event>),
+    Config,
+    Supply(Option<Supply>),
+}
+
+/// UPower's `State` while the battery runs down.
+const DISCHARGING: u32 = 2;
+
+/// What UPower says: whether it's on battery, and the battery's charge if there is one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Supply {
+    on_battery: bool,
+    battery: Option<(f64, bool)>,
+}
+
+fn main() {
+    if let Err(error) = async_io::block_on(daemon()) {
+        eprintln!("power: {error}");
+        std::process::exit(1);
+    }
+}
+
+async fn daemon() -> Result<(), String> {
+    let mut idle = Idle::connect()?;
+    let mut power = Power::load();
+    let mut changes = autark_common::changes::Changes::config("power").map_err(|error| format!("watching power.toml: {error}"))?;
+    let (supplies, supplied) = async_channel::unbounded();
+    let watcher = supplies.clone();
+    let upower = async move {
+        watch(watcher).await;
+        futures_util::future::pending::<()>().await;
+    };
+
+    let main = async move {
+        let _keep = supplies;
+        let mut supply = Supply::default();
+        let mut warned = false;
+        idle.set(power.timeouts(supply.on_battery).0, power.timeouts(supply.on_battery).1);
+        loop {
+            // What woke it, with the waits let go before it's handled.
+            let woken = {
+                let wayland = std::pin::pin!(idle.dispatch());
+                let changed = std::pin::pin!(changes.next());
+                let supplied = std::pin::pin!(supplied.recv());
+                match select(wayland, select(changed, supplied)).await {
+                    Either::Left((events, _)) => Woken::Idle(events?),
+                    Either::Right((Either::Left((changed, _)), _)) => {
+                        changed.map_err(|error| format!("watching power.toml: {error}"))?;
+                        Woken::Config
+                    }
+                    Either::Right((Either::Right((update, _)), _)) => Woken::Supply(update.ok()),
+                }
+            };
+            let mut reset = false;
+            match woken {
+                Woken::Idle(events) => {
+                    for event in events {
+                        match event {
+                            Event::Idle(Timer::ScreenOff) => idle.screens(true),
+                            Event::Back(Timer::ScreenOff) => idle.screens(false),
+                            Event::Idle(Timer::Sleep) => suspend().await,
+                            Event::Back(Timer::Sleep) => {}
+                        }
+                    }
+                }
+                Woken::Config => {
+                    let loaded = Power::load();
+                    reset = loaded.timeouts(supply.on_battery) != power.timeouts(supply.on_battery);
+                    power = loaded;
+                    warned = warn(&power, supply, warned).await;
+                }
+                Woken::Supply(Some(update)) => {
+                    reset = update.on_battery != supply.on_battery;
+                    supply = update;
+                    warned = warn(&power, supply, warned).await;
+                }
+                Woken::Supply(None) => {}
+            }
+            if reset {
+                let (screen_off, sleep) = power.timeouts(supply.on_battery);
+                idle.set(screen_off, sleep);
+            }
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), String>(())
+    };
+    match select(std::pin::pin!(upower), std::pin::pin!(main)).await {
+        Either::Left(_) => Ok(()),
+        Either::Right((result, _)) => result,
+    }
+}
+
+/// Sends what UPower says, now and whenever it changes. Without UPower it's plugged in, with no battery.
+async fn watch(supplies: async_channel::Sender<Supply>) {
+    let Ok(connection) = zbus::Connection::system().await else { return };
+    let (Ok(upower), Ok(device)) = (UPowerProxy::new(&connection).await, DeviceProxy::new(&connection).await) else { return };
+    let mut on_battery = upower.receive_on_battery_changed().await;
+    let mut percentage = device.receive_percentage_changed().await;
+    let mut state = device.receive_state_changed().await;
+    loop {
+        let battery = match device.is_present().await {
+            Ok(true) => Some((device.percentage().await.unwrap_or(100.0), device.state().await.unwrap_or(0) == DISCHARGING)),
+            _ => None,
+        };
+        let supply = Supply { on_battery: upower.on_battery().await.unwrap_or(false), battery };
+        if supplies.send(supply).await.is_err() {
+            return;
+        }
+        let any = select(on_battery.next(), select(percentage.next(), state.next()));
+        if let Either::Left((None, _)) = any.await {
+            return;
+        }
+    }
+}
+
+/// Warns once when the battery reaches `low_battery` while running down; plugging in starts it again.
+/// Returns whether it has warned this time.
+async fn warn(power: &Power, supply: Supply, warned: bool) -> bool {
+    let (now, warned) = low(power, supply, warned);
+    if let Some(percentage) = now {
+        let sent = async {
+            let connection = zbus::Connection::session().await?;
+            let notifications = NotificationsProxy::new(&connection).await?;
+            let hints = std::collections::HashMap::from([("urgency", zbus::Variant::U8(2))]);
+            notifications.notify("Power", 0, "battery-caution", "Battery low", &format!("{percentage:.0}% left. Plug in soon."), &[], hints, -1).await
+        };
+        if let Err(error) = sent.await {
+            eprintln!("power: low battery warning: {error}");
+        }
+    }
+    warned
+}
+
+/// Whether to warn now (with the charge), and whether it counts as warned afterwards.
+fn low(power: &Power, supply: Supply, warned: bool) -> (Option<f64>, bool) {
+    match supply.battery {
+        Some((percentage, true)) if power.low_battery > 0 && percentage <= f64::from(power.low_battery) => ((!warned).then_some(percentage), true),
+        _ => (None, false),
+    }
+}
+
+async fn suspend() {
+    let slept = async { ManagerProxy::new(&zbus::Connection::system().await?).await?.suspend(false).await };
+    if let Err(error) = slept.await {
+        eprintln!("power: sleeping: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warns_once_per_discharge() {
+        let power = Power::default();
+        let at = |percentage, discharging| Supply { on_battery: discharging, battery: Some((percentage, discharging)) };
+        assert_eq!(low(&power, at(30.0, true), false), (None, false));
+        assert_eq!(low(&power, at(10.0, true), false), (Some(10.0), true));
+        assert_eq!(low(&power, at(8.0, true), true), (None, true));
+        assert_eq!(low(&power, at(8.0, false), true), (None, false), "plugging in starts it again");
+        assert_eq!(low(&Power { low_battery: 0, ..power }, at(3.0, true), false), (None, false));
+        assert_eq!(low(&power, Supply::default(), false), (None, false), "no battery");
+    }
+}

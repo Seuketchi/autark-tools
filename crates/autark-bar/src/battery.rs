@@ -41,11 +41,11 @@ pub fn source() -> Shared<Option<Level>> {
     shared
 }
 
-pub fn view(source: &Shared<Option<Level>>, show_percent: bool) -> gtk::Box {
+pub fn view(source: &Shared<Option<Level>>, show_percent: &Shared<bool>) -> gtk::Box {
     let level = Rc::new(Cell::new(Level::default()));
 
     let label = gtk::Label::new(None);
-    label.set_visible(show_percent);
+    show_percent.watch(&label, |label, show| label.set_visible(*show));
 
     let icon = gtk::DrawingArea::builder()
         .content_width(24)

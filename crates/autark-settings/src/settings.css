@@ -376,3 +376,15 @@ button.row.pick .mark {
   color: @accent;
   font-weight: 700;
 }
+
+/* Power */
+
+.group > .row.battery {
+  min-height: 72px;
+}
+
+.battery-percent {
+  font-size: 20px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+}

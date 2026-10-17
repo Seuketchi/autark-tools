@@ -31,7 +31,7 @@ fn main() -> glib::ExitCode {
 
 /// What every monitor's bar shows, each watched once however many monitors there are.
 struct Sources {
-    battery_percent: bool,
+    battery_percent: Shared<bool>,
     app_name: Shared<Option<String>>,
     wifi: wifi::Source,
     volume: Shared<volume::Snapshot>,
@@ -51,7 +51,7 @@ fn start(app: &gtk::Application) {
 
     let config: config::Bar = autark_common::config::load("bar");
     let sources = Rc::new(Sources {
-        battery_percent: config.battery_percent,
+        battery_percent: Shared::new(config.battery_percent),
         app_name: app_name::source(),
         wifi: wifi::source(),
         volume: volume::source(),
@@ -60,6 +60,7 @@ fn start(app: &gtk::Application) {
         notifications: notifications::source(),
     });
 
+    let watched = sources.clone();
     let monitors = gdk::Display::default().expect("no display").monitors();
     let bars: Rc<RefCell<Vec<(gdk::Monitor, gtk::ApplicationWindow)>>> = Rc::default();
     let sync = {
@@ -86,6 +87,14 @@ fn start(app: &gtk::Application) {
     };
     sync();
     monitors.connect_items_changed(move |_, _, _, _| sync());
+
+    // Settings' changes, or a hand edit, apply at once.
+    let watch = autark_common::watch::config("bar", move || {
+        let config: config::Bar = autark_common::config::load("bar");
+        watched.battery_percent.set(config.battery_percent);
+        clock::set_format(&watched.clock, &config.clock_format);
+    });
+    std::mem::forget(watch);
 }
 
 fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk::ApplicationWindow {
@@ -108,7 +117,7 @@ fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk
     let end = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     end.append(&wifi::view(&sources.wifi));
     end.append(&volume::view(&sources.volume));
-    end.append(&battery::view(&sources.battery, sources.battery_percent));
+    end.append(&battery::view(&sources.battery, &sources.battery_percent));
     end.append(&clock::view(&sources.clock));
     end.append(&notifications::view(&sources.notifications));
 

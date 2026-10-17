@@ -1,0 +1,21 @@
+[package]
+name = "autark-power"
+description = "Idle timers and the low-battery warning: screens off and sleep after a while, by battery or plugged in."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-channel = "2.5.0"
+async-io = "2.6.0"
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["changes"] }
+futures-util = "0.3.34"
+serde = { version = "1.0.229", features = ["derive"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+zbus = "6.0.0"
+
+[dev-dependencies]
+toml = "1.1.8"
