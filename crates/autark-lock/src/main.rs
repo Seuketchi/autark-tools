@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use chrono::Local;
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib};
+use gtk::{gio, glib};
 use gtk4_session_lock::Instance;
 use zeroize::Zeroizing;
 
@@ -308,15 +308,5 @@ fn tick(date: glib::WeakRef<gtk::Label>, time: glib::WeakRef<gtk::Label>) {
 }
 
 fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!(
-        "{}{}",
-        autark_common::theme::LINEN.gtk_css(),
-        include_str!("lock.css")
-    ));
-    gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().expect("no display"),
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    autark_common::theme::install(include_str!("lock.css"));
 }

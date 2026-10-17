@@ -137,8 +137,8 @@ fn row(battery: &Battery) -> gtk::Box {
         cr.set_source_rgba(f64::from(color.red()), f64::from(color.green()), f64::from(color.blue()), 0.12);
         cr.arc(x, y, radius, 0.0, 2.0 * PI);
         let _ = cr.stroke();
-        let accent = if percent < LOW { (0.769, 0.314, 0.235) } else { (0.247, 0.478, 0.373) };
-        cr.set_source_rgb(accent.0, accent.1, accent.2);
+        let palette = &autark_common::theme::look().palette;
+        autark_common::theme::set_source(cr, if percent < LOW { &palette.danger } else { &palette.accent }, 1.0);
         cr.arc(x, y, radius, -PI / 2.0, -PI / 2.0 + 2.0 * PI * percent / 100.0);
         let _ = cr.stroke();
     });

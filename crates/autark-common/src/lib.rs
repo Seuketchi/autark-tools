@@ -5,6 +5,7 @@ pub mod desktop;
 pub mod files;
 pub mod stats;
 pub mod theme;
+pub mod wallpaper;
 #[cfg(feature = "toplevels")]
 pub mod toplevels;
 #[cfg(feature = "watch")]

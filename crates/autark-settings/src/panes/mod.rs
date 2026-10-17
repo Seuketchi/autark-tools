@@ -1,5 +1,6 @@
 //! The panes, in the sidebar's order, and the names search finds.
 
+mod appearance;
 mod display;
 mod dock;
 mod night;
@@ -104,6 +105,7 @@ pub fn find(id: &str) -> Option<&'static Pane> {
 /// A pane's page, built when it's first opened.
 pub fn build(id: &str) -> gtk::Widget {
     match id {
+        "appearance" => appearance::build(),
         "display" => display::build(),
         "dock" => dock::build(),
         _ => {

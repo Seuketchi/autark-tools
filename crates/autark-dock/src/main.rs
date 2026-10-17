@@ -142,6 +142,14 @@ fn start(app: &gtk::Application) {
     });
 
     let watched = Rc::downgrade(&dock);
+    autark_common::theme::on_change(move |_| {
+        if let Some(dock) = watched.upgrade() {
+            dock.arrange();
+            dock.magnify();
+        }
+    });
+
+    let watched = Rc::downgrade(&dock);
     *dock._watch.borrow_mut() = Some(autark_common::watch::config("dock", move || {
         if let Some(dock) = watched.upgrade() {
             dock.reload();
@@ -221,6 +229,7 @@ impl Dock {
         } else {
             self.window.remove_css_class("dots");
         }
+        self.revealer.set_transition_duration(if autark_common::theme::look().theme.reduce_motion { 0 } else { 180 });
         self.revealer.set_reveal_child(!config.autohide);
     }
 
@@ -405,7 +414,9 @@ impl Dock {
         let centre = f64::from(length) / 2.0;
         let start = centre - slot * icons.len() as f64 / 2.0;
         let along = self.pointer.get().map(|(x, y)| if vertical { y } else { x });
-        let hovered = along.filter(|_| config.magnify).map(|along| (along - start) / slot - 0.5);
+        // Reduced motion leaves the icons still.
+        let magnify = config.magnify && !autark_common::theme::look().theme.reduce_motion;
+        let hovered = along.filter(|_| magnify).map(|along| (along - start) / slot - 0.5);
         for (index, icon) in icons.iter().enumerate() {
             let closeness = hovered.map_or(0.0, |hovered| (1.0 - (index as f64 - hovered).abs() / SPREAD).max(0.0));
             icon.set_pixel_size((size * (1.0 + 0.5 * closeness)).round() as i32);
@@ -454,7 +465,5 @@ fn set_input_region(window: &gtk::ApplicationWindow, revealer: &gtk::Revealer, p
 }
 
 fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!("{}{}", autark_common::theme::LINEN.gtk_css(), include_str!("dock.css")));
-    gtk::style_context_add_provider_for_display(&gdk::Display::default().expect("no display"), &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    autark_common::theme::install(include_str!("dock.css"));
 }

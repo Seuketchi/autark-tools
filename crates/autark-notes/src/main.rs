@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::glib;
 
 fn main() -> glib::ExitCode {
     let arg = std::env::args().nth(1).map(PathBuf::from);
@@ -53,7 +53,5 @@ fn vault_root(arg: Option<PathBuf>) -> PathBuf {
 }
 
 fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!("{}{}", autark_common::theme::LINEN.gtk_css(), include_str!("notes.css")));
-    gtk::style_context_add_provider_for_display(&gdk::Display::default().expect("no display"), &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    autark_common::theme::install(include_str!("notes.css"));
 }

@@ -147,7 +147,7 @@ fn set_level(meter: &gtk::DrawingArea, level: f64) {
             cr.arc(radius, radius, radius, std::f64::consts::FRAC_PI_2, 3.0 * std::f64::consts::FRAC_PI_2);
             cr.close_path();
         };
-        cr.set_source_rgba(0.141, 0.133, 0.118, 0.08);
+        autark_common::theme::set_source(cr, &autark_common::theme::look().palette.text, 0.08);
         rounded(cr, width);
         let _ = cr.fill();
         if level > 0.0 {

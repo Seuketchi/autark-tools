@@ -1,0 +1,83 @@
+//! The desktop background: a layer-shell surface behind everything on each display, showing the wallpaper
+//! `theme.toml` names. That's one of the four drawn scenes, or a picture's path, which covers the display as
+//! a picture set to fill would. The file is watched, so Settings' choice shows at once, and displays coming
+//! and going get a background each.
+
+use std::cell::RefCell;
+
+use autark_common::{theme, wallpaper};
+use gtk::prelude::*;
+use gtk::{gdk, glib};
+use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+
+fn main() -> glib::ExitCode {
+    let app = gtk::Application::builder().application_id("org.autark.Wallpaper").build();
+    app.connect_startup(|_| theme::install(include_str!("wallpaper.css")));
+    app.connect_activate(start);
+    app.run()
+}
+
+thread_local!(static WINDOWS: RefCell<Vec<gtk::ApplicationWindow>> = RefCell::default());
+
+fn start(app: &gtk::Application) {
+    let Some(display) = gdk::Display::default() else { return };
+    // Held for as long as the app runs, as it has no ordinary window to keep it going.
+    std::mem::forget(app.hold());
+    cover(app, &display);
+    display.monitors().connect_items_changed({
+        let app = app.clone();
+        move |_, _, _, _| cover(&app, &display)
+    });
+    theme::on_change(|look| {
+        WINDOWS.with_borrow(|windows| {
+            for window in windows {
+                window.set_child(Some(&content(&look.theme.wallpaper)));
+            }
+        })
+    });
+}
+
+/// A background for each display, replacing the ones before.
+fn cover(app: &gtk::Application, display: &gdk::Display) {
+    let name = theme::look().theme.wallpaper.clone();
+    let monitors = display.monitors();
+    let windows = (0..monitors.n_items()).filter_map(|index| monitors.item(index).and_downcast::<gdk::Monitor>()).map(|monitor| background(app, &monitor, &name)).collect();
+    for window in WINDOWS.replace(windows) {
+        window.destroy();
+    }
+}
+
+fn background(app: &gtk::Application, monitor: &gdk::Monitor, name: &str) -> gtk::ApplicationWindow {
+    let window = gtk::ApplicationWindow::new(app);
+    window.init_layer_shell();
+    window.set_layer(Layer::Background);
+    window.set_namespace(Some("autark-wallpaper"));
+    window.set_monitor(Some(monitor));
+    window.set_keyboard_mode(KeyboardMode::None);
+    window.set_exclusive_zone(-1);
+    for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+        window.set_anchor(edge, true);
+    }
+    window.add_css_class("wallpaper");
+    window.set_child(Some(&content(name)));
+    window.present();
+    window
+}
+
+/// The picture `name` gives, or the scene it names; Linen when it's neither or the picture won't load.
+fn content(name: &str) -> gtk::Widget {
+    if wallpaper::is_picture(name) {
+        match gdk::Texture::from_filename(wallpaper::picture_path(name)) {
+            Ok(texture) => {
+                let picture = gtk::Picture::for_paintable(&texture);
+                picture.set_content_fit(gtk::ContentFit::Cover);
+                return picture.upcast();
+            }
+            Err(error) => eprintln!("autark-wallpaper: {name}: {error}"),
+        }
+    }
+    let scene = *wallpaper::scene(name).unwrap_or(&wallpaper::SCENES[0]);
+    let area = gtk::DrawingArea::new();
+    area.set_draw_func(move |_, cr, width, height| wallpaper::draw(cr, &scene, f64::from(width), f64::from(height)));
+    area.upcast()
+}

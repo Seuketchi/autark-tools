@@ -6,16 +6,16 @@ window.launcher {
 }
 
 .backdrop {
-  background-color: rgba(246, 244, 239, 0.40);
+  background-color: alpha(@ground, 0.40);
 }
 
 .dialog {
   min-width: 640px;
   margin-top: 144px;
-  background-color: rgba(255, 255, 255, 0.82);
+  background-color: alpha(@surface, 0.82);
   border: 1px solid alpha(@text, 0.12);
   border-radius: 16px;
-  box-shadow: 0 30px 80px rgba(70, 58, 40, 0.2);
+  box-shadow: 0 30px 80px alpha(@shadow, 0.2);
 }
 
 .header {
@@ -39,7 +39,7 @@ window.launcher {
 }
 
 .header entry text placeholder {
-  color: #7A736A;
+  color: @text3;
 }
 
 .key {
@@ -58,7 +58,7 @@ window.launcher {
 
 .group {
   padding: 10px 12px 4px;
-  color: #7A736A;
+  color: @text3;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -108,7 +108,7 @@ window.launcher {
 }
 
 .row.selected .glyph {
-  background-color: rgba(20, 23, 28, 0.14);
+  background-color: alpha(@shadow, 0.14);
 }
 
 .empty {
@@ -120,6 +120,6 @@ window.launcher {
 .footer {
   padding: 10px 20px;
   border-top: 1px solid alpha(@text, 0.08);
-  color: #7A736A;
+  color: @text3;
   font-size: 12px;
 }

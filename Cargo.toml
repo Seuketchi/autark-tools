@@ -19,6 +19,7 @@ members = [
     "crates/autark-settings",
     "crates/autark-shot",
     "crates/autark-stats",
+    "crates/autark-wallpaper",
 ]
 
 [workspace.package]

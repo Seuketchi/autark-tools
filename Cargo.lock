@@ -132,6 +132,7 @@ dependencies = [
  "gio",
  "glib",
  "glib-unix",
+ "gtk4",
  "serde",
  "toml",
  "wayland-client",
@@ -327,6 +328,15 @@ dependencies = [
  "futures-util",
  "serde_json",
  "zbus",
+]
+
+[[package]]
+name = "autark-wallpaper"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "gtk4-layer-shell",
 ]
 
 [[package]]

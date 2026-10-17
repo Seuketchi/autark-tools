@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use autark_common::theme::LINEN;
+use autark_common::theme::{self, Palette};
 use gtk::prelude::*;
 use gtk::{gdk, pango};
 
@@ -403,30 +403,55 @@ fn create_tags(buffer: &gtk::TextBuffer) {
     tag("italic").set_style(pango::Style::Italic);
     let code = tag("code");
     code.set_family(Some("Geist Mono, monospace"));
-    code.set_background(Some("rgba(36, 34, 30, 0.06)"));
-    let quote = tag("quote");
-    quote.set_foreground(Some(LINEN.text2));
-    quote.set_left_margin(14);
+    tag("quote").set_left_margin(14);
     for name in ["link", "tag"] {
-        let chip = tag(name);
-        chip.set_foreground(Some(LINEN.accent_text));
-        chip.set_background(Some(LINEN.accent_soft));
-        chip.set_weight(500);
+        tag(name).set_weight(500);
     }
-    tag("marker").set_foreground(Some("#A39C92"));
     tag("hidden").set_invisible(true);
-    let bullet = tag("bullet");
-    bullet.set_foreground(Some(LINEN.accent));
-    bullet.set_weight(700);
+    tag("bullet").set_weight(700);
     let checkbox = tag("checkbox");
-    checkbox.set_foreground(Some(LINEN.accent));
     checkbox.set_family(Some("Geist Mono, monospace"));
     checkbox.set_weight(700);
-    let done = tag("done");
-    done.set_strikethrough(true);
-    done.set_foreground(Some("#7A736A"));
+    tag("done").set_strikethrough(true);
     // Find matches, used by the find bar.
-    tag("match").set_background(Some("#F1E3B5"));
+    tag("match");
+    colour_tags(buffer, &theme::look().palette);
+    let buffer = buffer.downgrade();
+    theme::on_change(move |look| {
+        if let Some(buffer) = buffer.upgrade() {
+            colour_tags(&buffer, &look.palette);
+        }
+    });
+}
+
+/// The tags' colours, from the theme, and again whenever it changes.
+fn colour_tags(buffer: &gtk::TextBuffer, palette: &Palette) {
+    let table = buffer.tag_table();
+    let tag = |name: &str| table.lookup(name);
+    let text_alpha = |alpha: f64| {
+        let [r, g, b] = theme::rgb(&palette.text);
+        format!("rgba({:.0}, {:.0}, {:.0}, {alpha})", r * 255.0, g * 255.0, b * 255.0)
+    };
+    if let Some(code) = tag("code") {
+        code.set_background(Some(&text_alpha(0.06)));
+    }
+    if let Some(quote) = tag("quote") {
+        quote.set_foreground(Some(&palette.text2));
+    }
+    for name in ["link", "tag"] {
+        if let Some(chip) = tag(name) {
+            chip.set_foreground(Some(&palette.accent_text));
+            chip.set_background(Some(&palette.accent_soft));
+        }
+    }
+    for (name, colour) in [("marker", &palette.faint), ("bullet", &palette.accent), ("checkbox", &palette.accent), ("done", &palette.text3)] {
+        if let Some(tag) = tag(name) {
+            tag.set_foreground(Some(colour));
+        }
+    }
+    if let Some(found) = tag("match") {
+        found.set_background(Some(&theme::mix(&palette.warning, &palette.surface, 0.3)));
+    }
 }
 
 #[cfg(test)]

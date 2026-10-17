@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib};
+use gtk::{gio, glib};
 
 fn main() -> glib::ExitCode {
     let app = gtk::Application::builder().application_id("org.autark.Activity").flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
@@ -34,7 +34,5 @@ fn main() -> glib::ExitCode {
 }
 
 fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!("{}{}", autark_common::theme::LINEN.gtk_css(), include_str!("monitor.css")));
-    gtk::style_context_add_provider_for_display(&gdk::Display::default().expect("no display"), &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    autark_common::theme::install(include_str!("monitor.css"));
 }

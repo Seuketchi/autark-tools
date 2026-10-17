@@ -4,6 +4,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use autark_common::theme;
 use gtk::prelude::*;
 
 use crate::editor::Callback;
@@ -42,6 +43,7 @@ const LABEL_WIDTH: f64 = 120.0;
 impl Graph {
     pub fn new() -> Rc<Self> {
         let area = gtk::DrawingArea::builder().hexpand(true).vexpand(true).build();
+        theme::redraw_on_change(&area);
         let fixed = gtk::Fixed::new();
         let caption = gtk::Label::new(None);
         caption.add_css_class("caption");
@@ -79,10 +81,11 @@ impl Graph {
             cr.set_line_width(1.5);
             for &(a, b) in graph.edges.borrow().iter() {
                 let touches = [a, b].iter().any(|&i| current.as_deref() == Some(nodes[i].path.as_str()));
+                let palette = &theme::look().palette;
                 if touches {
-                    cr.set_source_rgb(0x3F as f64 / 255.0, 0x7A as f64 / 255.0, 0x5F as f64 / 255.0);
+                    theme::set_source(cr, &palette.accent, 1.0);
                 } else {
-                    cr.set_source_rgba(36.0 / 255.0, 34.0 / 255.0, 30.0 / 255.0, 0.18);
+                    theme::set_source(cr, &palette.text, 0.18);
                 }
                 let ((ax, ay), (bx, by)) = (graph.point(&nodes[a]), graph.point(&nodes[b]));
                 cr.move_to(ax, ay);

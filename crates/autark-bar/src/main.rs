@@ -122,15 +122,5 @@ fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk
 }
 
 fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!(
-        "{}{}",
-        autark_common::theme::LINEN.gtk_css(),
-        include_str!("bar.css")
-    ));
-    gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().expect("no display"),
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    autark_common::theme::install(include_str!("bar.css"));
 }

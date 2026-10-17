@@ -76,7 +76,7 @@ entry.search {
 }
 
 entry.search image {
-  color: #7A736A;
+  color: @text3;
 }
 
 button.nav {
@@ -91,7 +91,7 @@ button.nav:hover {
 
 button.nav.current {
   background-color: @accent;
-  color: #FFFFFF;
+  color: @on_accent;
   font-weight: 600;
 }
 
@@ -113,7 +113,7 @@ button.result .pane-name {
 .search-note {
   padding: 8px 10px;
   font-size: 11px;
-  color: #7A736A;
+  color: @text3;
 }
 
 /* Panes */
@@ -135,7 +135,7 @@ button.result .pane-name {
 .section-heading {
   font-size: 13px;
   font-weight: 600;
-  color: #3E3A34;
+  color: @heading;
 }
 
 .note {
@@ -151,7 +151,7 @@ button.result .pane-name {
 }
 
 .error {
-  color: #C4503C;
+  color: @danger;
 }
 
 .group {
@@ -265,7 +265,7 @@ entry.field:focus-within {
 }
 
 entry.field.invalid {
-  border-color: #C4503C;
+  border-color: @danger;
 }
 
 button.small {
@@ -280,16 +280,16 @@ button.small:hover {
 }
 
 button.danger {
-  color: #C4503C;
+  color: @danger;
 }
 
 /* Display */
 
 .monitor {
-  border: 2px solid alpha(#FFFFFF, 0.9);
+  border: 2px solid alpha(@surface, 0.9);
   border-radius: 6px;
-  background-image: linear-gradient(160deg, #DCE7DF, #EFE6D6);
-  box-shadow: 0 4px 14px alpha(#463A28, 0.16);
+  background-image: linear-gradient(160deg, @accent_soft, @raised);
+  box-shadow: 0 4px 14px alpha(@shadow, 0.16);
 }
 
 .monitor.selected {
@@ -313,4 +313,46 @@ button.danger {
 .monitor-size {
   font-size: 11px;
   color: @text2;
+}
+
+/* Appearance */
+
+button.card {
+  padding: 0;
+  font-size: 12px;
+}
+
+button.card:hover {
+  background: none;
+}
+
+.card-face {
+  margin: 2px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px alpha(@text, 0.12);
+  background-color: alpha(@text, 0.05);
+}
+
+button.card.picked .card-face {
+  box-shadow: 0 0 0 2px @accent;
+}
+
+button.card.picked .card-label {
+  font-weight: 600;
+}
+
+.card-face .choose {
+  color: @text3;
+  -gtk-icon-size: 20px;
+}
+
+button.dot {
+  min-width: 28px;
+  min-height: 28px;
+  margin: 4px;
+  border-radius: 50%;
+}
+
+button.dot.picked {
+  box-shadow: 0 0 0 2px @surface, 0 0 0 4px @accent;
 }

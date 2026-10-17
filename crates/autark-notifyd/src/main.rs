@@ -12,7 +12,7 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::glib;
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 use zbus::object_server::SignalEmitter;
 
@@ -258,15 +258,5 @@ impl Daemon {
 }
 
 fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!(
-        "{}{}",
-        autark_common::theme::LINEN.gtk_css(),
-        include_str!("notifyd.css")
-    ));
-    gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().expect("no display"),
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    autark_common::theme::install(include_str!("notifyd.css"));
 }

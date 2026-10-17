@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use autark_common::stats::{App, Snapshot};
+use autark_common::theme;
 use gtk::prelude::*;
 use gtk::{gio, pango};
 
@@ -429,15 +430,16 @@ impl Monitor {
         cr.line_to(width, height);
         cr.line_to(0.0, height);
         cr.close_path();
-        cr.set_source_rgba(63.0 / 255.0, 122.0 / 255.0, 95.0 / 255.0, 0.14);
+        let palette = &theme::look().palette;
+        theme::set_source(cr, &palette.accent, 0.14);
         let _ = cr.fill();
         cr.set_line_width(2.0);
         trace(&values);
-        cr.set_source_rgb(63.0 / 255.0, 122.0 / 255.0, 95.0 / 255.0);
+        theme::set_source(cr, &palette.accent, 1.0);
         let _ = cr.stroke();
         if let Some(second) = second {
             trace(&second);
-            cr.set_source_rgb(201.0 / 255.0, 154.0 / 255.0, 62.0 / 255.0);
+            theme::set_source(cr, &palette.warning, 1.0);
             let _ = cr.stroke();
         }
     }
@@ -614,16 +616,13 @@ fn meter(value: f64, warm: bool) -> gtk::DrawingArea {
             cr.close_path();
         };
         rounded(width);
-        cr.set_source_rgba(36.0 / 255.0, 34.0 / 255.0, 30.0 / 255.0, 0.08);
+        let palette = &theme::look().palette;
+        theme::set_source(cr, &palette.text, 0.08);
         let _ = cr.fill();
         let filled = width * value.clamp(0.0, 100.0) / 100.0;
         if filled >= 1.0 {
             rounded(filled.max(height));
-            if warm {
-                cr.set_source_rgb(201.0 / 255.0, 154.0 / 255.0, 62.0 / 255.0);
-            } else {
-                cr.set_source_rgb(63.0 / 255.0, 122.0 / 255.0, 95.0 / 255.0);
-            }
+            theme::set_source(cr, if warm { &palette.warning } else { &palette.accent }, 1.0);
             let _ = cr.fill();
         }
     });

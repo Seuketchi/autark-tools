@@ -28,7 +28,7 @@ window.notes .titlebar {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: #7A736A;
+  color: @text3;
 }
 
 /* Folders and tags */
@@ -87,7 +87,7 @@ button.folder image {
 
 button.folder .count {
   font-size: 11px;
-  color: #7A736A;
+  color: @text3;
 }
 
 button.folder:hover {
@@ -96,13 +96,13 @@ button.folder:hover {
 
 button.folder.current {
   background-color: @accent;
-  color: #FFFFFF;
+  color: @on_accent;
   font-weight: 600;
 }
 
 button.folder.current image,
 button.folder.current label {
-  color: #FFFFFF;
+  color: @on_accent;
 }
 
 button.folder.current .count {
@@ -128,7 +128,7 @@ button.tag {
 
 button.tag.current {
   background-color: @accent;
-  color: #FFFFFF;
+  color: @on_accent;
 }
 
 /* Note list */
@@ -153,7 +153,7 @@ button.tag.current {
 }
 
 .list-header entry image {
-  color: #7A736A;
+  color: @text3;
 }
 
 button.new {
@@ -161,7 +161,7 @@ button.new {
   min-height: 32px;
   border-radius: 8px;
   background-color: @accent;
-  color: #FFFFFF;
+  color: @on_accent;
 }
 
 .note-list {
@@ -197,7 +197,7 @@ button.note image {
 .date,
 .preview {
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }
 
 button.note.current .date,
@@ -207,7 +207,7 @@ button.note.current .preview {
 
 .empty {
   padding: 24px;
-  color: #7A736A;
+  color: @text3;
 }
 
 popover.menu > contents {
@@ -237,14 +237,14 @@ popover.menu button:hover {
 .path {
   font-family: "Geist Mono", monospace;
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }
 
 button.tool {
   min-width: 30px;
   min-height: 30px;
   border-radius: 7px;
-  color: #3E3A34;
+  color: @heading;
 }
 
 button.tool:hover {
@@ -289,7 +289,7 @@ textview.body text selection {
 .backlinks {
   padding: 14px 44px 18px;
   border-top: 1px solid alpha(@text, 0.08);
-  background-color: #FBFAF7;
+  background-color: @raised;
 }
 
 .backlinks .heading {
@@ -313,7 +313,7 @@ button.backlink {
 
 .backlinks .none {
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }
 
 /* Note and Graph */
@@ -337,18 +337,18 @@ button.backlink {
 }
 
 .graph {
-  background-color: #FBFAF7;
+  background-color: @raised;
 }
 
 .graph .caption {
   margin: 0 0 14px 18px;
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }
 
 button.node label {
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }
 
 button.node label.current,
@@ -362,11 +362,11 @@ button.node label.current {
 
 .dot {
   border-radius: 999px;
-  background-color: #C9C2B6;
+  background-color: @faint;
 }
 
 .dot.near {
-  background-color: #7FB89A;
+  background-color: alpha(@accent, 0.6);
 }
 
 .dot.current {
@@ -379,14 +379,14 @@ button.node label.current {
 .tab-strip {
   padding: 6px 18px;
   border-bottom: 1px solid alpha(@text, 0.08);
-  background-color: #FBFAF7;
+  background-color: @raised;
 }
 
 .tab {
   padding: 0 4px 0 10px;
   border-radius: 7px;
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }
 
 .tab button {
@@ -416,7 +416,7 @@ button.node label.current {
 .find {
   padding: 10px 44px;
   border-bottom: 1px solid alpha(@text, 0.08);
-  background-color: #FBFAF7;
+  background-color: @raised;
 }
 
 .find entry {
@@ -443,7 +443,7 @@ button.node label.current {
 
 .find .count {
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
   margin: 0 6px;
 }
 
@@ -455,7 +455,7 @@ button.node label.current {
   border-radius: 14px;
   border: 1px solid alpha(@text, 0.10);
   background-color: @surface;
-  box-shadow: 0 30px 80px rgba(70, 58, 40, 0.22);
+  box-shadow: 0 30px 80px alpha(@shadow, 0.22);
 }
 
 .switcher entry {
@@ -482,5 +482,5 @@ button.node label.current {
 
 .switcher .folder-name {
   font-size: 12px;
-  color: #7A736A;
+  color: @text3;
 }

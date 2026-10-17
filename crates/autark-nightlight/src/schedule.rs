@@ -136,6 +136,13 @@ impl Config {
             .fold(0.0, f64::max)
     }
 
+    /// Whether the auto theme is dark at `now`: night by this schedule, or by the sun (else the set times)
+    /// when night light's own schedule is off.
+    pub fn theme_night(&self, now: DateTime<Local>) -> bool {
+        let config = if self.schedule == Kind::Off { Config { schedule: Kind::Sun, ..self.clone() } } else { self.clone() };
+        config.nights(now).iter().any(|(start, end)| *start <= now && now < *end)
+    }
+
     /// The next time the schedule starts or finishes a fade after `now`.
     pub fn next_change(&self, now: DateTime<Local>) -> Option<DateTime<Local>> {
         let fade = self.fade();
@@ -222,6 +229,9 @@ mod tests {
         assert_eq!(Config { latitude: Some(7.0), longitude: Some(125.6), ..Config::default() }.kind(), Kind::Sun);
         let off = Config { schedule: Kind::Off, ..Config::default() };
         assert!(off.nights(at("2026-10-17 23:00")).is_empty());
+        // The auto theme still has its nights, from the set times here.
+        assert!(off.theme_night(at("2026-10-17 23:00")));
+        assert!(!off.theme_night(at("2026-10-17 12:00")));
         assert_eq!(off.next_change(at("2026-10-17 23:00")), None);
     }
 

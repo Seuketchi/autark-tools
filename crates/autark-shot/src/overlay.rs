@@ -235,7 +235,7 @@ fn draw(cr: &gtk::cairo::Context, state: &State, index: usize, shot: &Shot, widt
         && state.mode != Mode::Screen
     {
         if state.mode == Mode::Window {
-            cr.set_source_rgba(63.0 / 255.0, 122.0 / 255.0, 95.0 / 255.0, 0.16);
+            autark_common::theme::set_source(cr, &autark_common::theme::look().palette.accent, 0.16);
             cr.rectangle(x, y, w, h);
             let _ = cr.fill();
         }
@@ -465,12 +465,13 @@ fn glyph(kind: Glyph, on: bool) -> gtk::DrawingArea {
 /// The design's bar glyphs: a screen outline with a filled screen, window or dashed area inside.
 fn set_glyph(area: &gtk::DrawingArea, kind: Glyph, on: bool) {
     area.set_draw_func(move |_, cr, _, _| {
-        let (r, g, b) = if on { (63.0, 122.0, 95.0) } else { (36.0, 34.0, 30.0) };
-        cr.set_source_rgb(r / 255.0, g / 255.0, b / 255.0);
+        let palette = &autark_common::theme::look().palette;
+        let colour = if on { palette.accent.clone() } else { palette.text.clone() };
+        autark_common::theme::set_source(cr, &colour, 1.0);
         cr.set_line_width(1.5);
         match kind {
             Glyph::Close => {
-                cr.set_source_rgb(104.0 / 255.0, 98.0 / 255.0, 90.0 / 255.0);
+                autark_common::theme::set_source(cr, &palette.text2, 1.0);
                 cr.move_to(6.0, 4.0);
                 cr.line_to(16.0, 14.0);
                 cr.move_to(16.0, 4.0);
@@ -489,7 +490,7 @@ fn set_glyph(area: &gtk::DrawingArea, kind: Glyph, on: bool) {
                     Mode::Window => (5.0, 4.0, 12.0, 10.0),
                     Mode::Area => (6.0, 5.0, 10.0, 8.0),
                 };
-                cr.set_source_rgba(r / 255.0, g / 255.0, b / 255.0, if on { 0.35 } else { 0.18 });
+                autark_common::theme::set_source(cr, &colour, if on { 0.35 } else { 0.18 });
                 cr.rectangle(x, y, w, h);
                 let _ = cr.fill();
             }

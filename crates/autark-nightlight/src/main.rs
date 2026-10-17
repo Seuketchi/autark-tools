@@ -1,6 +1,7 @@
 //! Night light: warms the screen from sunset to sunrise (or between set times) through Wayland gamma control,
 //! fading in and out. `autark-nightlight daemon` runs it, started with the session; `on`, `off`, `toggle`,
-//! `status` and `reload` talk to it over `org.autark.NightLight1`.
+//! `status` and `reload` talk to it over `org.autark.NightLight1`. It also writes `$XDG_RUNTIME_DIR/autark/night`
+//! for the auto theme, which follows the same nights even when night light is off.
 
 mod gamma;
 mod schedule;
@@ -94,8 +95,15 @@ async fn daemon() -> Result<(), String> {
         .map_err(|error| format!("the session bus: {error} (is another night light running?)"))?;
     let interface = connection.object_server().interface::<_, NightLight>(server::PATH).await.map_err(|error| error.to_string())?;
 
+    let mut night = None;
     loop {
         let now = Local::now();
+        // The auto theme's night, for every tool to watch.
+        let theme_night = shared.lock().unwrap().config.theme_night(now);
+        if night != Some(theme_night) {
+            night = Some(theme_night);
+            write_night(theme_night);
+        }
         let (kelvin, sleep, changed) = {
             let mut shared = shared.lock().unwrap();
             if let Some((_, Some(until))) = shared.manual
@@ -134,5 +142,22 @@ async fn daemon() -> Result<(), String> {
             futures_util::future::Either::Right((result, _)) => result?,
             futures_util::future::Either::Left(_) => {}
         }
+    }
+}
+
+/// `$XDG_RUNTIME_DIR/autark/night`, which the tools watch to switch an auto theme, and GTK's settings.ini for
+/// other apps.
+fn write_night(night: bool) {
+    let path = autark_common::theme::night_path();
+    let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| autark_common::files::write_atomically(&path, if night { b"1\n" } else { b"0\n" }));
+    if let Err(error) = written {
+        eprintln!("nightlight: {}: {error}", path.display());
+    }
+    // Other GTK apps can't watch the flag, so an auto theme's dark preference is passed on to them too.
+    let theme = autark_common::theme::Theme::load();
+    if theme.theme == autark_common::theme::Mode::Auto
+        && let Err(error) = autark_common::theme::write_gtk_settings(&theme)
+    {
+        eprintln!("nightlight: GTK settings: {error}");
     }
 }
