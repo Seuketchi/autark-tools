@@ -24,6 +24,10 @@ window {
   color: @accent;
 }
 
+.app-name {
+  font-weight: 600;
+}
+
 .clock {
   font-feature-settings: "tnum";
 }

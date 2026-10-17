@@ -1,5 +1,6 @@
 //! Top bar: app menu, clock, Wi-Fi, battery, volume, notification centre button.
 
+mod app_name;
 mod battery;
 mod clock;
 mod config;
@@ -36,6 +37,7 @@ fn build(app: &gtk::Application) {
 
     let start = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     start.append(&logo::new());
+    start.append(&app_name::new());
 
     let end = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     end.append(&battery::new(config.battery_percent));

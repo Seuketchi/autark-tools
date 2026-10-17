@@ -24,7 +24,7 @@ The Rust tools behind [Autark](https://github.com/Seuketchi/autark): the desktop
 | `autark-init` | Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup and tpm2-tss, then hands over to systemd |
 | `autark-pkg` | Autark's package manager (Autark-only): signed packages from recipes, with install, remove, upgrade, search and rollback |
 
-`autark-bar` has its first pieces: the Loop logo, battery (UPower) and clock. The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
+`autark-bar` has its first pieces: the Loop logo, the focused app's name, battery (UPower) and clock. The app name needs the compositor's wlr-foreign-toplevel protocol (Wayfire: enable the `foreign-toplevel` plugin). The other crates are empty skeletons for now. What each must do is specified in the Autark repo's [`docs/specs/`](https://github.com/Seuketchi/autark/tree/main/docs/specs).
 
 ## Where it runs
 
