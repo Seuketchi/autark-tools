@@ -5,6 +5,7 @@ mod battery;
 mod clock;
 mod config;
 mod logo;
+mod menu;
 mod volume;
 mod wifi;
 

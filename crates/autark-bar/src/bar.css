@@ -35,3 +35,84 @@ window {
 .clock {
   font-feature-settings: "tnum";
 }
+
+menubutton.item {
+  min-height: 0;
+  padding: 0;
+}
+
+menubutton.item > button {
+  min-height: 26px;
+  min-width: 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+}
+
+menubutton.icon > button {
+  padding: 0 7px;
+}
+
+menubutton.item > button:hover,
+menubutton.item > button:checked {
+  background-color: alpha(@text, 0.08);
+}
+
+popover.panel > contents {
+  min-width: 280px;
+  padding: 14px;
+  background-color: alpha(@surface, 0.94);
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 16px;
+  box-shadow: 0 8px 28px alpha(@text, 0.14);
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+popover.panel .heading {
+  font-weight: 600;
+}
+
+popover.panel .caption {
+  font-size: 12px;
+  color: @text2;
+}
+
+popover.panel .row {
+  min-height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-weight: normal;
+}
+
+popover.panel .row:hover {
+  background-color: alpha(@text, 0.06);
+}
+
+popover.panel .check {
+  color: @accent;
+}
+
+popover.panel scale trough {
+  min-height: 4px;
+  border: none;
+  background-color: alpha(@text, 0.12);
+}
+
+popover.panel scale highlight {
+  margin: 0;
+  border: none;
+  background-color: @accent;
+}
+
+popover.panel separator {
+  background-color: alpha(@text, 0.08);
+}

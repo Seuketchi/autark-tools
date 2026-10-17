@@ -1,13 +1,15 @@
 //! Volume: the default output's level and mute, from PipeWire on a thread of its own, since
-//! PipeWire runs its own loop. Hidden when PipeWire isn't running.
+//! PipeWire runs its own loop. Clicking opens Sound: a slider, mute and the output to use.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsStr;
 use std::rc::Rc;
+use std::time::Duration;
 
 use async_channel::Sender;
 use gtk::cairo::{Context, LineCap, LineJoin};
-use gtk::glib;
+use gtk::{gio, glib};
 use gtk::prelude::*;
 use pipewire as pw;
 use pw::metadata::{Metadata, MetadataListener};
@@ -17,31 +19,89 @@ use pw::spa::pod::deserialize::PodDeserializer;
 use pw::spa::pod::{Pod, Value, ValueArray};
 use pw::types::ObjectType;
 
+use crate::menu;
+
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Level {
-    /// As shown to people: the cube root of PipeWire's linear volume, as `wpctl` shows it.
+    /// As shown to people: the cube root of PipeWire's linear volume, the scale `wpctl` uses.
     volume: f32,
     muted: bool,
 }
 
-pub fn new() -> gtk::Box {
-    let level = Rc::new(RefCell::new(Level::default()));
+#[derive(Clone, PartialEq)]
+struct Sink {
+    id: u32,
+    description: String,
+}
 
-    let icon = gtk::DrawingArea::builder()
-        .content_width(16)
-        .content_height(16)
-        .valign(gtk::Align::Center)
-        .build();
-    icon.set_draw_func({
-        let level = level.clone();
-        move |area, cr, width, height| draw(area, cr, width.min(height), *level.borrow())
+/// What the PipeWire thread reports: the outputs, which is the default, and its level.
+#[derive(Clone, Default, PartialEq)]
+struct Snapshot {
+    sinks: Vec<Sink>,
+    default: Option<u32>,
+    level: Option<Level>,
+}
+
+/// Changes go through `wpctl`: WirePlumber owns the hardware volume, so a volume set directly
+/// on the PipeWire node doesn't stick.
+fn wpctl(args: &[&str]) {
+    let argv: Vec<&OsStr> = std::iter::once(OsStr::new("wpctl")).chain(args.iter().map(OsStr::new)).collect();
+    if let Err(err) = gio::Subprocess::newv(&argv, gio::SubprocessFlags::NONE) {
+        eprintln!("volume: wpctl: {err}");
+    }
+}
+
+pub fn new() -> gtk::MenuButton {
+    let level = Rc::new(Cell::new(Level::default()));
+    let default = Rc::new(Cell::new(None::<u32>));
+
+    let icon = speaker(&level);
+    let mute = gtk::Button::builder().child(&speaker(&level)).tooltip_text("Mute").build();
+    mute.add_css_class("row");
+    mute.connect_clicked({
+        let default = default.clone();
+        move |_| {
+            if let Some(id) = default.get() {
+                wpctl(&["set-mute", &id.to_string(), "toggle"]);
+            }
+        }
     });
 
-    let item = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    item.add_css_class("item");
-    item.add_css_class("icon");
-    item.set_visible(false);
-    item.append(&icon);
+    let slider = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+    slider.set_draw_value(false);
+    slider.set_hexpand(true);
+    // Set while the slider is moved to match PipeWire, so that isn't sent back as a change.
+    let syncing = Rc::new(Cell::new(false));
+    // Dragging sends a value every few milliseconds; only the latest is applied, at most every 60 ms.
+    let pending = Rc::new(Cell::new(None::<f64>));
+    slider.connect_value_changed({
+        let (syncing, pending, default) = (syncing.clone(), pending.clone(), default.clone());
+        move |slider| {
+            if syncing.get() || pending.replace(Some(slider.value())).is_some() {
+                return;
+            }
+            let (pending, default) = (pending.clone(), default.clone());
+            glib::timeout_add_local_once(Duration::from_millis(60), move || {
+                if let (Some(value), Some(id)) = (pending.take(), default.get()) {
+                    wpctl(&["set-volume", &id.to_string(), &format!("{:.2}", value / 100.0)]);
+                }
+            });
+        }
+    });
+
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    controls.append(&mute);
+    controls.append(&slider);
+    let outputs = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let panel = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    panel.append(&menu::heading("Sound"));
+    panel.append(&controls);
+    panel.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    panel.append(&menu::caption("Output"));
+    panel.append(&outputs);
+
+    let button = menu::button(&icon, &panel, &["icon"]);
+    button.set_visible(false);
 
     let (updates, received) = async_channel::unbounded();
     std::thread::spawn(move || {
@@ -50,52 +110,103 @@ pub fn new() -> gtk::Box {
         }
     });
     glib::spawn_future_local({
-        let item = item.clone();
+        let button = button.clone();
         async move {
+            let mut shown = Snapshot::default();
             while let Ok(update) = received.recv().await {
-                let Some(update) = update else {
-                    item.set_visible(false);
+                let Some(current) = update.level else {
+                    button.set_visible(false);
                     continue;
                 };
-                item.set_visible(true);
-                item.set_tooltip_text(Some(&if update.muted {
+                button.set_visible(true);
+                button.set_tooltip_text(Some(&if current.muted {
                     "Muted".to_owned()
                 } else {
-                    format!("Volume {:.0}%", update.volume * 100.0)
+                    format!("Volume {:.0}%", current.volume * 100.0)
                 }));
-                *level.borrow_mut() = update;
+                level.set(current);
+                default.set(update.default);
+                if pending.get().is_none() {
+                    syncing.set(true);
+                    slider.set_value(f64::from(current.volume) * 100.0);
+                    syncing.set(false);
+                }
+                mute.set_tooltip_text(Some(if current.muted { "Unmute" } else { "Mute" }));
                 icon.queue_draw();
+                if let Some(speaker) = mute.child() {
+                    speaker.queue_draw();
+                }
+                if (&update.sinks, update.default) != (&shown.sinks, shown.default) {
+                    while let Some(child) = outputs.first_child() {
+                        outputs.remove(&child);
+                    }
+                    for sink in &update.sinks {
+                        let row = menu::row(&sink.description, Some(sink.id) == update.default);
+                        let id = sink.id.to_string();
+                        row.connect_clicked(move |_| wpctl(&["set-default", &id]));
+                        outputs.append(&row);
+                    }
+                }
+                shown = update;
             }
-            item.set_visible(false);
+            button.set_visible(false);
         }
     });
-    item
+    button
+}
+
+fn speaker(level: &Rc<Cell<Level>>) -> gtk::DrawingArea {
+    let icon = gtk::DrawingArea::builder()
+        .content_width(16)
+        .content_height(16)
+        .valign(gtk::Align::Center)
+        .build();
+    let level = level.clone();
+    icon.set_draw_func(move |area, cr, width, height| draw(area, cr, width.min(height), level.get()));
+    icon
+}
+
+struct SinkState {
+    name: String,
+    description: String,
+    level: Option<Level>,
 }
 
 #[derive(Default)]
 struct State {
-    /// Every audio output's `node.name` and level; there are only a few, so all are watched.
-    sinks: HashMap<u32, (String, Option<Level>)>,
+    /// Every audio output; there are only a few, so all are watched.
+    sinks: BTreeMap<u32, SinkState>,
     default_sink: Option<String>,
-    shown: Option<Option<Level>>,
-    updates: Option<Sender<Option<Level>>>,
+    shown: Option<Snapshot>,
+    updates: Option<Sender<Snapshot>>,
 }
 
 impl State {
     fn send(&mut self) {
-        let current = self.sinks.values().find_map(|(name, level)| {
-            (Some(name) == self.default_sink.as_ref()).then_some(*level).flatten()
-        });
-        if self.shown != Some(current) {
-            self.shown = Some(current);
+        let default = self
+            .sinks
+            .iter()
+            .find(|(_, sink)| Some(&sink.name) == self.default_sink.as_ref())
+            .map(|(id, _)| *id);
+        let snapshot = Snapshot {
+            sinks: self
+                .sinks
+                .iter()
+                .map(|(id, sink)| Sink { id: *id, description: sink.description.clone() })
+                .collect(),
+            default,
+            level: default.and_then(|id| self.sinks[&id].level),
+        };
+        if self.shown.as_ref() != Some(&snapshot) {
             if let Some(updates) = &self.updates {
-                let _ = updates.send_blocking(current);
+                let _ = updates.send_blocking(snapshot.clone());
             }
+            self.shown = Some(snapshot);
         }
     }
 }
 
-fn watch(updates: Sender<Option<Level>>) -> Result<(), pw::Error> {
+fn watch(updates: Sender<Snapshot>) -> Result<(), pw::Error> {
     pw::init();
     let main_loop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&main_loop, None)?;
@@ -123,11 +234,16 @@ fn watch(updates: Sender<Option<Level>>) -> Result<(), pw::Error> {
                         let Some(name) = props.and_then(|p| p.get("node.name")) else {
                             return;
                         };
+                        // The short name ("Speaker", "HDMI 1"); descriptions repeat the sound card's long name.
+                        let description = props
+                            .and_then(|p| p.get("node.nick").or_else(|| p.get("node.description")))
+                            .unwrap_or(name);
                         let Ok(node) = registry.bind::<Node, _>(global) else {
                             return;
                         };
                         let id = global.id;
-                        state.borrow_mut().sinks.insert(id, (name.to_owned(), None));
+                        let sink = SinkState { name: name.to_owned(), description: description.to_owned(), level: None };
+                        state.borrow_mut().sinks.insert(id, sink);
                         let listener = node
                             .add_listener_local()
                             .param({
@@ -138,7 +254,7 @@ fn watch(updates: Sender<Option<Level>>) -> Result<(), pw::Error> {
                                     };
                                     let mut state = state.borrow_mut();
                                     if let Some(sink) = state.sinks.get_mut(&id) {
-                                        sink.1 = Some(level);
+                                        sink.level = Some(level);
                                     }
                                     state.send();
                                 }
