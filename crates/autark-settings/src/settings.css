@@ -423,3 +423,9 @@ list.choices row {
   padding: 0 10px;
   border-radius: 8px;
 }
+
+/* Wi-Fi */
+
+.row-label.strong {
+  font-weight: 500;
+}

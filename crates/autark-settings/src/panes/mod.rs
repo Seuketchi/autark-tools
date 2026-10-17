@@ -9,6 +9,7 @@ mod night;
 mod password;
 mod power;
 mod sound;
+mod wifi;
 
 use gtk::prelude::*;
 
@@ -117,6 +118,7 @@ pub fn build(id: &str) -> gtk::Widget {
         "power" => power::build(),
         "lock" => lock::build(),
         "keyboard" => keyboard::build(),
+        "wifi" => wifi::build(),
         _ => {
             let (page, column) = ui::page();
             column.append(&ui::title(find(id).map_or(id, |pane| pane.label), None));

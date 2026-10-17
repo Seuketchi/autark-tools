@@ -346,6 +346,7 @@ dependencies = [
  "bindgen 0.69.5",
  "futures-util",
  "gtk4",
+ "libc",
  "pam-client",
  "serde",
  "serde_json",

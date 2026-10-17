@@ -5,6 +5,7 @@
 mod bus;
 mod config;
 mod icon;
+mod iwd;
 mod panes;
 mod ui;
 mod wayfire;
