@@ -116,3 +116,46 @@ popover.panel scale highlight {
 popover.panel separator {
   background-color: alpha(@text, 0.08);
 }
+
+popover.panel .lock {
+  color: @text2;
+}
+
+popover.panel .join-row {
+  margin: 2px 0 4px;
+}
+
+popover.panel entry {
+  min-height: 28px;
+  border: 1px solid alpha(@text, 0.14);
+  border-radius: 8px;
+  background-color: @ground;
+  box-shadow: none;
+  color: @text;
+  outline-color: alpha(@accent, 0.4);
+}
+
+popover.panel entry:focus-within {
+  border-color: @accent;
+}
+
+popover.panel .join {
+  min-height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background-color: @accent;
+  background-image: none;
+  box-shadow: none;
+  color: @surface;
+  font-weight: 600;
+}
+
+popover.panel switch {
+  border: none;
+  outline-color: alpha(@accent, 0.4);
+}
+
+popover.panel switch:checked {
+  background-color: @accent;
+}

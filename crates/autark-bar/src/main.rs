@@ -11,7 +11,7 @@ mod wifi;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use gtk4_layer_shell::{Edge, Layer, LayerShell};
+use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 fn main() -> glib::ExitCode {
     let app = gtk::Application::builder()
@@ -37,6 +37,8 @@ fn build(app: &gtk::Application) {
         window.set_anchor(edge, true);
     }
     window.auto_exclusive_zone_enable();
+    // Panels take the keyboard only when clicked, for fields like the Wi-Fi password.
+    window.set_keyboard_mode(KeyboardMode::OnDemand);
 
     let start = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     start.append(&logo::new());
