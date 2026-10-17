@@ -71,14 +71,11 @@ dependencies = [
  "autark-common",
  "chrono",
  "futures-util",
- "glib-unix",
  "gtk4",
  "gtk4-layer-shell",
  "pipewire",
  "serde",
  "serde_json",
- "wayland-client",
- "wayland-protocols-wlr",
  "zbus",
 ]
 
@@ -86,8 +83,12 @@ dependencies = [
 name = "autark-common"
 version = "0.0.0"
 dependencies = [
+ "glib",
+ "glib-unix",
  "serde",
  "toml",
+ "wayland-client",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]
@@ -97,6 +98,12 @@ version = "0.0.0"
 [[package]]
 name = "autark-dock"
 version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "gtk4-layer-shell",
+ "serde",
+]
 
 [[package]]
 name = "autark-files"

@@ -5,13 +5,24 @@ use std::path::PathBuf;
 /// The `Name` of the app whose desktop entry matches `app_id`, by file name first and then by
 /// `StartupWMClass`.
 pub fn app_name(app_id: &str) -> Option<String> {
+    find(app_id).and_then(|(_, entry)| entry.name)
+}
+
+/// The desktop file name (such as `firefox.desktop`) for a Wayland app ID, matched the same way.
+pub fn desktop_id(app_id: &str) -> Option<String> {
+    let (path, _) = find(app_id)?;
+    Some(path.file_name()?.to_str()?.to_owned())
+}
+
+fn find(app_id: &str) -> Option<(PathBuf, Entry)> {
     let dirs = application_dirs();
     let file = format!("{app_id}.desktop");
     let lower = file.to_lowercase();
     for dir in &dirs {
         for candidate in [&file, &lower] {
-            if let Some(entry) = read(&dir.join(candidate)) {
-                return entry.name;
+            let path = dir.join(candidate);
+            if let Some(entry) = read(&path) {
+                return Some((path, entry));
             }
         }
     }
@@ -19,9 +30,11 @@ pub fn app_name(app_id: &str) -> Option<String> {
     dirs.iter()
         .filter_map(|dir| std::fs::read_dir(dir).ok())
         .flatten()
-        .filter_map(|entry| read(&entry.ok()?.path()))
-        .find(|entry| entry.wm_class.as_deref().is_some_and(|class| class.eq_ignore_ascii_case(app_id)))
-        .and_then(|entry| entry.name)
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            Some((path.clone(), read(&path)?))
+        })
+        .find(|(_, entry)| entry.wm_class.as_deref().is_some_and(|class| class.eq_ignore_ascii_case(app_id)))
 }
 
 struct Entry {

@@ -3,3 +3,5 @@
 pub mod config;
 pub mod desktop;
 pub mod theme;
+#[cfg(feature = "toplevels")]
+pub mod toplevels;
