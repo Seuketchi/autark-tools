@@ -286,6 +286,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-settings"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "futures-util",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "toml",
+ "toml_edit",
+ "zbus",
+]
+
+[[package]]
 name = "autark-shot"
 version = "0.0.0"
 dependencies = [
@@ -2141,6 +2155,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

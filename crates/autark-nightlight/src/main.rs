@@ -120,6 +120,7 @@ async fn daemon() -> Result<(), String> {
         if changed.0 {
             let _ = service.active_changed(emitter).await;
             let _ = service.manual_changed(emitter).await;
+            let _ = service.until_changed(emitter).await;
         }
         if changed.1 {
             let _ = service.temperature_changed(emitter).await;

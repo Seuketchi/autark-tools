@@ -1,0 +1,316 @@
+window.settings {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+/* Below the rules for each kind of button, which are more specific. */
+button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: @text;
+  min-height: 0;
+  padding: 0;
+}
+
+window.settings .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* Sidebar */
+
+.sidebar {
+  background-color: alpha(@sidebar, 0.55);
+  border-right: 1px solid alpha(@text, 0.06);
+  padding: 14px 10px;
+}
+
+.sidebar windowcontrols {
+  margin: 2px 6px 12px;
+}
+
+.sidebar windowcontrols button {
+  min-width: 12px;
+  min-height: 12px;
+  margin: 0 8px 0 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.sidebar windowcontrols button image {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  -gtk-icon-size: 0;
+}
+
+.sidebar windowcontrols button.close {
+  background-color: #E5684F;
+}
+
+.sidebar windowcontrols button.minimize {
+  background-color: #E8B04A;
+}
+
+.sidebar windowcontrols button.maximize {
+  background-color: #6FAF7A;
+}
+
+entry.search {
+  min-height: 32px;
+  margin: 0 4px 10px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.07);
+  box-shadow: none;
+  outline: none;
+  color: @text;
+}
+
+entry.search image {
+  color: #7A736A;
+}
+
+button.nav {
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+
+button.nav:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+button.nav.current {
+  background-color: @accent;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+button.result {
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
+button.result:hover,
+button.result.first {
+  background-color: alpha(@accent, 0.12);
+}
+
+button.result .pane-name {
+  font-size: 11px;
+  color: @text2;
+}
+
+.search-note {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #7A736A;
+}
+
+/* Panes */
+
+.page {
+  padding: 28px 40px;
+}
+
+.pane-title {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.pane-note {
+  font-size: 13px;
+  color: @text2;
+}
+
+.section-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3E3A34;
+}
+
+.note {
+  font-size: 12px;
+  color: @text2;
+}
+
+.unavailable {
+  padding: 12px 18px;
+  border-radius: 12px;
+  background-color: alpha(@text, 0.05);
+  font-size: 13px;
+}
+
+.error {
+  color: #C4503C;
+}
+
+.group {
+  border-radius: 12px;
+  background-color: alpha(@text, 0.05);
+  border: 1px solid alpha(@text, 0.07);
+}
+
+.group > .row {
+  min-height: 48px;
+  padding: 0 18px;
+  border-bottom: 1px solid alpha(@text, 0.06);
+}
+
+.group > .row:last-child {
+  border-bottom: none;
+}
+
+.row-label {
+  font-size: 14px;
+}
+
+.value {
+  font-size: 13px;
+  color: @text2;
+  font-feature-settings: "tnum";
+}
+
+.arrangement {
+  border-radius: 12px;
+  background-color: alpha(@text, 0.05);
+  border: 1px solid alpha(@text, 0.07);
+}
+
+/* Controls */
+
+switch {
+  border: none;
+  outline-color: alpha(@accent, 0.4);
+}
+
+switch:checked {
+  background-color: @accent;
+}
+
+scale trough {
+  min-height: 4px;
+  border: none;
+  background-color: alpha(@text, 0.12);
+}
+
+scale highlight {
+  margin: 0;
+  border: none;
+  background-color: @accent;
+}
+
+dropdown.choice > button {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid alpha(@text, 0.14);
+  background-color: @surface;
+}
+
+dropdown.choice popover > contents,
+popover.menu > contents {
+  background-color: @surface;
+  color: @text;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 10px;
+}
+
+dropdown.choice popover row:selected {
+  background-color: alpha(@accent, 0.12);
+  color: @text;
+}
+
+.segmented {
+  padding: 2px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.07);
+}
+
+.segmented button {
+  min-height: 26px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.segmented button:checked {
+  background-color: @surface;
+  box-shadow: 0 1px 3px alpha(@text, 0.18);
+  font-weight: 600;
+}
+
+entry.field {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid alpha(@text, 0.14);
+  background-color: @surface;
+  box-shadow: none;
+  color: @text;
+  font-feature-settings: "tnum";
+}
+
+entry.field:focus-within {
+  border-color: @accent;
+}
+
+entry.field.invalid {
+  border-color: #C4503C;
+}
+
+button.small {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.07);
+}
+
+button.small:hover {
+  background-color: alpha(@text, 0.11);
+}
+
+button.danger {
+  color: #C4503C;
+}
+
+/* Display */
+
+.monitor {
+  border: 2px solid alpha(#FFFFFF, 0.9);
+  border-radius: 6px;
+  background-image: linear-gradient(160deg, #DCE7DF, #EFE6D6);
+  box-shadow: 0 4px 14px alpha(#463A28, 0.16);
+}
+
+.monitor.selected {
+  border-color: @accent;
+}
+
+.monitor.off {
+  opacity: 0.55;
+}
+
+.monitor .strip {
+  min-height: 5px;
+  background-color: alpha(@text, 0.18);
+}
+
+.monitor-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.monitor-size {
+  font-size: 11px;
+  color: @text2;
+}

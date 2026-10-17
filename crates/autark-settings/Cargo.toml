@@ -1,0 +1,17 @@
+[package]
+name = "autark-settings"
+description = "Settings: every pane edits the same config files you can, then tells the tool."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common" }
+futures-util = "0.3.34"
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+toml_edit = "0.25"
+zbus = "6.0.0"

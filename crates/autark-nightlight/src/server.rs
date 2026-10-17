@@ -80,6 +80,26 @@ impl NightLight {
         .into()
     }
 
+    /// Tonight's night, or the next one: when it starts and ends, in Unix seconds; (0, 0) with no schedule.
+    #[zbus(property)]
+    async fn night(&self) -> (i64, i64) {
+        let now = Local::now();
+        let shared = self.shared.lock().unwrap();
+        shared.config.nights(now).into_iter().find(|(_, end)| *end > now).map_or((0, 0), |(start, end)| (start.timestamp(), end.timestamp()))
+    }
+
+    /// When it next turns on or off by itself, in Unix seconds; 0 when it won't (no schedule).
+    #[zbus(property)]
+    async fn until(&self) -> i64 {
+        let now = Local::now();
+        let shared = self.shared.lock().unwrap();
+        let next = match shared.manual {
+            Some((_, until)) => until,
+            None => shared.config.nights(now).iter().flat_map(|(start, end)| [*start, *end]).filter(|time| *time > now).min(),
+        };
+        next.map_or(0, |time| time.timestamp())
+    }
+
     /// Whether it was turned on or off by hand and the schedule hasn't taken over yet.
     #[zbus(property)]
     async fn manual(&self) -> bool {

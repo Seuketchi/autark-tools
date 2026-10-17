@@ -16,6 +16,7 @@ members = [
     "crates/autark-notifyd",
     "crates/autark-pkg",
     "crates/autark-sandbox",
+    "crates/autark-settings",
     "crates/autark-shot",
     "crates/autark-stats",
 ]
