@@ -2,6 +2,7 @@
 //! and each app's share of them from its cgroup, with an energy estimate. It reads only while
 //! something is watching, so it costs nothing when no one looks.
 
+mod power;
 mod sample;
 mod server;
 
@@ -28,9 +29,10 @@ async fn run() -> zbus::Result<()> {
         watchers: Arc::default(),
         sampler: Arc::new(Mutex::new(Sampler::new())),
         latest: Arc::default(),
+        helper: Arc::default(),
         wake,
     };
-    let (watchers, sampler, latest) = (stats.watchers.clone(), stats.sampler.clone(), stats.latest.clone());
+    let (watchers, sampler, latest, helper) = (stats.watchers.clone(), stats.sampler.clone(), stats.latest.clone(), stats.helper.clone());
     let connection = zbus::connection::Builder::session().name("org.autark.Stats1").serve_at(server::PATH, stats).build().await?;
 
     // A watcher that leaves the bus stops counting.
@@ -57,8 +59,9 @@ async fn run() -> zbus::Result<()> {
                 let _ = woken.recv().await;
                 continue;
             };
+            let watts = helper.watts().await;
             let sampler = sampler.clone();
-            let snapshot = blocking::unblock(move || sampler.lock().unwrap().sample()).await;
+            let snapshot = blocking::unblock(move || sampler.lock().unwrap().sample(watts)).await;
             let json = serde_json::to_string(&snapshot).unwrap_or_default();
             *latest.lock().unwrap() = json.clone();
             if let Err(err) = Stats::updated(&emitter, &json).await {

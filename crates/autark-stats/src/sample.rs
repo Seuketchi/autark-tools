@@ -51,13 +51,15 @@ impl Sampler {
         self.previous.as_ref().map(|previous| previous.at.elapsed())
     }
 
-    pub fn sample(&mut self) -> Snapshot {
+    /// One reading. `helper_watts` is the root helper's answer, used when we can't read the
+    /// RAPL counter ourselves.
+    pub fn sample(&mut self, helper_watts: Option<f64>) -> Snapshot {
         let at = Instant::now();
         let cpu = read("/proc/stat").map(|text| parse_stat(&text)).unwrap_or_default();
         let memory = read("/proc/meminfo").map(|text| parse_meminfo(&text)).unwrap_or_default();
         let disk = read("/proc/diskstats").map(|text| parse_diskstats(&text)).unwrap_or_default();
         let network = read("/proc/net/dev").map(|text| parse_net_dev(&text, |name| Path::new("/sys/class/net").join(name).join("device").exists())).unwrap_or_default();
-        let energy_uj = read("/sys/class/powercap/intel-rapl:0/energy_uj").and_then(|text| text.trim().parse().ok());
+        let energy_uj = read(RAPL).and_then(|text| text.trim().parse().ok());
         let battery = battery();
         let cgroups = self.cgroups();
 
@@ -86,7 +88,9 @@ impl Sampler {
                 let used = if now >= then { now - then } else { range - then + now };
                 Some(Power { watts: used as f64 / 1e6 / seconds, source: "rapl".to_owned() })
             }
-            _ => battery.as_ref().filter(|battery| battery.status == "Discharging").and_then(|battery| battery.watts).map(|watts| Power { watts, source: "battery".to_owned() }),
+            _ => helper_watts.map(|watts| Power { watts, source: "rapl".to_owned() }).or_else(|| {
+                battery.as_ref().filter(|battery| battery.status == "Discharging").and_then(|battery| battery.watts).map(|watts| Power { watts, source: "battery".to_owned() })
+            }),
         };
 
         let mut apps: Vec<App> = Vec::new();
@@ -187,6 +191,13 @@ struct Cgroup {
     memory: u64,
     /// pid, name, CPU ticks so far, resident memory.
     processes: Vec<(u32, String, u64, u64)>,
+}
+
+const RAPL: &str = "/sys/class/powercap/intel-rapl:0/energy_uj";
+
+/// Whether we can read the CPU's energy counter ourselves, without the root helper.
+pub fn rapl_readable() -> bool {
+    std::fs::File::open(RAPL).is_ok()
 }
 
 fn read(path: impl AsRef<Path>) -> Option<String> {

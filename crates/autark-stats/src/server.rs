@@ -8,6 +8,7 @@ use std::time::Duration;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 
+use crate::power::Helper;
 use crate::sample::Sampler;
 
 pub const PATH: &str = "/org/autark/Stats1";
@@ -19,6 +20,7 @@ pub struct Stats {
     pub watchers: Watchers,
     pub sampler: Arc<Mutex<Sampler>>,
     pub latest: Arc<Mutex<String>>,
+    pub helper: Arc<Helper>,
     /// Wakes the polling loop when watchers change.
     pub wake: async_channel::Sender<()>,
 }
@@ -49,10 +51,11 @@ impl Stats {
             return self.latest.lock().unwrap().clone();
         }
         let sampler = self.sampler.clone();
-        blocking::unblock(move || sampler.lock().unwrap().sample()).await;
+        blocking::unblock(move || sampler.lock().unwrap().sample(None)).await;
         async_io::Timer::after(Duration::from_millis(330)).await;
+        let watts = self.helper.watts().await;
         let sampler = self.sampler.clone();
-        let snapshot = blocking::unblock(move || sampler.lock().unwrap().sample()).await;
+        let snapshot = blocking::unblock(move || sampler.lock().unwrap().sample(watts)).await;
         let json = serde_json::to_string(&snapshot).unwrap_or_default();
         *self.latest.lock().unwrap() = json.clone();
         json
