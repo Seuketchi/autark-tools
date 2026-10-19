@@ -31,8 +31,17 @@ const SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop,
 pub fn run(id: &str) -> Result<(), String> {
     let config: Config = autark_common::config::load("ai");
     let task = tasks::load(id)?;
+    // A one-off has had its time: its timer is switched off whatever happens next.
+    if task.when.every.trim().eq_ignore_ascii_case("once") {
+        switch_off(id);
+    }
     if task.remind {
-        return async_io::block_on(remind(&task)).map_err(|err| format!("sending the reminder: {err}"));
+        let sent = async_io::block_on(remind(&task)).map_err(|err| format!("sending the reminder: {err}"));
+        // A one-off reminder has done its job once it's delivered: nothing is left in the task list.
+        if sent.is_ok() && task.when.every.trim().eq_ignore_ascii_case("once") {
+            tasks::forget(id);
+        }
+        return sent;
     }
     let result = report(&config, id, &task);
     let delivered = async_io::block_on(deliver(&task, &result));
@@ -40,6 +49,16 @@ pub fn run(id: &str) -> Result<(), String> {
         eprintln!("ai: task {id}: sending its notification: {err}");
     }
     result.map(drop)
+}
+
+/// Stops a one-off's timer so it doesn't wait around, or fire again on a later boot.
+fn switch_off(id: &str) {
+    let unit = format!("autark-task@{id}.timer");
+    match std::process::Command::new("systemctl").args(["--user", "disable", "--now", &unit]).output() {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => eprintln!("ai: task {id}: switching its timer off: {}", String::from_utf8_lossy(&output.stderr).trim()),
+        Err(err) => eprintln!("ai: task {id}: switching its timer off: {err}"),
+    }
 }
 
 struct Report {
@@ -60,6 +79,9 @@ fn report(config: &Config, id: &str, task: &tasks::Task) -> Result<Report, Strin
         if !why.is_empty() {
             inputs.push_str(&format!("File {path} couldn't be read: {why}\n\n"));
         }
+    }
+    if !task.skill.is_empty() {
+        inputs.push_str(&skill_inputs(config, task));
     }
     for url in &task.urls {
         match web::fetch(url) {
@@ -83,6 +105,17 @@ fn report(config: &Config, id: &str, task: &tasks::Task) -> Result<Report, Strin
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let first_file = outcome.iter().find(|(_, why)| why.is_empty()).map(|(path, _)| path.strip_prefix("~/").map_or_else(|| path.into(), |rest| home.join(rest)));
     Ok(Report { summary, urgent: answer["urgent"].as_bool() == Some(true), path, first_file })
+}
+
+/// What the task's skill finds each time it runs: its steps, under the same rules as a question (read-only, and no
+/// web search once a file or notes were read), or why it couldn't run.
+fn skill_inputs(config: &Config, task: &tasks::Task) -> String {
+    let Some(skill) = crate::skills::all().into_iter().find(|skill| skill.name == task.skill) else {
+        return format!("The skill “{}” is no longer saved, so it could not be run.\n\n", task.skill);
+    };
+    let web = config.web.search && !config.local_only;
+    let (notes, _) = crate::agent::gather(&task.prompt, web, crate::agent::skill_seeds(&skill, web), |_, _, _| Err("a task's skill has fixed steps".to_owned()), |tool, input| crate::agent::execute(tool, input, web), |_| true);
+    format!("{}\n\n", crate::agent::found(&notes))
 }
 
 /// Saves the result as `<date>-<time>.md` in the task's folder, and as `latest.md`, keeping the last few runs.
@@ -110,7 +143,7 @@ async fn remind(task: &tasks::Task) -> zbus::Result<()> {
     let proxy = NotificationsProxy::new(&connection).await?;
     let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
     hints.insert("desktop-entry", Variant::from("autark-ai"));
-    proxy.notify("Kith", 0, "autark-ai", &task.name, &task.prompt, &[], hints, 0).await.map(drop)
+    proxy.notify("Kith", 0, "autark-ai", "Reminder", &task.prompt, &[], hints, 0).await.map(drop)
 }
 
 /// The result as a card in the notification centre, a banner only if it's urgent; or why the task didn't run.

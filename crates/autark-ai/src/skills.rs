@@ -114,6 +114,11 @@ pub fn save(skill: &Skill) -> Result<PathBuf, String> {
 /// so a skill runs when it's asked for in much the same words and not on a passing mention.
 pub fn matching(question: &str, skills: &[Skill]) -> Option<Skill> {
     let asked = recall::words(question);
+    let lower = question.to_lowercase();
+    // Naming a skill calls for it, whatever else the sentence says.
+    if let Some(named) = skills.iter().filter(|skill| skill.name.chars().count() >= 8 && lower.contains(&skill.name.to_lowercase())).max_by_key(|skill| skill.name.len()) {
+        return Some(named.clone());
+    }
     skills
         .iter()
         .filter_map(|skill| {
@@ -183,6 +188,14 @@ mod tests {
         assert!(matching("what's the latest linux kernel news", &saved).is_none(), "a passing mention of part of it isn't enough");
         assert!(matching("why is the sky blue", &saved).is_none());
         assert!(matching("anything", &[]).is_none());
+    }
+
+    #[test]
+    fn naming_a_skill_calls_for_it() {
+        let saved = [skill(Q, &[("system", ""), ("web", "latest linux kernel news")])];
+        let named = Skill { name: "Disk and kernel news".into(), ..saved[0].clone() };
+        assert!(matching("run my disk and kernel news every morning", std::slice::from_ref(&named)).is_some());
+        assert!(matching("run my disk news", &[named]).is_none());
     }
 
     #[test]
