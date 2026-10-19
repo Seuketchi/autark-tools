@@ -6,6 +6,7 @@
 //! (`events`), rated by Ollama (`suggest`). ai.toml is reread when it changes. Jev answers `Check`, `Route`, `Rank` and `Urgent` for the `[jev]` switches that are on; `autark-ai mcp` is the MCP server.
 
 mod act;
+mod agent;
 mod chat;
 mod check;
 mod config;

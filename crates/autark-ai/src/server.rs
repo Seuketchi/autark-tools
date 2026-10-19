@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, chat, check, events, files, jev, log, memory, route, senses, soul, suggest, tasks, web};
+use crate::{act, agent, chat, check, events, files, jev, log, memory, route, senses, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -255,7 +255,7 @@ impl Ai {
             };
             announce(busy.change(1, 0));
             let mut started = false;
-            let user = if ask.context.is_empty() { ask.prompt.clone() } else { format!("{}\n\nQuestion: {}", ask.context, ask.prompt) };
+            let mut user = if ask.context.is_empty() { ask.prompt.clone() } else { format!("{}\n\nQuestion: {}", ask.context, ask.prompt) };
             let start = Instant::now();
             let mut text = String::new();
             let mut write = |piece: &str| -> bool {
@@ -283,7 +283,32 @@ impl Ai {
                     write(said);
                     Ok(())
                 }
-                None => ollama.stream(&ask.system, &user, &mut write),
+                None => {
+                    let mut stopped_early = false;
+                    if let Some(web_open) = ask.agent {
+                        // One line a step at the top of the answer says what Kith looked at.
+                        let (notes, stopped) = agent::gather(
+                            &ask.prompt,
+                            web_open,
+                            agent::seeds(&ask.prompt, web_open),
+                            |system, step, schema| {
+                                let start = Instant::now();
+                                let choice = ollama.json(system, step, schema);
+                                log::record("agent", "ollama", json!({ "question": ask.prompt, "step": step }), &choice, start.elapsed());
+                                choice
+                            },
+                            |tool, input| agent::execute(tool, input, web_open),
+                            |note| write(&format!("{}\n", agent::shown(note))),
+                        );
+                        stopped_early = stopped;
+                        if !notes.is_empty() {
+                            write("\n");
+                        }
+                        let context = if ask.context.is_empty() { agent::found(&notes) } else { format!("{}\n\n{}", ask.context, agent::found(&notes)) };
+                        user = format!("{context}\n\nQuestion: {}", ask.prompt);
+                    }
+                    if stopped_early { Ok(()) } else { ollama.stream(&ask.system, &user, &mut write) }
+                }
             };
             let answer = result.map(|()| json!(text));
             let mut input = json!({ "prompt": ask.prompt, "context": ask.context });
@@ -429,6 +454,8 @@ struct Ask {
     entry: Option<u64>,
     /// An answer written already, shown as it is with no model: what a look-up's sources say.
     verbatim: Option<String>,
+    /// Gather what the question needs with the tool loop first (see `agent`); whether it may search the web.
+    agent: Option<bool>,
 }
 
 const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
@@ -555,14 +582,19 @@ impl Ai {
         let lookup_only = senses::subjects(&question) == [senses::Subject::Web];
         let found = if lookup_only { self.search_found(connection, &question).await } else { None };
         let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1));
-        if verbatim.is_none() {
+        // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
+        let agent = (verbatim.is_none() && !lookup_only && agent::wants_agent(&question)).then(|| {
+            let config = self.config();
+            config.web.search && !config.local_only
+        });
+        if verbatim.is_none() && agent.is_none() {
             let seen = if lookup_only { senses::unavailable(senses::Subject::Web).to_owned() } else { self.senses(connection, &question).await };
             if !seen.is_empty() {
                 context.push_str(&format!("\n{seen}"));
             }
         }
         let logged = json!({ "files": outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>() });
-        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim }, logged);
+        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim, agent }, logged);
         Ok((id, entry, outcome))
     }
 
@@ -792,7 +824,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None }, json!({})))
+        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None }, json!({})))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
@@ -804,7 +836,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None }, json!({ "files": read })), outcome))
+        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None }, json!({ "files": read })), outcome))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.
