@@ -67,7 +67,7 @@ pub fn build() -> gtk::Widget {
     ));
     look.append(&slider_row(
         "Line spacing",
-        config::get_float(&document, "line_height").unwrap_or(1.7).clamp(1.0, 2.0),
+        config::get_float(&document, "line_height").unwrap_or(1.4).clamp(1.0, 2.0),
         (1.0, 2.0, 0.05),
         |height| format!("{height:.2}"),
         {
