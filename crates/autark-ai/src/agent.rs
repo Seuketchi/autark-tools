@@ -34,7 +34,7 @@ pub fn wants_agent(question: &str) -> bool {
 
 /// The tools open to the next step, in the order the model is told of them.
 fn open(web: bool, read_a_file: bool) -> Vec<&'static str> {
-    let mut tools = vec!["system", "memory", "read_file"];
+    let mut tools = vec!["system", "memory", "recall", "read_file"];
     if web && !read_a_file {
         tools.push("web");
     }
@@ -45,6 +45,7 @@ fn describe(tool: &str) -> &'static str {
     match tool {
         "system" => "system: this laptop's disk, battery, memory and uptime now (input empty)",
         "memory" => "memory: what the user told Kith to remember (input empty)",
+        "recall" => "recall: search the user's notes and what they said to Kith before (input: the words to find)",
         "read_file" => "read_file: a file in the user's home folder (input: its path, starting ~/)",
         "web" => "web: a web search for news, releases or facts (input: the search words)",
         _ => "",
@@ -91,6 +92,7 @@ pub fn shown(note: &Note) -> String {
     match note.tool.as_str() {
         "system" => "• looked at this laptop".to_owned(),
         "memory" => "• checked what I remember".to_owned(),
+        "recall" => "• searched your notes and earlier chats".to_owned(),
         "read_file" => format!("• read {}", note.input),
         "web" => format!("• searched the web for “{}”", note.input),
         other => format!("• {other}"),
@@ -105,6 +107,7 @@ pub fn seeds(question: &str, web: bool) -> Vec<(&'static str, String)> {
         .filter_map(|subject| match subject {
             senses::Subject::System => Some(("system", String::new())),
             senses::Subject::Web if web => Some(("web", web_clause(question))),
+            senses::Subject::Recall => Some(("recall", question.chars().take(200).collect())),
             _ => None,
         })
         .collect()
@@ -177,7 +180,8 @@ pub fn gather(
             return (notes, true);
         }
         let result = run(tool, &note.input);
-        if tool == "read_file" && result.is_ok() {
+        // What came from the user's files or notes stays on the laptop: a search query could carry it away.
+        if (tool == "read_file" || tool == "recall") && result.is_ok() {
             read_a_file = true;
         }
         note.result = match result {
@@ -207,6 +211,8 @@ pub fn execute(tool: &str, input: &str, web_open: bool) -> Result<String, String
             let facts = memory::facts();
             Ok(if facts.is_empty() { "Nothing is remembered yet.".to_owned() } else { facts.iter().map(|fact| format!("- {fact}")).collect::<Vec<_>>().join("\n") })
         }
+        "recall" if !input.is_empty() => Ok(crate::recall::search(input)),
+        "recall" => Err("nothing to search for".to_owned()),
         "read_file" => {
             let (text, outcome) = files::read(&[input.to_owned()]);
             match outcome.first() {
@@ -287,8 +293,22 @@ mod tests {
         let (notes, _, ran) = play(&[("read_file", "~/notes/todo.md"), ("web", "what the file said")], true);
         assert_eq!(notes.len(), 1, "a search could carry the file's words off the laptop");
         let offered: Vec<&String> = ran.iter().filter(|line| line.starts_with("offered")).collect();
-        assert_eq!(offered[0], "offered system,memory,read_file,web,answer");
-        assert_eq!(offered[1], "offered system,memory,read_file,answer");
+        assert_eq!(offered[0], "offered system,memory,recall,read_file,web,answer");
+        assert_eq!(offered[1], "offered system,memory,recall,read_file,answer");
+    }
+
+    #[test]
+    fn after_notes_are_searched_the_web_is_closed_too() {
+        let (notes, _, _) = play(&[("recall", "kernel plan"), ("web", "kernel plan")], true);
+        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["recall"]);
+    }
+
+    #[test]
+    fn a_question_about_the_past_is_a_seeded_recall() {
+        let q = "what did we decide about the kernel last week and what's the latest kernel news";
+        assert_eq!(seeds(q, true).iter().map(|(tool, _)| *tool).collect::<Vec<_>>(), ["web", "recall"]);
+        assert!(wants_agent(q));
+        assert!(!wants_agent("what did we decide about the kernel last week"), "one subject is answered in one go");
     }
 
     #[test]

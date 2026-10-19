@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, chat, check, events, files, jev, log, memory, route, senses, soul, suggest, tasks, web};
+use crate::{act, agent, chat, check, events, files, jev, log, memory, recall, route, senses, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -121,6 +121,10 @@ impl Ai {
             seen.push(match subject {
                 senses::Subject::System => senses::system(),
                 senses::Subject::Web => self.looked_up(connection, question).await,
+                senses::Subject::Recall => {
+                    let question = question.to_owned();
+                    format!("What Kith found in the user's notes and earlier conversations (answer only from this):\n{}", blocking::unblock(move || recall::search(&question)).await)
+                }
                 other => senses::unavailable(other).to_owned(),
             });
         }
