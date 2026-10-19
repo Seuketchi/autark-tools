@@ -68,10 +68,10 @@ fn main() -> std::process::ExitCode {
                 }
             }
             // Complaints from drivers that run no PCI or USB device: a laptop's embedded controller, say.
-            for note in doctor::loose_notes(&findings, &notes) {
+            for note in doctor::loose_notes(&findings, &notes, &doctor::loaded_modules()) {
                 println!("! {}\n    kernel: {}", note.driver, note.text);
             }
-            if problems.is_empty() && doctor::loose_notes(&findings, &notes).is_empty() {
+            if problems.is_empty() && doctor::loose_notes(&findings, &notes, &doctor::loaded_modules()).is_empty() {
                 println!("Every device that needs a driver has one.");
             }
         }

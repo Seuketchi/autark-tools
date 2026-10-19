@@ -97,8 +97,14 @@ pub fn diagnose(machine: &Machine) -> Vec<Finding> {
 
 /// The "not supported" complaints of drivers that run none of the listed devices: a laptop's embedded controller, say,
 /// which isn't on the PCI or USB buses at all.
-pub fn loose_notes<'a>(findings: &[Finding], notes: &'a [Note]) -> Vec<&'a Note> {
-    notes.iter().filter(|note| note.kind == Kind::Unsupported && !findings.iter().any(|finding| finding.device.drivers.iter().any(|driver| same(driver, &note.driver)))).collect()
+///
+/// A driver that is loaded now isn't complaining any more: one that refuses a machine fails to start and is unloaded again, so a module in
+/// `loaded` (a newer one installed since, say) means the boot log's complaint is out of date.
+pub fn loose_notes<'a>(findings: &[Finding], notes: &'a [Note], loaded: &[String]) -> Vec<&'a Note> {
+    notes
+        .iter()
+        .filter(|note| note.kind == Kind::Unsupported && !findings.iter().any(|finding| finding.device.drivers.iter().any(|driver| same(driver, &note.driver))) && !loaded.iter().any(|module| same(module, &note.driver)))
+        .collect()
 }
 
 /// Devices that look like lighting controllers, which no standard interface covers.
@@ -207,9 +213,12 @@ Oct 19 10:19:12 autark kernel: iwlwifi 0000:00:14.3: something is not supported 
 ";
         let findings = machine_findings(&devices, &[], log);
         let notes = kernel_log::parse(log);
-        let loose = loose_notes(&findings, &notes);
+        let loose = loose_notes(&findings, &notes, &[]);
         assert_eq!(loose.len(), 1);
         assert_eq!(loose[0].driver, "msi_ec");
+        // Once a driver of that name is loaded (a newer one that knows the model), the boot log's complaint is out of date.
+        assert!(loose_notes(&findings, &notes, &["msi_ec".to_owned()]).is_empty());
+        assert!(loose_notes(&findings, &notes, &["msi-ec".to_owned()]).is_empty());
     }
 
     #[test]
