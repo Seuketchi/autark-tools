@@ -7,6 +7,7 @@
 
 mod act;
 mod agent;
+mod board;
 mod calendar;
 mod chat;
 mod check;
