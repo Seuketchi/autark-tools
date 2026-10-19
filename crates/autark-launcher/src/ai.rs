@@ -70,6 +70,10 @@ pub fn describe(action: &Value) -> (&'static str, String, String, String) {
             let name = action["name"].as_str().unwrap_or_default().to_owned();
             ("application-x-executable-symbolic", "Open", name.clone(), format!("open the app called “{name}”"))
         }
+        "open_url" => {
+            let url = action["url"].as_str().unwrap_or_default().to_owned();
+            ("web-browser-symbolic", "Open website", url.clone(), format!("open {url} in the browser"))
+        }
         other => ("dialog-question-symbolic", other, String::new(), String::new()),
     };
     (icon, title.to_owned(), value, call)
