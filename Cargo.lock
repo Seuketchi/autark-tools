@@ -539,6 +539,7 @@ version = "0.0.0"
 dependencies = [
  "autark-common",
  "gtk4",
+ "serde",
  "vte4",
 ]
 

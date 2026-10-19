@@ -12,6 +12,7 @@ mod night;
 mod password;
 mod power;
 mod sound;
+mod terminal;
 mod wifi;
 
 use gtk::prelude::*;
@@ -34,7 +35,7 @@ const GRAPHITE: (&str, &str) = ("#454A55", "#141619");
 const PINK: (&str, &str) = ("#FF7A96", "#D92B55");
 const SILVER: (&str, &str) = ("#C3C9D2", "#6A717E");
 
-pub const PANES: [Pane; 11] = [
+pub const PANES: [Pane; 12] = [
     Pane { id: "wifi", label: "Wi-Fi", glyph: "M2 8.5a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0M12 19h.01", tile: BLUE, gap: false },
     Pane { id: "bluetooth", label: "Bluetooth", glyph: "M7 7l10 10l-5 4V3l5 4L7 17", tile: BLUE, gap: false },
     Pane { id: "appearance", label: "Appearance", glyph: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18", tile: GRAPHITE, gap: true },
@@ -44,6 +45,7 @@ pub const PANES: [Pane; 11] = [
     Pane { id: "power", label: "Power", glyph: "M13 3L5 13h6l-1 8l8-10h-6z", tile: ("#5EDC94", "#1C9A57"), gap: true },
     Pane { id: "lock", label: "Fingerprint & Lock", glyph: "M6 11h12v10H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3", tile: PINK, gap: false },
     Pane { id: "keyboard", label: "Keyboard", glyph: "M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10", tile: SILVER, gap: false },
+    Pane { id: "terminal", label: "Terminal", glyph: "M3 5h18v14H3zM7 10l3 2-3 2M12 15h5", tile: GRAPHITE, gap: false },
     Pane {
         id: "ai",
         label: "AI",
@@ -98,6 +100,10 @@ pub const INDEX: &[(&str, &str)] = &[
     ("Caps Lock", "keyboard"),
     ("Keyboard layouts", "keyboard"),
     ("Shortcuts", "keyboard"),
+    ("Terminal font", "terminal"),
+    ("Terminal colours", "terminal"),
+    ("Terminal cursor", "terminal"),
+    ("Scrollback", "terminal"),
     ("Local-only mode", "ai"),
     ("Jev", "ai"),
     ("Ollama model", "ai"),
@@ -121,6 +127,7 @@ pub fn build(id: &str) -> gtk::Widget {
         "power" => power::build(),
         "lock" => lock::build(),
         "keyboard" => keyboard::build(),
+        "terminal" => terminal::build(),
         "wifi" => wifi::build(),
         "bluetooth" => bluetooth::build(),
         "ai" => ai::build(),

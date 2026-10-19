@@ -2,8 +2,10 @@
 //! what programs paint. Light and dark each have their own sixteen, tuned so every colour reads on its own background
 //! (the "bright black" is a readable grey, not the invisible one many terminals ship).
 
-use autark_common::theme::Palette;
+use autark_common::theme::{Look, Palette};
 use gtk::gdk;
+
+use crate::config::{Config, Scheme};
 use vte::{Terminal, TerminalExt, TerminalExtManual};
 
 const LIGHT: [&str; 16] = [
@@ -16,18 +18,38 @@ const DARK: [&str; 16] = [
     "#7C766A", "#EE9A8A", "#A3D0A0", "#E6C77E", "#98BCE6", "#D3A8D8", "#88CFCF", "#F4F0E8", // bright
 ];
 
+fn parse(hex: &str) -> Option<gdk::RGBA> {
+    gdk::RGBA::parse(hex.trim()).ok()
+}
+
 fn rgba(hex: &str) -> gdk::RGBA {
-    gdk::RGBA::parse(hex).unwrap_or(gdk::RGBA::BLACK)
+    parse(hex).unwrap_or(gdk::RGBA::BLACK)
 }
 
 /// Paints `terminal` as the design's Terminal window: the sidebar's warm linen behind the heading colour, a block cursor in the
-/// text colour, the accent on the selection.
-pub fn apply(terminal: &Terminal, palette: &Palette, dark: bool) {
-    let sixteen: Vec<gdk::RGBA> = (if dark { DARK } else { LIGHT }).iter().map(|hex| rgba(hex)).collect();
+/// text colour, the accent on the selection. `config` can force a light or dark body and replace any of the colours.
+pub fn apply(terminal: &Terminal, look: &Look, config: &Config) {
+    let (palette, dark) = match config.scheme {
+        Scheme::Follow => (look.palette.clone(), look.dark),
+        Scheme::Light | Scheme::Dark => {
+            let dark = config.scheme == Scheme::Dark;
+            (Palette::linen(dark, &look.theme.accent, look.theme.contrast), dark)
+        }
+    };
+    let mut sixteen: Vec<gdk::RGBA> = (if dark { DARK } else { LIGHT }).iter().map(|hex| rgba(hex)).collect();
+    if let Some(custom) = config.palette.as_ref().filter(|custom| custom.len() == 16) {
+        let parsed: Vec<gdk::RGBA> = custom.iter().filter_map(|hex| parse(hex)).collect();
+        if parsed.len() == 16 {
+            sixteen = parsed;
+        }
+    }
     let sixteen: Vec<&gdk::RGBA> = sixteen.iter().collect();
-    terminal.set_colors(Some(&rgba(&palette.heading)), Some(&rgba(&palette.sidebar)), &sixteen);
-    terminal.set_color_cursor(Some(&rgba(&palette.text)));
-    terminal.set_color_cursor_foreground(Some(&rgba(&palette.sidebar)));
+    let pick = |custom: &Option<String>, fallback: &str| custom.as_deref().and_then(parse).unwrap_or_else(|| rgba(fallback));
+    let foreground = pick(&config.foreground, &palette.heading);
+    let background = pick(&config.background, &palette.sidebar);
+    terminal.set_colors(Some(&foreground), Some(&background), &sixteen);
+    terminal.set_color_cursor(Some(&pick(&config.cursor_color, &palette.text)));
+    terminal.set_color_cursor_foreground(Some(&background));
     terminal.set_color_highlight(Some(&rgba(&palette.accent_soft)));
     terminal.set_color_highlight_foreground(Some(&rgba(&palette.text)));
 }
