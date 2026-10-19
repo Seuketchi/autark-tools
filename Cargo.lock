@@ -147,6 +147,7 @@ version = "0.0.0"
 dependencies = [
  "async-io",
  "autark-common",
+ "autark-pim",
  "blocking",
  "chrono",
  "futures-util",
