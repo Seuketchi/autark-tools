@@ -54,6 +54,8 @@ pub enum What {
     },
     /// A fact Kith proposes to remember.
     Memory { text: String, state: Proposal },
+    /// A skill Kith proposes to keep: the steps a question took, to repeat when it's asked again.
+    Skill { skill: crate::skills::Skill, state: Proposal },
     /// A task Kith proposes; once created, its timer and its first run in microseconds since the epoch.
     Task {
         task: crate::tasks::Task,
@@ -214,6 +216,7 @@ impl Chat {
                     }
                 }
                 What::Memory { text, state: Proposal::Saved } => lines.push(format!("(Kith remembered: {text})")),
+                What::Skill { skill, state: Proposal::Saved } => lines.push(format!("(Kith saved the skill “{}”)", skill.name)),
                 What::Task { task, state: TaskState::Created, .. } => lines.push(format!("(Kith created the task “{}”: {})", task.name, task.prompt)),
                 What::Suggestion { text, offer_label, state, .. } => lines.push(match state {
                     SuggestionState::Open => format!("(Kith suggested: {text})"),
