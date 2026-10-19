@@ -34,7 +34,7 @@ pub fn wants_agent(question: &str) -> bool {
 
 /// The tools open to the next step, in the order the model is told of them.
 fn open(web: bool, read_a_file: bool) -> Vec<&'static str> {
-    let mut tools = vec!["system", "memory", "recall", "read_file"];
+    let mut tools = vec!["system", "memory", "recall", "calendar", "read_file"];
     if web && !read_a_file {
         tools.push("web");
     }
@@ -45,6 +45,7 @@ fn describe(tool: &str) -> &'static str {
     match tool {
         "system" => "system: this laptop's disk, battery, memory and uptime now (input empty)",
         "memory" => "memory: what the user told Kith to remember (input empty)",
+        "calendar" => "calendar: the user's calendar events (input: the days, such as today, tomorrow or this week)",
         "recall" => "recall: search the user's notes and what they said to Kith before (input: the words to find)",
         "read_file" => "read_file: a file in the user's home folder (input: its path, starting ~/)",
         "web" => "web: a web search for news, releases or facts (input: the search words)",
@@ -93,6 +94,7 @@ pub fn shown(note: &Note) -> String {
         "system" => "• looked at this laptop".to_owned(),
         "memory" => "• checked what I remember".to_owned(),
         "recall" => "• searched your notes and earlier chats".to_owned(),
+        "calendar" => "• looked at your calendar".to_owned(),
         "read_file" => format!("• read {}", note.input),
         "web" => format!("• searched the web for “{}”", note.input),
         other => format!("• {other}"),
@@ -101,7 +103,7 @@ pub fn shown(note: &Note) -> String {
 
 /// The loop's own name for a tool a skill or the model named, or `None` if it isn't one of its read-only tools.
 pub fn tool_name(name: &str) -> Option<&'static str> {
-    ["system", "memory", "recall", "read_file", "web"].into_iter().find(|tool| *tool == name)
+    ["system", "memory", "recall", "calendar", "read_file", "web"].into_iter().find(|tool| *tool == name)
 }
 
 /// A saved skill's steps as the looks to run first; the web only when it is open.
@@ -112,15 +114,19 @@ pub fn skill_seeds(skill: &crate::skills::Skill, web: bool) -> Vec<(&'static str
 /// The looks the question itself calls for, which need no model to choose: the laptop's numbers for a system
 /// question, a search of the question for a look-up. The model then only decides whether anything else is needed.
 pub fn seeds(question: &str, web: bool) -> Vec<(&'static str, String)> {
-    senses::subjects(question)
+    let mut seeds: Vec<(&'static str, String)> = senses::subjects(question)
         .into_iter()
         .filter_map(|subject| match subject {
             senses::Subject::System => Some(("system", String::new())),
             senses::Subject::Web if web => Some(("web", web_clause(question))),
             senses::Subject::Recall => Some(("recall", question.chars().take(200).collect())),
+            senses::Subject::Calendar => Some(("calendar", question.chars().take(200).collect())),
             _ => None,
         })
-        .collect()
+        .collect();
+    // The web goes first: once the calendar, notes or a file are read the web is closed for the question.
+    seeds.sort_by_key(|(tool, _)| *tool != "web");
+    seeds
 }
 
 /// The part of the question that asks for a look-up: "how much disk is left and what's the latest kernel news"
@@ -193,7 +199,7 @@ pub fn gather(
         }
         let result = run(tool, &note.input);
         // What came from the user's files or notes stays on the laptop: a search query could carry it away.
-        if (tool == "read_file" || tool == "recall") && result.is_ok() {
+        if matches!(tool, "read_file" | "recall" | "calendar") && result.is_ok() {
             read_a_file = true;
         }
         note.result = match result {
@@ -223,6 +229,12 @@ pub fn execute(tool: &str, input: &str, web_open: bool) -> Result<String, String
             let facts = memory::facts();
             Ok(if facts.is_empty() { "Nothing is remembered yet.".to_owned() } else { facts.iter().map(|fact| format!("- {fact}")).collect::<Vec<_>>().join("\n") })
         }
+        "calendar" => async_io::block_on(async {
+            let connection = zbus::Connection::session().await.map_err(|err| format!("the session bus: {err}"))?;
+            let address = crate::calendar::url(&connection).await.map_err(|_| "no calendar address is set".to_owned())?;
+            let question = input.to_owned();
+            blocking::unblock(move || crate::calendar::answer(&address, &question)).await
+        }),
         "recall" if !input.is_empty() => Ok(crate::recall::search(input)),
         "recall" => Err("nothing to search for".to_owned()),
         "read_file" => {
@@ -296,8 +308,8 @@ mod tests {
     fn a_tool_that_is_not_open_ends_the_loop() {
         let (notes, _, _) = play(&[("web", "anything")], false);
         assert!(notes.is_empty(), "the web wasn't offered");
-        let (notes, _, _) = play(&[("calendar", "")], true);
-        assert!(notes.is_empty(), "there is no calendar tool");
+        let (notes, _, _) = play(&[("contacts", "")], true);
+        assert!(notes.is_empty(), "there is no contacts tool");
     }
 
     #[test]
@@ -305,8 +317,8 @@ mod tests {
         let (notes, _, ran) = play(&[("read_file", "~/notes/todo.md"), ("web", "what the file said")], true);
         assert_eq!(notes.len(), 1, "a search could carry the file's words off the laptop");
         let offered: Vec<&String> = ran.iter().filter(|line| line.starts_with("offered")).collect();
-        assert_eq!(offered[0], "offered system,memory,recall,read_file,web,answer");
-        assert_eq!(offered[1], "offered system,memory,recall,read_file,answer");
+        assert_eq!(offered[0], "offered system,memory,recall,calendar,read_file,web,answer");
+        assert_eq!(offered[1], "offered system,memory,recall,calendar,read_file,answer");
     }
 
     #[test]
@@ -320,6 +332,14 @@ mod tests {
         assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["read_file"]);
         assert_eq!(skill_seeds(&skill, false).len(), 1, "no web steps when the web is closed");
         assert_eq!(tool_name("run_actions"), None);
+    }
+
+    #[test]
+    fn after_the_calendar_is_read_the_web_is_closed_too() {
+        let (notes, _, _) = play(&[("calendar", "tomorrow"), ("web", "what is on tomorrow")], true);
+        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["calendar"]);
+        let q = "whats on my calendar tomorrow and the latest kernel news";
+        assert_eq!(seeds(q, true).iter().map(|(tool, _)| *tool).collect::<Vec<_>>(), ["web", "calendar"], "the web before the private reads that close it");
     }
 
     #[test]
@@ -376,11 +396,11 @@ mod tests {
     #[test]
     fn what_the_question_calls_for_runs_first_without_the_model() {
         let q = "how much disk is left and what's the latest kernel news";
-        assert_eq!(seeds(q, true), vec![("system", String::new()), ("web", "what's the latest kernel news".to_owned())]);
+        assert_eq!(seeds(q, true), vec![("web", "what's the latest kernel news".to_owned()), ("system", String::new())]);
         assert_eq!(seeds(q, false), vec![("system", String::new())]);
         let mut asked = 0;
         let (notes, _) = gather(q, true, seeds(q, true), |_, _, _| { asked += 1; Ok(json!({ "tool": "answer", "input": "" })) }, |tool, _| Ok(format!("{tool} result")), |_| true);
-        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["system", "web"]);
+        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["web", "system"]);
         assert_eq!(asked, 0, "a question that names its sources needs no model to choose");
     }
 

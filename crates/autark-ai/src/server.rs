@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, chat, check, events, files, jev, log, memory, recall, route, senses, skills, soul, suggest, tasks, web};
+use crate::{act, agent, calendar, chat, check, events, files, jev, log, memory, recall, route, senses, skills, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -121,6 +121,11 @@ impl Ai {
             seen.push(match subject {
                 senses::Subject::System => senses::system(),
                 senses::Subject::Web => self.looked_up(connection, question).await,
+                senses::Subject::Calendar => match self.calendar_found(connection, question).await {
+                    Some(Ok(agenda)) => format!("The user's calendar, read just now (answer only from this):\n{agenda}"),
+                    Some(Err(why)) => format!("Kith could not read the user's calendar just now: {why}. Tell the user that in one sentence. Do not make up events."),
+                    None => senses::unavailable(senses::Subject::Calendar).to_owned(),
+                },
                 senses::Subject::Recall => {
                     let question = question.to_owned();
                     format!("What Kith found in the user's notes and earlier conversations (answer only from this):\n{}", blocking::unblock(move || recall::search(&question)).await)
@@ -129,6 +134,17 @@ impl Ai {
             });
         }
         seen.join("\n\n")
+    }
+
+    /// The calendar for a question about it, read from the feed you gave Kith: `None` when no address is set,
+    /// else the agenda or why it couldn't be read. Logged like any call, without the address, which is the key.
+    async fn calendar_found(&self, connection: &zbus::Connection, question: &str) -> Option<Result<String, String>> {
+        let address = calendar::url(connection).await.ok()?;
+        let start = Instant::now();
+        let asked = question.to_owned();
+        let result = blocking::unblock(move || calendar::answer(&address, &asked)).await;
+        log::record("calendar", "ical", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
+        Some(result)
     }
 
     /// The short search results for a look-up question, or `None` when search is off or failed. Logged like any call.
@@ -612,10 +628,13 @@ impl Ai {
         // A question that is only a look-up shows what its sources say: a small model misread their labels.
         let lookup_only = senses::subjects(&question) == [senses::Subject::Web];
         let found = if lookup_only { self.search_found(connection, &question).await } else { None };
-        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1));
+        // A question that is only about the calendar is answered from the events themselves: no model to invent one.
+        let calendar_only = senses::subjects(&question) == [senses::Subject::Calendar];
+        let agenda = if calendar_only { self.calendar_found(connection, &question).await.and_then(Result::ok) } else { None };
+        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda);
         // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
         let skill = if verbatim.is_none() { skills::matching(&question, &skills::all()) } else { None };
-        let agent = (verbatim.is_none() && !lookup_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
+        let agent = (verbatim.is_none() && !lookup_only && !calendar_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
             let config = self.config();
             config.web.search && !config.local_only
         });

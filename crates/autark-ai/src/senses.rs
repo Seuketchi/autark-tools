@@ -46,7 +46,7 @@ pub fn subjects(question: &str) -> Vec<Subject> {
 /// What to tell the model about a subject Kith has no source for.
 pub fn unavailable(subject: Subject) -> &'static str {
     match subject {
-        Subject::Calendar => "Kith cannot see the user's calendar yet: no calendar account is connected. Tell the user that in one sentence. Do not make up events.",
+        Subject::Calendar => "Kith cannot see the user's calendar yet: no calendar address has been given to Kith. Tell the user that in one sentence. Do not make up events.",
         Subject::Mail => "Kith cannot read the user's email yet: no mail account is connected. Tell the user that in one sentence. Do not make up messages.",
         Subject::Tasks => "Kith cannot see the user's tasks yet: no task list is connected. Tell the user that in one sentence. Do not make up tasks.",
         Subject::Web => "Kith cannot search the internet right now: web search is off or not set up. Tell the user that in one sentence. Do not make up news or links.",
