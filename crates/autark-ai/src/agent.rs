@@ -45,7 +45,7 @@ fn describe(tool: &str) -> &'static str {
     match tool {
         "system" => "system: this laptop's disk, battery, memory and uptime now (input empty)",
         "memory" => "memory: what the user told Kith to remember (input empty)",
-        "read_file" => "read_file: a file in the user's home folder (input: its path, such as ~/notes/todo.md)",
+        "read_file" => "read_file: a file in the user's home folder (input: its path, starting ~/)",
         "web" => "web: a web search for news, releases or facts (input: the search words)",
         _ => "",
     }
@@ -104,10 +104,19 @@ pub fn seeds(question: &str, web: bool) -> Vec<(&'static str, String)> {
         .into_iter()
         .filter_map(|subject| match subject {
             senses::Subject::System => Some(("system", String::new())),
-            senses::Subject::Web if web => Some(("web", question.chars().take(200).collect())),
+            senses::Subject::Web if web => Some(("web", web_clause(question))),
             _ => None,
         })
         .collect()
+}
+
+/// The part of the question that asks for a look-up: "how much disk is left and what's the latest kernel news"
+/// searches for "what's the latest kernel news", not for the disk. The whole question when no clause is only that.
+fn web_clause(question: &str) -> String {
+    let text = question.trim();
+    let clauses: Vec<&str> = text.split([',', ';']).flat_map(|part| part.split(" and ")).flat_map(|part| part.split(" then ")).map(str::trim).filter(|clause| !clause.is_empty()).collect();
+    let clause = clauses.iter().find(|clause| senses::subjects(clause) == [senses::Subject::Web]).copied().unwrap_or(text);
+    clause.chars().take(200).collect()
 }
 
 /// What to search for: the model's words, unless they are empty or just the tool's name, then the question.
@@ -134,11 +143,14 @@ pub fn gather(
 ) -> (Vec<Note>, bool) {
     let mut notes: Vec<Note> = Vec::new();
     let mut read_a_file = false;
+    let had_seeds = !seeds.is_empty();
     let mut seeds = seeds.into_iter();
     for _ in 0..MAX_STEPS {
         let tools = open(web, read_a_file);
         let (tool, input) = match seeds.next() {
             Some((tool, input)) => (tool.to_owned(), input),
+            // A question that names its sources has been looked up; the model is for the ones that don't.
+            None if had_seeds => break,
             None => {
                 let choice = match decide(&system_prompt(&tools), &user(question, &notes), &schema(&tools)) {
                     Ok(choice) => choice,
@@ -152,6 +164,7 @@ pub fn gather(
                     break;
                 }
                 let input = choice["input"].as_str().unwrap_or_default().trim();
+                let input = input.strip_prefix(tool).map_or(input, str::trim_start);
                 (tool.to_owned(), if tool == "web" { query(input, question) } else { input.chars().take(200).collect() })
             }
         };
@@ -318,12 +331,18 @@ mod tests {
     #[test]
     fn what_the_question_calls_for_runs_first_without_the_model() {
         let q = "how much disk is left and what's the latest kernel news";
-        assert_eq!(seeds(q, true), vec![("system", String::new()), ("web", q.to_owned())]);
+        assert_eq!(seeds(q, true), vec![("system", String::new()), ("web", "what's the latest kernel news".to_owned())]);
         assert_eq!(seeds(q, false), vec![("system", String::new())]);
         let mut asked = 0;
         let (notes, _) = gather(q, true, seeds(q, true), |_, _, _| { asked += 1; Ok(json!({ "tool": "answer", "input": "" })) }, |tool, _| Ok(format!("{tool} result")), |_| true);
         assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["system", "web"]);
-        assert_eq!(asked, 1, "the model is asked once, whether anything else is needed");
+        assert_eq!(asked, 0, "a question that names its sources needs no model to choose");
+    }
+
+    #[test]
+    fn the_model_may_repeat_the_tool_name_in_its_input() {
+        let (notes, _) = gather("q", false, Vec::new(), |_, _, _| Ok(json!({ "tool": "read_file", "input": "read_file ~/todo.md" })), |_, input| Ok(input.to_owned()), |_| true);
+        assert_eq!(notes[0].input, "~/todo.md");
     }
 
     #[test]
