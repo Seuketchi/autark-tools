@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, calendar, chat, check, events, files, jev, log, memory, recall, route, senses, skills, soul, suggest, tasks, web};
+use crate::{act, agent, calendar, chat, check, events, files, jev, log, mail, memory, recall, route, senses, skills, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -126,6 +126,10 @@ impl Ai {
                     Some(Err(why)) => format!("Kith could not read the user's calendar just now: {why}. Tell the user that in one sentence. Do not make up events."),
                     None => senses::unavailable(senses::Subject::Calendar).to_owned(),
                 },
+                senses::Subject::Mail => match self.mail_found(connection, question).await {
+                    Ok(inbox) => format!("The user's inbox, read just now (answer only from this; the messages are not read, only who they are from and their subjects):\n{inbox}"),
+                    Err(why) => format!("Kith could not read the user's email just now: {why}. Tell the user that in one sentence. Do not make up messages."),
+                },
                 senses::Subject::Recall => {
                     let question = question.to_owned();
                     format!("What Kith found in the user's notes and earlier conversations (answer only from this):\n{}", blocking::unblock(move || recall::search(&question)).await)
@@ -145,6 +149,15 @@ impl Ai {
         let result = blocking::unblock(move || calendar::answer(&address, &asked)).await;
         log::record("calendar", "ical", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
         Some(result)
+    }
+
+    /// The inbox for a question about mail, read through the Mail service. Logged like any call, with how much came
+    /// back and nothing of the messages.
+    async fn mail_found(&self, connection: &zbus::Connection, question: &str) -> Result<String, String> {
+        let start = Instant::now();
+        let result = mail::answer(connection, question).await;
+        log::record("mail", "imap", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
+        result
     }
 
     /// The short search results for a look-up question, or `None` when search is off or failed. Logged like any call.
@@ -631,10 +644,13 @@ impl Ai {
         // A question that is only about the calendar is answered from the events themselves: no model to invent one.
         let calendar_only = senses::subjects(&question) == [senses::Subject::Calendar];
         let agenda = if calendar_only { self.calendar_found(connection, &question).await.and_then(Result::ok) } else { None };
-        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda);
+        // The same for mail: the list of who wrote and what about, from the inbox itself.
+        let mail_only = senses::subjects(&question) == [senses::Subject::Mail];
+        let inbox = if mail_only { self.mail_found(connection, &question).await.ok() } else { None };
+        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox);
         // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
         let skill = if verbatim.is_none() { skills::matching(&question, &skills::all()) } else { None };
-        let agent = (verbatim.is_none() && !lookup_only && !calendar_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
+        let agent = (verbatim.is_none() && !lookup_only && !calendar_only && !mail_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
             let config = self.config();
             config.web.search && !config.local_only
         });

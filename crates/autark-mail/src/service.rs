@@ -1,4 +1,4 @@
-//! `org.autark.Mail1`: mail for Kith while the app runs. Reading is open to the session; sending asks nothing
+//! `org.autark.Mail1`: mail for Kith, served by the app or by `autark-mail daemon`. Reading is open to the session; sending asks nothing
 //! here because Kith asks you first, on a card showing the whole message, before it calls.
 
 use autark_pim::mime::{Address, Outgoing};

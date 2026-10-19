@@ -15,6 +15,7 @@ mod events;
 mod files;
 mod jev;
 mod log;
+mod mail;
 mod mcp;
 mod memory;
 mod ollama;
