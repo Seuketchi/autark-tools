@@ -1,0 +1,19 @@
+[package]
+name = "autark-hw"
+description = "Hardware: what's in the machine, which drivers run it, what's missing, and the controls a laptop offers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "autark_hw"
+path = "src/lib.rs"
+
+[[bin]]
+name = "autark-hw"
+path = "src/main.rs"
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["style"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }

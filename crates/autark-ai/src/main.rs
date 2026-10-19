@@ -3,7 +3,7 @@
 //! So far: `Route`, `Rank`, `Check`, `Ask`, `AskFiles` and `Models`, answered by Ollama; `Act`, which runs
 //! routed actions; and the conversation (`Chat`, `ChatAnswer`, `ChatAct`, `Remember`, `History`), which proposes
 //! facts for memory.toml and tasks; `autark-ai task <id>` runs one. Suggestions come from what code notices
-//! (`events`), rated by Ollama (`suggest`). ai.toml is reread when it changes. Jev and the MCP server come next.
+//! (`events`), rated by Ollama (`suggest`). ai.toml is reread when it changes. Jev answers `Check`, `Route`, `Rank` and `Urgent` for the `[jev]` switches that are on; `autark-ai mcp` is the MCP server.
 
 mod act;
 mod chat;
@@ -11,12 +11,15 @@ mod check;
 mod config;
 mod events;
 mod files;
+mod jev;
 mod log;
+mod mcp;
 mod memory;
 mod ollama;
 mod route;
 mod runner;
 mod server;
+mod soul;
 mod suggest;
 mod tasks;
 mod web;
@@ -34,6 +37,11 @@ fn main() {
         return;
     }
     let config: config::Ai = autark_common::config::load("ai");
+    // `autark-ai mcp` serves an MCP client on stdin and stdout, as the client starts it.
+    if args == ["mcp"] {
+        mcp::serve(&config);
+        return;
+    }
     if !config.enabled {
         eprintln!("ai: AI is off; only Check's built-in rules answer (set `enabled = true` in ai.toml)");
     }

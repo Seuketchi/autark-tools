@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- polkit actions: /usr/share/polkit-1/actions/. The helper itself only does what its own short list allows; these say
+     who may ask. Someone sitting at the machine may; anyone else has to be an administrator. -->
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Autark</vendor>
+  <action id="org.autark.hardware.write-setting">
+    <description>Change a power profile or battery charge limit</description>
+    <message>Authentication is required to change the power profile or battery charge limit</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+  <action id="org.autark.hardware.load-driver">
+    <description>Load a driver for hardware in this computer</description>
+    <message>Authentication is required to load a driver</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

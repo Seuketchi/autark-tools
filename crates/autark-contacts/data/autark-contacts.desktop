@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Contacts
+GenericName=Address Book
+Comment=People from all your accounts
+Exec=autark-contacts
+Icon=x-office-address-book
+Terminal=false
+Categories=Office;ContactManagement;
+Keywords=contacts;people;address book;email;phone;

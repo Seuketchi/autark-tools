@@ -1,0 +1,115 @@
+window.contacts {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 14px;
+}
+
+.people {
+  background-color: @sidebar;
+  border-right: 1px solid @border;
+}
+
+.people searchentry,
+.people entry {
+  margin: 12px;
+}
+
+.people list {
+  background: none;
+}
+
+.people row {
+  padding: 6px 12px;
+  border-radius: 8px;
+  margin: 0 6px;
+}
+
+.people row:selected {
+  background-color: @accent_soft;
+  color: @accent_text;
+}
+
+.people .letter {
+  color: @text3;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 10px 18px 2px;
+}
+
+.people .sub {
+  color: @text3;
+  font-size: 12px;
+}
+
+.detail {
+  padding: 32px 40px;
+}
+
+.detail .name {
+  font-size: 26px;
+  font-weight: 600;
+  color: @heading;
+}
+
+.detail .org,
+.detail .empty,
+.detail .field-label {
+  color: @text3;
+}
+
+.detail .field-label {
+  font-size: 12px;
+  margin-top: 14px;
+}
+
+.detail .value {
+  font-size: 15px;
+}
+
+.status {
+  color: @text3;
+  font-size: 12px;
+  padding: 4px 12px 8px;
+}
+
+.status.error {
+  color: @danger;
+}
+
+window.contacts button.primary {
+  border-radius: 8px;
+  padding: 4px 14px;
+  background-color: @accent;
+  background-image: none;
+  color: @on_accent;
+  border: none;
+  box-shadow: none;
+}
+
+window.contacts button.danger {
+  color: @danger;
+}
+
+window.editor {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+}
+
+window.editor .field-label {
+  color: @text3;
+  font-size: 12px;
+}
+
+window.editor button.primary {
+  border-radius: 8px;
+  background-color: @accent;
+  background-image: none;
+  color: @on_accent;
+  border: none;
+}
+
+window.editor button.danger {
+  color: @danger;
+}

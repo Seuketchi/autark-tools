@@ -1,0 +1,34 @@
+# systemd unit for the hardware helper, started by D-Bus on demand.
+[Unit]
+Description=Autark hardware helper (load a driver, set a power profile or charge limit)
+
+[Service]
+Type=dbus
+BusName=org.autark.Hardware1
+ExecStart=/usr/libexec/autark-hw-helper
+User=root
+# Loading a module is the one thing that needs a capability (modprobe is a child of the helper, so it's ambient too);
+# writing the few sysfs files it may set needs none, as root owns them.
+CapabilityBoundingSet=CAP_SYS_MODULE
+AmbientCapabilities=CAP_SYS_MODULE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+# Not ProtectKernelTunables or ProtectKernelModules: setting a sysfs file and loading a module are the job.
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @module
+SystemCallFilter=~@privileged @resources
+UMask=0077

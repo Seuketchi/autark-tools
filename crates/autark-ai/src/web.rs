@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use serde_json::{Value, json};
+
 /// The most kept from one page, after its markup is gone.
 const KEPT: usize = 8 * 1024;
 /// The most read from the network for one page.
@@ -42,6 +44,57 @@ pub fn fetch(url: &str) -> Result<String, String> {
     let body = response.into_body().with_config().limit(READ).read_to_string().map_err(|err| format!("{url}: {err}"))?;
     let text = if html { text_of(&body) } else { body };
     Ok(cut(&text))
+}
+
+const SEARCH_URL: &str = "https://api.firecrawl.dev/v2/search";
+/// How many results a search keeps.
+const RESULTS: usize = 5;
+
+/// Firecrawl's API key: `FIRECRAWL_API_KEY`, else the keyring's (`application = autark-ai`, `key = firecrawl`).
+/// Never logged.
+pub async fn key(connection: &zbus::Connection) -> Result<String, String> {
+    if let Some(key) = std::env::var("FIRECRAWL_API_KEY").ok().filter(|key| !key.is_empty()) {
+        return Ok(key);
+    }
+    crate::jev::stored(connection, "firecrawl").await.map_err(|err| format!("Firecrawl's key: {err}"))
+}
+
+/// The best results for `query`, one after another as title, address and snippet. Only search results come
+/// back, not whole pages, and no more than a page's worth.
+pub fn search(key: &str, query: &str) -> Result<String, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).https_only(true).http_status_as_error(false).build().into();
+    let body = json!({ "query": query, "limit": RESULTS, "sources": ["web"], "timeout": 25000 });
+    let response = agent
+        .post(SEARCH_URL)
+        .header("Authorization", format!("Bearer {key}"))
+        .header("Content-Type", "application/json")
+        .send(body.to_string())
+        .map_err(|err| format!("Firecrawl: {err}"))?;
+    let status = response.status();
+    let text = response.into_body().read_to_string().map_err(|err| format!("Firecrawl's reply: {err}"))?;
+    if !status.is_success() {
+        let detail: String = text.chars().take(200).collect();
+        return Err(format!("Firecrawl: {status} {detail}"));
+    }
+    let reply: Value = serde_json::from_str(&text).map_err(|err| format!("Firecrawl's reply: {err}"))?;
+    Ok(cut(&results(&reply)))
+}
+
+/// The results in a reply, which groups them by source (`data.web`) or lists them flat (`data`).
+fn results(reply: &Value) -> String {
+    let data = &reply["data"];
+    let items = data["web"].as_array().or_else(|| data.as_array()).map(Vec::as_slice).unwrap_or_default();
+    let text: Vec<String> = items
+        .iter()
+        .take(RESULTS)
+        .filter_map(|item| {
+            let url = item["url"].as_str().filter(|url| allowed(url).is_ok())?;
+            let title = item["title"].as_str().unwrap_or_default().trim();
+            let snippet = item["description"].as_str().unwrap_or_default().trim();
+            Some(format!("{title}\n{url}\n{snippet}"))
+        })
+        .collect();
+    if text.is_empty() { "No results.".to_owned() } else { text.join("\n\n") }
 }
 
 fn cut(text: &str) -> String {
@@ -98,6 +151,16 @@ mod tests {
         assert!(allowed("https://me:secret@example.com").is_err());
         assert!(allowed("file:///etc/passwd").is_err());
         assert_eq!(named("check https://a.org/x, then http://b.org and https://a.org/x."), vec!["https://a.org/x"]);
+    }
+
+    #[test]
+    fn results_come_grouped_or_flat() {
+        let item = json!({ "url": "https://a.org/x", "title": " A ", "description": "About a" });
+        let bad = json!({ "url": "http://plain.org", "title": "B" });
+        let grouped = json!({ "success": true, "data": { "web": [item, bad] } });
+        assert_eq!(results(&grouped), "A\nhttps://a.org/x\nAbout a");
+        assert_eq!(results(&json!({ "data": [item] })), "A\nhttps://a.org/x\nAbout a");
+        assert_eq!(results(&json!({})), "No results.");
     }
 
     #[test]

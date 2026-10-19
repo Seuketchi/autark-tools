@@ -189,7 +189,7 @@ fn start(app: &gtk::Application, config: Rc<config::Lock>) {
 }
 
 /// One monitor's lock screen: date and time, notifications, the user, the password field, and power buttons.
-fn window(app: &gtk::Application, lock: &Rc<Lock>) -> gtk::ApplicationWindow {
+fn window(_app: &gtk::Application, lock: &Rc<Lock>) -> gtk::Window {
     let date = gtk::Label::new(None);
     date.add_css_class("date");
     let time = gtk::Label::new(None);
@@ -323,7 +323,9 @@ fn window(app: &gtk::Application, lock: &Rc<Lock>) -> gtk::ApplicationWindow {
     });
     submit.connect_clicked(move |_| unlock());
 
-    let window = gtk::ApplicationWindow::new(app);
+    // A plain Window, not an ApplicationWindow: GTK 4.22 crashes in gdk_wayland_toplevel_remove_from_session
+    // when unlocking destroys an ApplicationWindow that sits on a session-lock surface.
+    let window = gtk::Window::new();
     window.add_css_class("lock-window");
     window.set_child(Some(&overlay));
     window.connect_map(move |_| {

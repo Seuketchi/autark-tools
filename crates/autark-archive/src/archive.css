@@ -1,0 +1,115 @@
+window.archive {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+window.archive .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.top {
+  padding: 14px 16px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+.top .title {
+  font-weight: 500;
+}
+
+.top .info {
+  color: @text3;
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+}
+
+listview.contents {
+  background: none;
+  padding: 6px 10px;
+}
+
+listview.contents > row {
+  padding: 0;
+  border-radius: 8px;
+}
+
+listview.contents > row:selected {
+  background-color: @accent;
+  color: @surface;
+}
+
+.entry {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.entry .kind {
+  color: @text3;
+}
+
+listview.contents > row:selected .kind,
+listview.contents > row:selected .size {
+  color: @surface;
+}
+
+.entry .size {
+  color: @text3;
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+}
+
+.glyph {
+  color: @text3;
+}
+
+.hint {
+  color: @text3;
+}
+
+.open,
+button.primary {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 10px;
+  background-image: none;
+  background-color: @accent;
+  box-shadow: none;
+  color: @surface;
+  font-weight: 500;
+}
+
+button.primary:disabled {
+  opacity: 0.4;
+}
+
+button.plain {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 10px;
+  background-image: none;
+  background-color: alpha(@text, 0.08);
+  box-shadow: none;
+  color: @text;
+}
+
+button.plain:disabled {
+  opacity: 0.4;
+}
+
+.bottom {
+  padding: 12px 16px;
+  border-top: 1px solid alpha(@text, 0.08);
+}
+
+.status {
+  color: @text2;
+}
+
+.status.error {
+  color: @danger;
+}

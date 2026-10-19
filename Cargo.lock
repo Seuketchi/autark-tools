@@ -125,6 +125,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "autark-accounts"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "base64 0.22.1",
+ "blocking",
+ "futures-util",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+ "ureq",
+ "zbus",
+]
+
+[[package]]
 name = "autark-ai"
 version = "0.0.0"
 dependencies = [
@@ -141,6 +158,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-archive"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+]
+
+[[package]]
 name = "autark-bar"
 version = "0.0.0"
 dependencies = [
@@ -153,6 +178,40 @@ dependencies = [
  "serde",
  "serde_json",
  "zbus",
+]
+
+[[package]]
+name = "autark-calc"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+]
+
+[[package]]
+name = "autark-calendar"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "autark-accounts",
+ "autark-common",
+ "autark-pim",
+ "blocking",
+ "chrono",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "zbus",
+]
+
+[[package]]
+name = "autark-clock"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -213,8 +272,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-hw"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+]
+
+[[package]]
+name = "autark-hw-helper"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "autark-hw",
+ "blocking",
+ "zbus",
+]
+
+[[package]]
 name = "autark-init"
 version = "0.0.0"
+
+[[package]]
+name = "autark-keys"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+]
 
 [[package]]
 name = "autark-launcher"
@@ -227,6 +312,8 @@ dependencies = [
  "serde",
  "serde_json",
  "toml_edit",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "zbus",
 ]
 
@@ -302,6 +389,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-pim"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "quick-xml",
+ "rustls",
+ "webpki-roots",
+]
+
+[[package]]
 name = "autark-pkg"
 version = "0.0.0"
 dependencies = [
@@ -314,6 +412,16 @@ dependencies = [
  "toml",
  "ureq",
  "zstd",
+]
+
+[[package]]
+name = "autark-player"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "cc",
+ "gtk4",
+ "pkg-config",
 ]
 
 [[package]]
@@ -368,6 +476,7 @@ name = "autark-shot"
 version = "0.0.0"
 dependencies = [
  "autark-common",
+ "cc",
  "gtk4",
  "gtk4-layer-shell",
  "rustix",
@@ -393,6 +502,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-terminal"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "vte4",
+]
+
+[[package]]
+name = "autark-viewer"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+]
+
+[[package]]
 name = "autark-wallpaper"
 version = "0.0.0"
 dependencies = [
@@ -406,6 +532,12 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+
+[[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64"
@@ -1342,6 +1474,10 @@ checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
 ]
+
+[[package]]
+name = "io-lifetimes"
+version = "2.0.4"
 
 [[package]]
 name = "itertools"
@@ -2322,7 +2458,7 @@ version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc"
 dependencies = [
- "base64",
+ "base64 0.23.1",
  "flate2",
  "log",
  "percent-encoding",
@@ -2339,7 +2475,7 @@ version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f86fd172ccca569e458f61b6bdd6220965a9ef36e672a6852953b51a0e1583be"
 dependencies = [
- "base64",
+ "base64 0.23.1",
  "http",
  "httparse",
  "log",
@@ -2373,6 +2509,36 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vte4"
+version = "0.10.0"
+dependencies = [
+ "cairo-rs",
+ "gdk4",
+ "gio",
+ "glib",
+ "gtk4",
+ "io-lifetimes",
+ "libc",
+ "pango",
+ "vte4-sys",
+]
+
+[[package]]
+name = "vte4-sys"
+version = "0.10.0"
+dependencies = [
+ "cairo-sys-rs",
+ "gdk4-sys",
+ "gio-sys",
+ "glib-sys",
+ "gobject-sys",
+ "gtk4-sys",
+ "libc",
+ "pango-sys",
+ "system-deps 7.0.8",
+]
 
 [[package]]
 name = "wasi"

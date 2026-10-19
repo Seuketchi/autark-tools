@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hardware
+GenericName=Devices and Drivers
+Comment=What's in this machine, which drivers run it, and its laptop controls
+Exec=autark-hw
+Icon=computer-laptop
+Terminal=false
+Categories=System;Settings;HardwareSettings;
+Keywords=hardware;drivers;devices;battery;fans;keyboard;backlight;

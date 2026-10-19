@@ -1107,7 +1107,7 @@ fn write(path: &Path, text: &str) -> std::io::Result<()> {
 }
 
 /// A path with the home folder shown as `~`.
-fn display(path: &Path) -> String {
+pub fn display(path: &Path) -> String {
     let home = crate::config::home();
     match path.strip_prefix(&home) {
         Ok(rest) => PathBuf::from("~").join(rest).to_string_lossy().into_owned(),

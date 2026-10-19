@@ -22,7 +22,7 @@ pub struct Routed {
     pub task: Option<crate::tasks::Task>,
     /// How sure the model is of the whole, 0 to 1.
     pub confidence: f64,
-    /// Who answered: `ollama`, or `jev` once its client is built.
+    /// Who answered: `ollama` or `jev`.
     pub engine: &'static str,
 }
 
@@ -87,24 +87,56 @@ const CATALOG: [(&str, &str); 9] = [
     ("open_app", "open an app (text: its name)"),
 ];
 
-/// The instructions, with what Kith remembers about you, which is how "my last build" finds its log.
-pub fn system_prompt(facts: &[String]) -> String {
+/// Whether the sentence asks for something on a schedule. Only then is the model offered `task`: a small model
+/// handed the field fills it in for sentences that never asked, and every extra field costs generated tokens.
+fn wants_task(text: &str) -> bool {
+    let text = text.to_lowercase();
+    ["every ", "each ", "daily", "weekly", "monthly", "nightly", "hourly", "weekday", "weekend", "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays"]
+        .iter()
+        .any(|word| text.contains(word))
+}
+
+/// Whether the sentence asks to remember something or says something lasting about the user; only then is the
+/// model offered `remember`, for the same reasons as `task`.
+fn wants_remember(text: &str) -> bool {
+    let text = text.to_lowercase();
+    ["remember", "keep in mind", "don't forget", "note that", "i am ", "i'm ", "i work", "i use ", "i prefer", "i like", "i live", "my name"]
+        .iter()
+        .any(|word| text.contains(word))
+}
+
+/// The instructions, with what Kith remembers about you, which is how "my last build" finds its log. `text` is
+/// the new sentence: the instructions cover `remember` and `task` only when it could mean them.
+pub fn system_prompt(facts: &[String], text: &str) -> String {
     let actions: Vec<String> = CATALOG.iter().map(|(name, what)| format!("- {name}: {what}")).collect();
-    let mut prompt = format!(
+    let mut prompt = String::from(
         "You turn one sentence typed into a desktop launcher into JSON. A sentence can ask for actions, ask a question, or both.\n\
          actions: each change the sentence asks for that an action below can make, with its argument and your confidence from 0 to 1 \
          that it was asked for. None if it asks for no change.\n\
          question: the part that asks something to be answered or explained, put as a question on its own. Empty if there's none.\n\
-         files: the files from the list given that are needed to answer the question. None if no list is given.\n\
-         remember: a lasting fact about the user worth keeping, put briefly as a note about them (\"Works on Autark in the evenings\"): \
-         what they ask you to remember, or something lasting they say about themselves, their work, their setup or their preferences. \
-         Empty if there's none, if it's already remembered, or if it's a password, key, code or anything secret.\n\
-         task: only when the sentence asks for something to be done again and again on a schedule: a short name, the instruction to \
-         carry out each time (prompt), every (day, weekdays, weekends, a weekday such as monday, or month), day (of the month, for month) \
-         and time (24-hour, HH:MM). The files it needs go in files. Leave task out otherwise, and then leave the question empty.\n\
-         confidence: how sure you are of the whole answer, from 0 to 1.\n\
-         Actions:\n{}",
-        actions.join("\n")
+         files: the files from the list given that are needed to answer the question. None if no list is given.\n",
+    );
+    if wants_remember(text) {
+        prompt.push_str(
+            "remember: a lasting fact about the user worth keeping, put briefly as a note about them: what they ask you to remember, \
+             or something lasting they say about themselves, their work, their setup or their preferences. Empty if there's none, if it's \
+             already remembered, or if it's a password, key, code or anything secret.\n",
+        );
+    }
+    if wants_task(text) {
+        prompt.push_str(
+            "task: the sentence asks for something to be done again and again on a schedule: a short name, the instruction to carry out \
+             each time (prompt), every (day, weekdays, weekends, a weekday such as monday, or month), day (of the month, for month) and \
+             time (24-hour, HH:MM). The files it needs go in files. Leave the question empty.\n",
+        );
+    }
+    prompt.push_str("confidence: how sure you are of the whole answer, from 0 to 1.\n");
+    prompt.push_str(&format!("Actions:\n{}\n", actions.join("\n")));
+    prompt.push_str(
+        "Examples (only actions the sentence asks for; none otherwise):\n\
+         mute -> {\"actions\":[{\"name\":\"mute\",\"on\":true,\"confidence\":0.95}],\"question\":\"\",\"confidence\":0.95}\n\
+         turn the volume down a bit and open files -> {\"actions\":[{\"name\":\"set_volume\",\"number\":30,\"confidence\":0.7},{\"name\":\"open_app\",\"text\":\"Files\",\"confidence\":0.95}],\"question\":\"\",\"confidence\":0.85}\n\
+         why is the sky blue -> {\"actions\":[],\"question\":\"Why is the sky blue?\",\"confidence\":0.9}",
     );
     if !facts.is_empty() {
         let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
@@ -113,8 +145,9 @@ pub fn system_prompt(facts: &[String]) -> String {
     prompt
 }
 
-/// The answer's shape; `files` can only be among `candidates`.
-pub fn schema(candidates: &[String]) -> Value {
+/// The answer's shape; `files` can only be among `candidates`, and `remember` and `task` are there only when the
+/// sentence could mean them.
+pub fn schema(candidates: &[String], text: &str) -> Value {
     let names: Vec<&str> = CATALOG.iter().map(|(name, ..)| *name).collect();
     let mut properties = json!({
         "actions": { "type": "array", "items": {
@@ -128,9 +161,16 @@ pub fn schema(candidates: &[String]) -> Value {
             },
             "required": ["name", "confidence"],
         }},
-        "question": { "type": "string" },
-        "remember": { "type": "string" },
-        "task": {
+        "question": { "type": "string", "maxLength": 240 },
+        "confidence": { "type": "number" },
+    });
+    let mut required = vec!["actions", "question"];
+    if wants_remember(text) {
+        properties["remember"] = json!({ "type": "string" });
+        required.push("remember");
+    }
+    if wants_task(text) {
+        properties["task"] = json!({
             "type": "object",
             "properties": {
                 "name": { "type": "string" },
@@ -140,13 +180,13 @@ pub fn schema(candidates: &[String]) -> Value {
                 "time": { "type": "string" },
             },
             "required": ["name", "prompt", "every", "time"],
-        },
-        "confidence": { "type": "number" },
-    });
+        });
+    }
+    required.push("confidence");
     if !candidates.is_empty() {
         properties["files"] = json!({ "type": "array", "items": { "enum": candidates } });
     }
-    json!({ "type": "object", "properties": properties, "required": ["actions", "question", "remember", "confidence"] })
+    json!({ "type": "object", "properties": properties, "required": required })
 }
 
 /// What the model is told besides the instructions: the conversation so far if there is one, the sentence,
@@ -229,6 +269,10 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
         None => None,
     };
     let mut question = if task.is_some() { String::new() } else { answer.question.trim().to_owned() };
+    // A small model sometimes carries on after the question mark with its own answer and filler; the field is only the question.
+    if let Some(end) = question.find('?') {
+        question.truncate(end + 1);
+    }
     if actions.is_empty() && question.is_empty() && remember.is_empty() && task.is_none() {
         question = text.trim().to_owned();
     }
@@ -236,6 +280,93 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
         files.clear();
     }
     Ok(Routed { actions, question, files, remember, task, confidence, engine: "ollama" })
+}
+
+/// What Jev is asked about each catalog action: whether the sentence asks for it, and for the ones with a
+/// switch, which way (the noul is the chance of the first).
+const JEV_ACTIONS: [(&str, &str, Option<&str>); 9] = [
+    ("set_volume", "The user gives a sound volume level, or says to turn the sound up or down. Muting or unmuting alone is not this.", None),
+    ("mute", "The user asks for the sound to be muted or unmuted.", Some("The user wants the sound muted, not unmuted.")),
+    ("set_brightness", "The user asks for the screen brightness to be set or changed.", None),
+    ("wifi", "The user asks for Wi-Fi to be turned on or off.", Some("The user wants Wi-Fi turned on, not off.")),
+    ("focus", "The user asks for Focus (do not disturb) to be turned on or off.", Some("The user wants Focus turned on, not off.")),
+    ("night_light", "The user asks for Night light to be turned on or off.", Some("The user wants Night light turned on, not off.")),
+    ("lock", "The user asks for the screen to be locked.", None),
+    ("sleep", "The user asks for the laptop to be put to sleep.", None),
+    ("open_app", "The user asks for an app to be opened.", None),
+];
+
+/// Percent levels a Jev score picks between; the score, 0 to 4, is interpolated to 0 to 100.
+const JEV_LEVELS: [&str; 5] = ["0%, the lowest", "25%", "50%, the middle", "75%", "100%, the highest"];
+
+/// Whether Jev can route the sentence alone. It answers typed questions and writes no text, so a sentence
+/// that needs a task, a fact, a question split from actions or an app's name goes to Ollama instead.
+pub fn jev_can(text: &str, candidates: &[String]) -> bool {
+    !wants_task(text) && !wants_remember(text) && candidates.is_empty()
+}
+
+/// The sentence (with the conversation, if any) as Jev's state, and its questions: one noul for each action,
+/// which way for the switches, a score for the levels, and whether anything is asked beyond the actions.
+pub fn jev_questions(text: &str, conversation: &str) -> (String, Value) {
+    let state = if conversation.is_empty() {
+        format!("A sentence typed into a desktop launcher:\n{text}")
+    } else {
+        format!("A conversation with a desktop assistant:\n{conversation}\n\nThe new message, typed into the launcher:\n{text}")
+    };
+    let mut questions = serde_json::Map::new();
+    for (name, asks, way) in JEV_ACTIONS {
+        questions.insert(format!("do_{name}"), json!({ "type": "noul", "instructions": asks }));
+        if let Some(way) = way {
+            questions.insert(format!("on_{name}"), json!({ "type": "noul", "instructions": way }));
+        }
+    }
+    for (name, what) in [("set_volume", "volume"), ("set_brightness", "brightness")] {
+        questions.insert(format!("level_{name}"), json!({ "type": "score", "instructions": format!("What {what} level does the user ask for?"), "criteria": JEV_LEVELS }));
+    }
+    questions.insert("question".to_owned(), json!({ "type": "noul", "instructions": "The user asks for something to be answered or explained, beyond requesting a change." }));
+    (state, Value::Object(questions))
+}
+
+/// Jev's answers as a route: an action is chosen when its noul is 0.5 or more, with that as its confidence
+/// (less when the switch's direction is unsure). `None` when Jev can't route it alone: an app's name is
+/// needed, or a question comes with actions.
+pub fn jev_parse(answers: &Value, text: &str) -> Result<Option<Routed>, String> {
+    let noul = |id: &str| answers[id]["noul"].as_f64().map(|p| p.clamp(0.0, 1.0)).ok_or_else(|| format!("Jev's answer has no noul for “{id}”"));
+    let level = |id: &str| answers[id]["score"].as_f64().filter(|score| score.is_finite()).map(|score| (score / 4.0 * 100.0).round().clamp(0.0, 100.0) as u8).ok_or_else(|| format!("Jev's answer has no score for “{id}”"));
+    let mut actions = Vec::new();
+    for (name, _, way) in JEV_ACTIONS {
+        let asked = noul(&format!("do_{name}"))?;
+        if asked < 0.5 {
+            continue;
+        }
+        let mut sure = asked;
+        let mut on = false;
+        if way.is_some() {
+            let p = noul(&format!("on_{name}"))?;
+            on = p >= 0.5;
+            sure = sure.min(p.max(1.0 - p));
+        }
+        let action = match name {
+            "set_volume" => Action::SetVolume { percent: level("level_set_volume")? },
+            "mute" => Action::Mute { on },
+            "set_brightness" => Action::SetBrightness { percent: level("level_set_brightness")? },
+            "wifi" => Action::Wifi { on },
+            "focus" => Action::Focus { on },
+            "night_light" => Action::NightLight { on },
+            "lock" => Action::Lock,
+            "sleep" => Action::Sleep,
+            _ => return Ok(None),
+        };
+        actions.push(Chosen { action, confidence: sure });
+    }
+    let asks = noul("question")? >= 0.5;
+    if asks && !actions.is_empty() {
+        return Ok(None);
+    }
+    let confidence = actions.iter().map(|chosen| chosen.confidence).fold(1.0, f64::min);
+    // As with Ollama, a sentence that asks for nothing is a question for Kith.
+    let question = if actions.is_empty() { text.trim().to_owned() } else { String::new() };
+    Ok(Some(Routed { actions, question, files: Vec::new(), remember: String::new(), task: None, confidence, engine: "jev" }))
 }
 
 /// The files the sentence names, then the ones memories point to.
@@ -300,6 +431,64 @@ mod tests {
         assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "rm_rf", "confidence": 1 }] }), "", &[], &[]).is_err());
         let invented = json!({ "confidence": 1, "question": "what's in it?", "files": ["~/autark/log.md", "/etc/shadow"] });
         assert_eq!(parse(invented, "", &["~/autark/log.md".to_owned()], &[]).unwrap().files, vec!["~/autark/log.md"]);
+    }
+
+    fn noul(p: f64) -> Value {
+        json!({ "type": "noul", "noul": p })
+    }
+
+    fn jev_answers() -> Value {
+        let mut answers = serde_json::Map::new();
+        for (name, _, way) in JEV_ACTIONS {
+            answers.insert(format!("do_{name}"), noul(0.01));
+            if way.is_some() {
+                answers.insert(format!("on_{name}"), noul(0.5));
+            }
+        }
+        answers.insert("level_set_volume".to_owned(), json!({ "type": "score", "score": 1.0 }));
+        answers.insert("level_set_brightness".to_owned(), json!({ "type": "score", "score": 2.0 }));
+        answers.insert("question".to_owned(), noul(0.02));
+        Value::Object(answers)
+    }
+
+    #[test]
+    fn jev_picks_actions_and_their_arguments() {
+        let mut answers = jev_answers();
+        answers["do_mute"] = noul(0.97);
+        answers["on_mute"] = noul(0.99);
+        answers["do_set_volume"] = noul(0.9);
+        answers["do_wifi"] = noul(0.8);
+        answers["on_wifi"] = noul(0.1);
+        let routed = jev_parse(&answers, "mute, volume to 25 and wifi off").unwrap().unwrap();
+        assert_eq!(routed.engine, "jev");
+        assert_eq!(
+            routed.actions,
+            vec![
+                Chosen { action: Action::SetVolume { percent: 25 }, confidence: 0.9 },
+                Chosen { action: Action::Mute { on: true }, confidence: 0.97 },
+                Chosen { action: Action::Wifi { on: false }, confidence: 0.8 },
+            ]
+        );
+        assert_eq!(routed.confidence, 0.8);
+        assert!(routed.question.is_empty());
+    }
+
+    #[test]
+    fn jev_hands_over_what_it_cannot_write() {
+        let mut open = jev_answers();
+        open["do_open_app"] = noul(0.9);
+        assert_eq!(jev_parse(&open, "open files").unwrap(), None);
+        let mut both = jev_answers();
+        both["do_lock"] = noul(0.9);
+        both["question"] = noul(0.9);
+        assert_eq!(jev_parse(&both, "lock and tell me why").unwrap(), None);
+        assert!(jev_can("mute", &[]) && !jev_can("every day at 8 mute", &[]) && !jev_can("mute", &["~/a".to_owned()]));
+        let mut asked = jev_answers();
+        asked["question"] = noul(0.9);
+        let routed = jev_parse(&asked, " why is the sky blue ").unwrap().unwrap();
+        assert!(routed.actions.is_empty());
+        assert_eq!(routed.question, "why is the sky blue");
+        assert!(jev_parse(&json!({}), "x").is_err());
     }
 
     #[test]

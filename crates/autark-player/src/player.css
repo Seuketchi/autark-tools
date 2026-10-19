@@ -1,0 +1,105 @@
+window.player {
+  background-color: #000;
+  color: #fff;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+window.player .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+window.player picture {
+  background-color: #000;
+}
+
+/* What shows before anything plays */
+
+.glyph {
+  color: alpha(#fff, 0.45);
+}
+
+.open {
+  padding: 8px 18px;
+  border-radius: 10px;
+  background-color: @accent;
+  color: @surface;
+  font-weight: 500;
+}
+
+.hint {
+  color: alpha(#fff, 0.55);
+}
+
+.problem {
+  margin: 0 40px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background-color: alpha(#fff, 0.1);
+  color: #fff;
+}
+
+/* The bars over the picture, which fade while a video plays */
+
+.top,
+.controls {
+  transition: opacity 220ms ease;
+}
+
+.faded {
+  opacity: 0;
+}
+
+.top {
+  padding: 12px 16px 28px;
+  background-image: linear-gradient(to bottom, alpha(#000, 0.6), alpha(#000, 0));
+}
+
+.top .title {
+  font-weight: 500;
+  color: alpha(#fff, 0.92);
+}
+
+.controls {
+  margin: 0 24px 22px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  background-color: alpha(@surface, 0.88);
+  color: @text;
+  box-shadow: 0 12px 36px alpha(@shadow, 0.35);
+}
+
+.controls button.control {
+  min-height: 0;
+  min-width: 0;
+  padding: 6px;
+  border: none;
+  border-radius: 8px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  outline: none;
+  color: @text;
+}
+
+.controls button.control:hover {
+  background-color: alpha(@text, 0.08);
+}
+
+.controls button.control.primary {
+  padding: 8px;
+  border-radius: 999px;
+  background-color: @accent;
+  color: @surface;
+}
+
+.controls .time {
+  min-width: 40px;
+  color: @text2;
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+}

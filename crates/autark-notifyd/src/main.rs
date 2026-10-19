@@ -22,6 +22,20 @@ use server::{Event, Notification, Server};
 
 pub const WIDTH: i32 = 380;
 
+/// How urgent Jev must find a notification for it to get through Focus.
+const URGENT: f64 = 0.6;
+
+#[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
+trait Ai {
+    fn urgent(&self, app: &str, summary: &str, body: &str) -> zbus::Result<f64>;
+}
+
+/// Jev's view of how urgent `notification` is, or `None` when AI is off, Jev is off for this or it can't answer.
+async fn ask_urgent(notification: &Notification) -> Option<f64> {
+    let connection = zbus::Connection::session().await.ok()?;
+    AiProxy::new(&connection).await.ok()?.urgent(&notification.app_name, &notification.summary, &notification.body).await.ok()
+}
+
 fn main() -> glib::ExitCode {
     let app = gtk::Application::builder().application_id("org.autark.Notifyd").build();
     app.connect_startup(|_| load_css());
@@ -169,6 +183,29 @@ impl Daemon {
             autark_common::audio::play(autark_common::audio::Effect::Alert);
         }
         self.centre.refresh();
+        // Focus holds a notification back, unless Jev (when `[jev] notify` is on) finds it urgent.
+        if self.do_not_disturb.load(Ordering::Relaxed) && notification.urgency != server::CRITICAL && !notification.quiet && !update {
+            let daemon = Rc::downgrade(self);
+            glib::spawn_future_local(async move {
+                let Some(_) = ask_urgent(&notification).await.filter(|urgent| *urgent >= URGENT) else {
+                    return;
+                };
+                let Some(daemon) = daemon.upgrade() else {
+                    return;
+                };
+                // Closed or replaced while Jev thought, or Focus turned off and it was shown by then.
+                let kept = daemon.notifications.borrow().iter().any(|kept| kept.id == notification.id && kept.received == notification.received);
+                if !kept || !daemon.do_not_disturb.load(Ordering::Relaxed) {
+                    return;
+                }
+                if !daemon.centre.shows_notifications() {
+                    daemon.show_banner(&notification);
+                }
+                if !notification.silent && notification.urgency != server::LOW {
+                    autark_common::audio::play(autark_common::audio::Effect::Alert);
+                }
+            });
+        }
     }
 
     fn show_banner(self: &Rc<Self>, notification: &Notification) {

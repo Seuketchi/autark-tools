@@ -56,7 +56,7 @@ window.notes .titlebar {
   min-height: 0;
   margin: 0;
   padding: 0;
-  -gtk-icon-size: 0;
+  -gtk-icon-size: 1px;
 }
 
 .sidebar windowcontrols button.close {
@@ -483,4 +483,24 @@ button.node label.current {
 .switcher .folder-name {
   font-size: 12px;
   color: @text3;
+}
+
+/* A single file opened on its own (`autark-notes <file>`) */
+
+window.notes.file .toolbar {
+  padding: 10px 12px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+window.notes.file textview.code {
+  font-family: "Geist Mono", "JetBrains Mono", monospace;
+  font-size: 13px;
+  padding: 12px 16px;
+  background: none;
+  color: @text;
+}
+
+window.notes.file .find {
+  padding: 8px 12px;
+  border-bottom: 1px solid alpha(@text, 0.08);
 }

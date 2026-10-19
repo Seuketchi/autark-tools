@@ -1,0 +1,20 @@
+[package]
+name = "autark-accounts"
+description = "Accounts: the mail, calendar and contact accounts Autark's apps share, signed in once (org.autark.Accounts1)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-io = "2.6.0"
+base64 = "0.22.1"
+blocking = "1.7.0"
+futures-util = "0.3.34"
+percent-encoding = "2.3.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.10.9"
+toml = "1.1.8"
+ureq = "3.4.2"
+zbus = "6.0.0"

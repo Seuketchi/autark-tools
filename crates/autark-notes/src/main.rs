@@ -2,10 +2,11 @@
 //! folder you choose (the vault), linked with `[[note name]]`.
 //!
 //! `autark-notes [folder]` opens that folder; otherwise `vault` from notes.toml, the last vault
-//! opened, or `~/Notes`.
+//! opened, or `~/Notes`. `autark-notes <file>` opens one plain-text file on its own, with no vault.
 
 mod config;
 mod editor;
+mod file;
 mod graph;
 mod markdown;
 mod state;
@@ -28,6 +29,13 @@ fn main() -> glib::ExitCode {
     app.connect_activate(move |app| {
         if let Some(notes) = &*notes.borrow() {
             notes.window.present();
+            return;
+        }
+        if let Some(path) = arg.as_ref().filter(|path| path.is_file()) {
+            match file::open(app, path) {
+                Some(window) => window.present(),
+                None => app.quit(),
+            }
             return;
         }
         let root = vault_root(arg.clone());

@@ -343,6 +343,9 @@ impl Window {
         add("cut", |this| this.copy(true));
         add("paste", Window::paste);
         add("trash", Window::trash_selected);
+        add("compress", |this| this.compress(false));
+        add("compress-tar", |this| this.compress(true));
+        add("extract-here", Window::extract_here);
         add("put-back", Window::put_back);
         add("delete", Window::delete_selected);
         add("empty-trash", Window::empty_trash);
@@ -853,6 +856,11 @@ impl Window {
                 edit.push(("Rename…", "win.rename"));
             }
             menu.append_section(None, &section(&edit));
+            let mut pack = vec![("Compress", "win.compress"), ("Compress as tar.gz", "win.compress-tar")];
+            if selected.iter().all(|entry| !entry.is_dir && ops::is_archive(&entry.path)) {
+                pack.insert(0, ("Extract Here", "win.extract-here"));
+            }
+            menu.append_section(None, &section(&pack));
             let more = gio::Menu::new();
             if let [one] = selected.as_slice() {
                 if one.is_dir {
@@ -957,6 +965,22 @@ impl Window {
         let paths: Vec<PathBuf> = self.selected().into_iter().map(|entry| entry.path).collect();
         if !paths.is_empty() {
             self.run(Op::Trash(paths, now()), Then::Trashed);
+        }
+    }
+
+    /// Packs the selection into an archive beside it.
+    fn compress(&self, tar: bool) {
+        let paths: Vec<PathBuf> = self.selected().into_iter().map(|entry| entry.path).collect();
+        if !paths.is_empty() {
+            self.run(Op::Compress(paths, tar), Then::Select);
+        }
+    }
+
+    /// Unpacks each selected archive beside itself.
+    fn extract_here(&self) {
+        let paths: Vec<PathBuf> = self.selected().into_iter().map(|entry| entry.path).filter(|path| ops::is_archive(path)).collect();
+        if !paths.is_empty() {
+            self.run(Op::Extract(paths), Then::Select);
         }
     }
 

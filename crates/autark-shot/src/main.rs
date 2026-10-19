@@ -1,13 +1,17 @@
 //! Screenshots. The compositor binds Shift+Super+3 to `autark-shot screen`, Shift+Super+4 to `autark-shot area`
 //! (Space there picks a window) and Shift+Super+5 to `autark-shot options`, the bar with Save to, Timer and
-//! the rest. Pictures go to `~/Pictures/Screenshots` and a thumbnail shows for five seconds. Recording comes
-//! later.
+//! the rest. Pictures go to `~/Pictures/Screenshots` and a thumbnail shows for five seconds. `autark-shot record`
+//! records the screen to `~/Videos/Screen Recordings` until it's run again, `record area` an area of it (see `record`).
 
 mod capture;
 mod clipboard;
+mod opus;
 mod options;
 mod overlay;
+mod record;
 mod thumb;
+mod vpx;
+mod webm;
 mod windows;
 
 use std::cell::RefCell;
@@ -28,14 +32,19 @@ enum Command {
     Screen,
     Area,
     Options,
+    Record,
+    RecordArea,
+    Stop,
 }
 
 thread_local! {
     /// The thread serving the clipboard, which the process waits for once its windows are gone.
     static CLIPBOARD: RefCell<Option<JoinHandle<()>>> = const { RefCell::new(None) };
+    /// The thread recording an area, which the process waits for after its windows are gone.
+    static RECORDER: RefCell<Option<JoinHandle<()>>> = const { RefCell::new(None) };
 }
 
-const USAGE: &str = "usage: autark-shot screen|area|options [--timer SECONDS]";
+const USAGE: &str = "usage: autark-shot screen|area|options [--timer SECONDS]\n       autark-shot record [area]   starts a screen recording, or stops the one going\n       autark-shot stop            stops it";
 
 fn main() -> glib::ExitCode {
     let mut command = None;
@@ -44,7 +53,9 @@ fn main() -> glib::ExitCode {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "screen" => command = Some(Command::Screen),
-            "area" => command = Some(Command::Area),
+            "area" => command = Some(if command == Some(Command::Record) { Command::RecordArea } else { Command::Area }),
+            "record" => command = Some(Command::Record),
+            "stop" => command = Some(Command::Stop),
             "options" => command = Some(Command::Options),
             "--timer" => match args.next().and_then(|seconds| seconds.parse::<u32>().ok()) {
                 Some(seconds) => timer = Some(seconds),
@@ -67,10 +78,42 @@ fn main() -> glib::ExitCode {
         eprintln!("{USAGE}");
         return glib::ExitCode::FAILURE;
     };
+    if matches!(command, Command::Record | Command::RecordArea | Command::Stop) && record::running() {
+        return match record::stop() {
+            Ok(()) => glib::ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("autark-shot: stopping the recording: {error}");
+                glib::ExitCode::FAILURE
+            }
+        };
+    }
+    if command == Command::Stop {
+        eprintln!("autark-shot: no recording is going on");
+        return glib::ExitCode::FAILURE;
+    }
+    if command == Command::Record {
+        autark_common::audio::play(autark_common::audio::Effect::Shutter);
+        // Give the sound's start and the key release a moment, so the first frame is of the screen and not of them.
+        std::thread::sleep(Duration::from_millis(300));
+        let options = Options::load();
+        return match record::run(None, None, options.pointer, options.record_audio) {
+            Ok(path) => {
+                println!("{}", path.display());
+                glib::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("autark-shot: {error}");
+                glib::ExitCode::FAILURE
+            }
+        };
+    }
     let app = gtk::Application::builder().application_id("org.autark.Shot").flags(gio::ApplicationFlags::NON_UNIQUE).build();
     app.connect_startup(|_| load_css());
     app.connect_activate(move |app| start(app, command, timer));
     let code = app.run_with_args::<&str>(&[]);
+    if let Some(recording) = RECORDER.take() {
+        let _ = recording.join();
+    }
     if let Some(serving) = CLIPBOARD.take() {
         let _ = serving.join();
     }
@@ -98,6 +141,26 @@ fn start(app: &gtk::Application, command: Command, timer: Option<u32>) {
             return;
         }
         let shots = Rc::new(shots);
+        if command == Command::RecordArea {
+            let (pointer, audio) = (options.pointer, options.record_audio);
+            overlay::choose(&app, shots.clone(), windows::list(), options, false, move |choice, _| {
+                let _hold = hold;
+                let (output, area) = match &choice {
+                    Choice::Area(index, x, y, w, h) => (shots[*index].name.clone(), Some((*x, *y, *w, *h))),
+                    Choice::Screen(index) => (shots[*index].name.clone(), None),
+                    Choice::Cancel => return,
+                };
+                RECORDER.set(Some(std::thread::spawn(move || {
+                    // The overlay takes a moment to go, and mustn't be in the first frame.
+                    std::thread::sleep(Duration::from_millis(400));
+                    match record::run(Some(&output), area, pointer, audio) {
+                        Ok(path) => println!("{}", path.display()),
+                        Err(error) => eprintln!("autark-shot: {error}"),
+                    }
+                })));
+            });
+            return;
+        }
         let windows = windows::list();
         let app_for_done = app.clone();
         overlay::choose(&app, shots.clone(), windows, options, command == Command::Options, move |choice, mut options| {

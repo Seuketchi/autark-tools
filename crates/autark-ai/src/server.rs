@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, chat, check, events, files, log, memory, route, suggest, tasks};
+use crate::{act, chat, check, events, files, jev, log, memory, route, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -112,6 +112,71 @@ impl Ai {
         Ok(())
     }
 
+    /// `Check`'s risk from Jev, logged like any call. The command leaves the laptop, which is why `[jev] terminal` is off by default.
+    async fn jev_risk(&self, connection: &zbus::Connection, command: &str) -> Result<f64, String> {
+        let start = Instant::now();
+        let result = async {
+            let key = jev::key(connection).await?;
+            let (state, questions) = check::jev_question(command);
+            let answers = blocking::unblock(move || jev::ask(&key, &state, questions)).await?;
+            jev::noul(&answers, "risk")
+        }
+        .await;
+        log::record("check", "jev", json!(command), &result.clone().map(|risk| json!({ "risk": risk })), start.elapsed());
+        result.map(|risk| risk.clamp(0.0, 1.0))
+    }
+
+    /// `Rank`'s scores from Jev, one noul per item, logged like any call. The query and items leave the laptop,
+    /// which is why `[jev] files` and `[jev] settings` are off by default.
+    async fn jev_rank(&self, connection: &zbus::Connection, query: &str, items: &[String]) -> Result<Vec<f64>, String> {
+        let start = Instant::now();
+        let result = async {
+            let key = jev::key(connection).await?;
+            let state = format!("What the user searched for:\n{query}");
+            let questions: serde_json::Map<String, Value> = items
+                .iter()
+                .enumerate()
+                .map(|(n, item)| (n.to_string(), json!({ "type": "noul", "instructions": format!("“{item}” is a likely match for the search.") })))
+                .collect();
+            let answers = blocking::unblock(move || jev::ask(&key, &state, Value::Object(questions))).await?;
+            (0..items.len()).map(|n| jev::noul(&answers, &n.to_string()).map(|score| score.clamp(0.0, 1.0))).collect::<Result<Vec<f64>, String>>()
+        }
+        .await;
+        log::record("rank", "jev", json!({ "query": query, "items": items }), &result.clone().map(|scores| json!({ "scores": scores })), start.elapsed());
+        result
+    }
+
+    /// `Route` from Jev, logged like any call. `None` when Jev can't route the sentence alone (see `route::jev_parse`).
+    /// The sentence leaves the laptop, which is why `[jev] launcher` is off by default.
+    async fn jev_route(&self, connection: &zbus::Connection, text: &str, conversation: &str) -> Result<Option<route::Routed>, String> {
+        let start = Instant::now();
+        let result = async {
+            let key = jev::key(connection).await?;
+            let (state, questions) = route::jev_questions(text, conversation);
+            let answers = blocking::unblock(move || jev::ask(&key, &state, questions)).await?;
+            route::jev_parse(&answers, text)
+        }
+        .await;
+        let logged = result.as_ref().map(|routed| json!({ "handed_over": routed.is_none(), "actions": routed.as_ref().map(|routed| routed.actions.len()) })).map_err(Clone::clone);
+        log::record("route", "jev", json!(text), &logged, start.elapsed());
+        result
+    }
+
+    /// How much a notification needs the user's attention now, from Jev, logged like any call. Its text leaves the
+    /// laptop, which is why `[jev] notify` is off by default.
+    async fn jev_urgent(&self, connection: &zbus::Connection, app: &str, summary: &str, body: &str) -> Result<f64, String> {
+        let start = Instant::now();
+        let result = async {
+            let key = jev::key(connection).await?;
+            let (state, questions) = check::jev_urgent(app, summary, body);
+            let answers = blocking::unblock(move || jev::ask(&key, &state, questions)).await?;
+            jev::noul(&answers, "urgent").map(|urgent| urgent.clamp(0.0, 1.0))
+        }
+        .await;
+        log::record("urgent", "jev", json!({ "app": app, "summary": summary, "body": body }), &result.clone().map(|urgent| json!({ "urgent": urgent })), start.elapsed());
+        result
+    }
+
     /// Runs a blocking Ollama call off the bus thread, and logs it.
     async fn json(&self, call: &'static str, input: Value, system: String, user: String, schema: Value) -> Result<Value, String> {
         let ollama = self.ollama();
@@ -202,13 +267,25 @@ impl Ai {
     }
 
     /// Routes `text`, with the conversation so far when there is one.
-    async fn routed(&self, emitter: &SignalEmitter<'_>, text: &str, conversation: &str) -> Result<route::Routed, Error> {
+    async fn routed(&self, emitter: &SignalEmitter<'_>, connection: &zbus::Connection, text: &str, conversation: &str) -> Result<route::Routed, Error> {
         self.allowed(self.config().features.route, "route")?;
         let facts = memory::facts();
         let candidates = route::candidates(text, &facts);
+        let config = self.config();
+        if config.jev.launcher && !config.local_only && route::jev_can(text, &candidates) {
+            self.announce(emitter, self.busy.change(1, 0)).await;
+            let routed = self.jev_route(connection, text, conversation).await;
+            self.announce(emitter, self.busy.change(-1, 0)).await;
+            // Ollama routes what Jev hands over or can't answer, so the launcher never loses its answer.
+            match routed {
+                Ok(Some(routed)) => return Ok(routed),
+                Ok(None) => {}
+                Err(err) => eprintln!("ai: {err}; Ollama routes it instead"),
+            }
+        }
         let user = route::user(text, &candidates, conversation);
         self.announce(emitter, self.busy.change(1, 0)).await;
-        let answer = self.json("route", json!(text), route::system_prompt(&facts), user, route::schema(&candidates)).await;
+        let answer = self.json("route", json!(text), route::system_prompt(&facts, text), user, route::schema(&candidates, text)).await;
         self.announce(emitter, self.busy.change(-1, 0)).await;
         answer.and_then(|answer| route::parse(answer, text, &candidates, &facts)).map_err(Error::Engine)
     }
@@ -322,17 +399,17 @@ impl Ai {
     /// Turns a sentence into the actions it asks for, the question it asks and a fact to propose remembering,
     /// as JSON: `{"actions":[{"action":"mute","on":true,"confidence":0.97}],"question":"Why did my build stop?",
     /// "files":["~/autark/log.md"],"remember":"","confidence":0.9,"engine":"ollama"}`.
-    async fn route(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
-        let routed = self.routed(&emitter, &text, "").await?;
+    async fn route(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
+        let routed = self.routed(&emitter, connection, &text, "").await?;
         serde_json::to_string(&routed).map_err(|err| Error::Engine(err.to_string()))
     }
 
     /// `Route` as part of the conversation: the message goes into it, routed with what was said before, with
     /// its actions and proposed fact as entries of their own, whose ids come back as `actions_entry` and
     /// `memory_entry` (0 for none). Then `ChatAnswer`, `ChatAct` and `Remember` carry on from here.
-    async fn chat(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
+    async fn chat(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
         let conversation = lock(&self.chat).transcript();
-        let routed = self.routed(&emitter, &text, &conversation).await;
+        let routed = self.routed(&emitter, connection, &text, &conversation).await;
         let entries = self
             .change(&emitter, |chat| {
                 chat.said(&text);
@@ -409,7 +486,7 @@ impl Ai {
         let conversation = lock(&self.chat).transcript();
         let entry = self.change(&emitter, |chat| chat.push(What::Answer { answer: 0, text: String::new(), files: outcome.clone(), writing: true, error: String::new() })).await;
         let facts = memory::facts();
-        let mut system = format!("{ASK_SYSTEM} You're talking with the user in a running conversation.");
+        let mut system = format!("{ASK_SYSTEM} You're talking with the user in a running conversation.{}", soul::voice());
         if !facts.is_empty() {
             let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
             system.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
@@ -545,10 +622,28 @@ impl Ai {
     }
 
     /// How relevant each item is to the query, 0 to 1, in the items' order.
-    async fn rank(&self, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
+    async fn rank(&self, #[zbus(connection)] connection: &zbus::Connection, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
+        self.rank_for(connection, String::new(), query, items).await
+    }
+
+    /// `Rank` for a caller that has its own Jev switch: `source` is "files" or "settings".
+    async fn rank_for(&self, #[zbus(connection)] connection: &zbus::Connection, source: String, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
         self.allowed(self.config().features.rank, "rank")?;
         if items.is_empty() {
             return Ok(Vec::new());
+        }
+        let config = self.config();
+        let jev = match source.as_str() {
+            "files" => config.jev.files,
+            "settings" => config.jev.settings,
+            _ => false,
+        };
+        if jev && !config.local_only {
+            // If Jev can't answer, Ollama does, so search never loses its ranking.
+            match self.jev_rank(connection, &query, &items).await {
+                Ok(scores) => return Ok(scores),
+                Err(err) => eprintln!("ai: {err}; Ollama ranks it instead"),
+            }
         }
         let listed: Vec<String> = items.iter().enumerate().map(|(n, item)| format!("{}. {item}", n + 1)).collect();
         let user = format!("Query: {query}\nItems:\n{}", listed.join("\n"));
@@ -567,15 +662,58 @@ impl Ai {
         Ok(scores)
     }
 
+    /// How much a notification needs the user's attention now, 0 to 1, for Focus to let the urgent ones through.
+    /// Jev only: it is off, an error, unless `[jev] notify` is on and `local_only` is not, so a notification's
+    /// text never goes anywhere else.
+    async fn urgent(&self, #[zbus(connection)] connection: &zbus::Connection, app: String, summary: String, body: String) -> Result<f64, Error> {
+        let config = self.config();
+        if !config.enabled {
+            return Err(Error::Disabled("AI is off: set `enabled = true` in ai.toml".to_owned()));
+        }
+        if !config.jev.notify || config.local_only {
+            return Err(Error::Disabled("urgent is off in ai.toml".to_owned()));
+        }
+        self.jev_urgent(connection, &app, &summary, &body).await.map_err(Error::Engine)
+    }
+
+    /// A web search through Firecrawl: titles, addresses and snippets of the best results, as text. The query leaves
+    /// the laptop, which is why `[web] search` is off by default; it is an error unless that is on and `local_only` is not.
+    async fn search(&self, #[zbus(connection)] connection: &zbus::Connection, query: String) -> Result<String, Error> {
+        let config = self.config();
+        if !config.enabled {
+            return Err(Error::Disabled("AI is off: set `enabled = true` in ai.toml".to_owned()));
+        }
+        if !config.web.search || config.local_only {
+            return Err(Error::Disabled("search is off in ai.toml".to_owned()));
+        }
+        let start = Instant::now();
+        let result = async {
+            let key = web::key(connection).await?;
+            let query = query.clone();
+            blocking::unblock(move || web::search(&key, &query)).await
+        }
+        .await;
+        log::record("search", "firecrawl", json!(query), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
+        result.map_err(Error::Engine)
+    }
+
     /// The probability that running `command` does harm, with a short reason. Destructive commands
     /// score 1 by rule, even with AI off.
-    async fn check(&self, command: String) -> Result<(f64, String), Error> {
+    async fn check(&self, #[zbus(connection)] connection: &zbus::Connection, command: String) -> Result<(f64, String), Error> {
         if let Some(reason) = check::rules(&command) {
             log::record("check", "rules", json!(command), &Ok(json!({ "risk": 1.0, "reason": reason })), Default::default());
             return Ok((1.0, reason.to_owned()));
         }
         if self.allowed(self.config().features.check, "check").is_err() {
             return Ok((0.0, String::new()));
+        }
+        let config = self.config();
+        if config.jev.terminal && !config.local_only {
+            // Jev gives a risk but no reason; if it can't answer, Ollama does, so the check never goes missing.
+            match self.jev_risk(connection, &command).await {
+                Ok(risk) => return Ok((risk, String::new())),
+                Err(err) => eprintln!("ai: {err}; Ollama checks it instead"),
+            }
         }
         let answer = self.json("check", json!(command), check::SYSTEM_PROMPT.to_owned(), command.clone(), check::schema()).await.map_err(Error::Engine)?;
         let risk = answer["risk"].as_f64().ok_or_else(|| Error::Engine("no risk in the answer".to_owned()))?;
@@ -587,7 +725,7 @@ impl Ai {
     async fn ask(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, context: String) -> Result<u32, Error> {
         self.allowed(self.config().features.ask, "ask")?;
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
-        Ok(self.answer(emitter, Ask { system: ASK_SYSTEM.to_owned(), prompt, context, entry: None }, json!({})))
+        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None }, json!({})))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
@@ -597,7 +735,7 @@ impl Ai {
         let (context, outcome) = blocking::unblock(move || files::read(&files)).await;
         let read = json!(outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>());
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
-        Ok((self.answer(emitter, Ask { system: ASK_SYSTEM.to_owned(), prompt, context, entry: None }, json!({ "files": read })), outcome))
+        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None }, json!({ "files": read })), outcome))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.

@@ -11,6 +11,8 @@ pub mod files;
 pub mod stats;
 pub mod theme;
 #[cfg(feature = "style")]
+pub mod slider;
+#[cfg(feature = "style")]
 pub mod visor;
 pub mod wallpaper;
 #[cfg(feature = "toplevels")]

@@ -1,0 +1,60 @@
+--- a/ch10-kernel-inside.sh
++++ b/ch10-kernel-inside.sh
+@@ -1,7 +1,12 @@
+ #!/bin/bash
+-# Build guide Step 6.2: Autark's kernel, trimmed to the target laptop. Runs INSIDE the chroot as root, started
++# Build guide Step 6.2: Autark's kernel. KERNEL_PROFILE picks how much hardware it carries:
++#   generic (the default)  every driver the distribution config builds, as signed modules, so the same kernel runs on
++#                          any machine: about 6,700 modules. Needs no target-lsmod.txt. Allow far longer to build and
++#                          set KERNEL_JOBS lower on a laptop that runs hot.
++#   laptop                 only what the target laptop loads (localmodconfig from target-lsmod.txt): about 285 modules.
++# (The old behaviour, "trimmed to the target laptop", is the laptop profile.) Runs INSIDE the chroot as root, started
+ # by ch7-chroot.sh with INSIDE=ch10-kernel-inside.sh. The host copies hardware/target/{kernel.config,lsmod.txt}
+-# into $LFS/sources as target-kernel.config and target-lsmod.txt first.
++# into $LFS/sources as target-kernel.config (and, for the laptop profile, target-lsmod.txt) first.
+ #
+ # Order: Ubuntu's config for this laptop → only the modules it loads (localmodconfig) → the required options
+ # below → olddefconfig → every required option checked in the final .config (the build stops on a mismatch,
+@@ -14,6 +19,16 @@
+ fi
+ 
+ KVER=7.1.8
++PROFILE=${KERNEL_PROFILE:-generic}
++JOBS=${KERNEL_JOBS:-$(nproc)}
++case $PROFILE in
++  generic|laptop) ;;
++  *) echo "ch10-kernel-inside.sh: KERNEL_PROFILE must be generic or laptop, not '$PROFILE'" >&2; exit 1 ;;
++esac
++if [ "$PROFILE" = laptop ] && [ ! -e /sources/target-lsmod.txt ]; then
++  echo "ch10-kernel-inside.sh: the laptop profile needs /sources/target-lsmod.txt" >&2
++  exit 1
++fi
+ SRC=/sources/linux-$KVER
+ LOG=/sources/logs/kernel.log
+ mkdir -p /sources/logs
+@@ -249,13 +264,17 @@
+   make olddefconfig
+   # `yes` answers NEW-option prompts with the default. It dies of SIGPIPE when make exits, which pipefail
+   # would count as a failure, so its own status is ignored; make's still counts.
+-  (yes '' || true) | make LSMOD=/sources/target-lsmod.txt localmodconfig
++  if [ "$PROFILE" = laptop ]; then
++    (yes '' || true) | make LSMOD=/sources/target-lsmod.txt localmodconfig
++  else
++    echo "== profile generic: the whole distribution config is kept, every driver a module"
++  fi
+   # Twice: enabling an option can reveal dependent options that a second pass then sets.
+   apply; make olddefconfig
+   apply; make olddefconfig
+   check
+   echo "== config checked: every required option is set"
+-  make -j"$(nproc)"
++  make -j"$JOBS"
+   # Each build makes a new module-signing key, and MODULE_SIG_FORCE refuses modules signed by an old one,
+   # so no module from a previous build may survive.
+   rm -rf /usr/lib/modules/$KVER
+@@ -273,4 +292,4 @@
+ if [ "$rc" != 0 ]; then echo "== kernel FAILED (exit $rc); last lines of $LOG:"; tail -40 "$LOG"; exit 1; fi
+ 
+ grep -E '^(== |MISMATCH)' "$LOG" || true
+-echo "== kernel $KVER built: $(du -h /boot/vmlinuz-$KVER-autark | cut -f1), $(find /usr/lib/modules/$KVER -name '*.ko*' | wc -l) modules"
++echo "== kernel $KVER ($PROFILE profile) built: $(du -h /boot/vmlinuz-$KVER-autark | cut -f1), $(find /usr/lib/modules/$KVER -name '*.ko*' | wc -l) modules"

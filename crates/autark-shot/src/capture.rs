@@ -159,6 +159,108 @@ pub fn all(pointer: bool) -> Result<Vec<Shot>, String> {
     Ok(shots)
 }
 
+/// How one grabbed frame is laid out in the bytes `Session::grab` fills.
+#[derive(Clone, Copy, Debug)]
+pub struct Layout {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixels: Pixels,
+    /// The rows come bottom first.
+    pub y_invert: bool,
+}
+
+/// One output captured again and again over a connection kept open, with the same buffer each time, for recording.
+pub struct Session {
+    queue: wayland_client::EventQueue<State>,
+    handle: QueueHandle<State>,
+    state: State,
+    manager: zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+    version: u32,
+    shm: wl_shm::WlShm,
+    output: wl_output::WlOutput,
+    /// The output's connector name, and its size on the desktop in logical pixels.
+    pub name: String,
+    pub logical: (i32, i32),
+    /// What the buffer was made for, and the buffer with the memory behind it.
+    made: Option<((wl_shm::Format, u32, u32, u32), std::fs::File, wl_shm_pool::WlShmPool, wl_buffer::WlBuffer)>,
+}
+
+impl Session {
+    /// The output called `name`, or the one at the desktop's origin, or the first.
+    pub fn open(name: Option<&str>) -> Result<Self, String> {
+        let connection = Connection::connect_to_env().map_err(|error| format!("no Wayland display: {error}"))?;
+        let mut queue = connection.new_event_queue();
+        let handle = queue.handle();
+        connection.display().get_registry(&handle, ());
+        let mut state = State::default();
+        queue.roundtrip(&mut state).map_err(|error| format!("Wayland: {error}"))?;
+        let shm = state.shm.clone().ok_or("the compositor has no wl_shm")?;
+        let (manager, version) = state.screencopy.clone().ok_or("the compositor doesn't offer wlr-screencopy (Wayfire has it built in)")?;
+        if let Some(xdg) = &state.xdg {
+            for (index, output) in state.outputs.iter().enumerate() {
+                if let Some(wl) = &output.wl {
+                    xdg.get_xdg_output(wl, &handle, index);
+                }
+            }
+        }
+        queue.roundtrip(&mut state).map_err(|error| format!("Wayland: {error}"))?;
+        let chosen = name
+            .and_then(|name| state.outputs.iter().find(|output| output.name == name))
+            .or_else(|| state.outputs.iter().find(|output| output.x == 0 && output.y == 0 && output.wl.is_some()))
+            .or_else(|| state.outputs.iter().find(|output| output.wl.is_some()))
+            .ok_or("no output to record")?;
+        let (output, name, logical) = (chosen.wl.clone().ok_or("no output to record")?, chosen.name.clone(), (chosen.width, chosen.height));
+        Ok(Self { queue, handle, state, manager, version, shm, output, name, logical, made: None })
+    }
+
+    /// Captures the output into `data`, which is resized to fit, and says how it's laid out.
+    pub fn grab(&mut self, pointer: bool, data: &mut Vec<u8>) -> Result<Layout, String> {
+        self.state.frame = Frame::default();
+        let frame = self.manager.capture_output(i32::from(pointer), &self.output, &self.handle, ());
+        while !(self.state.frame.failed || (self.state.frame.buffer.is_some() && (self.version < 3 || self.state.frame.offered))) {
+            self.queue.blocking_dispatch(&mut self.state).map_err(|error| format!("Wayland: {error}"))?;
+        }
+        let Some(wanted) = self.state.frame.buffer.filter(|_| !self.state.frame.failed) else {
+            return Err(format!("capturing {} failed", self.name));
+        };
+        if self.made.as_ref().is_none_or(|(made, ..)| *made != wanted) {
+            if let Some((_, _, pool, buffer)) = self.made.take() {
+                buffer.destroy();
+                pool.destroy();
+            }
+            let (format, width, height, stride) = wanted;
+            let size = (stride * height) as usize;
+            let fd = rustix::fs::memfd_create("autark-shot", rustix::fs::MemfdFlags::CLOEXEC).map_err(|error| format!("memfd: {error}"))?;
+            let file = std::fs::File::from(fd);
+            file.set_len(size as u64).map_err(|error| format!("memfd: {error}"))?;
+            let pool = self.shm.create_pool(std::os::fd::AsFd::as_fd(&file), size as i32, &self.handle, ());
+            let buffer = pool.create_buffer(0, width as i32, height as i32, stride as i32, format, &self.handle, ());
+            self.made = Some((wanted, file, pool, buffer));
+        }
+        let (format, width, height, stride) = wanted;
+        let pixels = match format {
+            wl_shm::Format::Xrgb8888 => Pixels::Bgrx,
+            wl_shm::Format::Argb8888 => Pixels::Bgra,
+            wl_shm::Format::Xbgr8888 => Pixels::Rgbx,
+            wl_shm::Format::Abgr8888 => Pixels::Rgba,
+            other => return Err(format!("the compositor offered pixels as {other:?}, which isn't handled")),
+        };
+        let Some((_, file, _, buffer)) = &self.made else { return Err("no buffer".to_owned()) };
+        frame.copy(buffer);
+        while !(self.state.frame.ready || self.state.frame.failed) {
+            self.queue.blocking_dispatch(&mut self.state).map_err(|error| format!("Wayland: {error}"))?;
+        }
+        frame.destroy();
+        if self.state.frame.failed {
+            return Err(format!("capturing {} failed", self.name));
+        }
+        data.resize((stride * height) as usize, 0);
+        file.read_exact_at(data, 0).map_err(|error| format!("memfd: {error}"))?;
+        Ok(Layout { width, height, stride, pixels, y_invert: self.state.frame.y_invert })
+    }
+}
+
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(state: &mut Self, registry: &wl_registry::WlRegistry, event: wl_registry::Event, _: &(), _: &Connection, handle: &QueueHandle<Self>) {
         let wl_registry::Event::Global { name, interface, version } = event else { return };
