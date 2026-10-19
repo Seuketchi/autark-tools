@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
-use vte::{Terminal, TerminalExt, TerminalExtManual};
+use vte::{Terminal, TerminalExt};
 
 use crate::{check, tab};
 
@@ -252,7 +252,7 @@ impl Window {
         let controller = gtk::ShortcutController::new();
         // Capture, so VTE doesn't take the keys first.
         controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let mut add = |keys: &str, action: Box<dyn Fn() + 'static>| {
+        let add = |keys: &str, action: Box<dyn Fn() + 'static>| {
             if let Some(trigger) = gtk::ShortcutTrigger::parse_string(keys) {
                 let action = gtk::CallbackAction::new(move |_, _| {
                     action();

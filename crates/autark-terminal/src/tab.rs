@@ -7,13 +7,14 @@ use gtk::prelude::*;
 use gtk::{gio, glib, pango};
 use vte::{Terminal, TerminalExt, TerminalExtManual};
 
-const FONT: &str = "Geist Mono 12";
+const FONT: &str = "Geist Mono 11";
 
 /// A terminal running the user's shell in `folder` (the shell's own default when there's none). `exited` runs when the
 /// shell ends, so its tab can go.
 pub fn new(folder: Option<&Path>, exited: impl Fn(&Terminal) + 'static) -> Terminal {
     let terminal = Terminal::new();
     terminal.set_font(Some(&pango::FontDescription::from_string(FONT)));
+    terminal.set_cell_height_scale(1.15);
     terminal.set_scrollback_lines(10_000);
     terminal.set_scroll_on_keystroke(true);
     terminal.set_scroll_on_output(false);

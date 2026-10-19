@@ -4,7 +4,7 @@
 
 use autark_common::theme::Palette;
 use gtk::gdk;
-use vte::{Terminal, TerminalExt};
+use vte::{Terminal, TerminalExt, TerminalExtManual};
 
 const LIGHT: [&str; 16] = [
     "#3A3731", "#B5483A", "#4F7A52", "#9A7420", "#3F6A98", "#8A5A8F", "#2F7F80", "#CFC9BE", // black … white
