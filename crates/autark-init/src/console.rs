@@ -11,6 +11,8 @@ pub trait Console {
     /// Asks for a secret. `None` when there's nothing more to read (end of input).
     fn secret(&mut self, prompt: &str) -> Option<Zeroizing<Vec<u8>>>;
     fn wait_for_enter(&mut self, text: &str);
+    /// The disk is open and the system is about to start. The text console has nothing to show for it.
+    fn unlocked(&mut self) {}
 }
 
 /// Standard input and output, which in the initramfs are the console.

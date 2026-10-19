@@ -18,12 +18,15 @@ mod cmdline;
 mod console;
 mod cryptsetup;
 mod devices;
+mod splash;
 mod unlock;
 
 use std::convert::Infallible;
 use std::time::Duration;
 
 use console::{Console, Terminal};
+use splash::console::SplashConsole;
+use zeroize::Zeroizing;
 use unlock::{Failure, How};
 
 fn main() {
@@ -51,12 +54,51 @@ fn run_as_init() -> ! {
     boot::reboot()
 }
 
+/// The text console, or the loading screen when the command line asks for it and the screen allows it.
+enum Screen {
+    Text(Terminal),
+    Splash(SplashConsole),
+}
+
+impl Console for Screen {
+    fn say(&mut self, text: &str) {
+        match self {
+            Screen::Text(console) => console.say(text),
+            Screen::Splash(console) => console.say(text),
+        }
+    }
+
+    fn secret(&mut self, prompt: &str) -> Option<Zeroizing<Vec<u8>>> {
+        match self {
+            Screen::Text(console) => console.secret(prompt),
+            Screen::Splash(console) => console.secret(prompt),
+        }
+    }
+
+    fn wait_for_enter(&mut self, text: &str) {
+        match self {
+            Screen::Text(console) => console.wait_for_enter(text),
+            Screen::Splash(console) => console.wait_for_enter(text),
+        }
+    }
+
+    fn unlocked(&mut self) {
+        if let Screen::Splash(console) = self {
+            Console::unlocked(console);
+        }
+    }
+}
+
 fn boot() -> Result<Infallible, String> {
     boot::mount_special()?;
     boot::attach_console();
-    let mut console = Terminal;
     let line = std::fs::read_to_string("/proc/cmdline").map_err(|error| format!("/proc/cmdline: {error}"))?;
     let cmdline = cmdline::parse(&line);
+    // A splash that can't draw is the text prompt, not a failure.
+    let mut console = match cmdline.splash.then(SplashConsole::start).flatten() {
+        Some(splash) => Screen::Splash(splash),
+        None => Screen::Text(Terminal),
+    };
     if cmdline.luks.is_empty() {
         console.say("No rd.luks.name= on the command line: not unlocking anything.");
     }
@@ -72,6 +114,7 @@ fn boot() -> Result<Infallible, String> {
             Ok(How::Passphrase) => console.say(&format!("{} unlocked.", volume.name)),
             Err(failure) => return Err(describe(&failure, &volume.name)),
         }
+        console.unlocked();
     }
     boot::mount_root(&cmdline)?;
     let init = boot::pick_init(cmdline.init.as_deref(), |path| std::path::Path::new(boot::SYSROOT).join(path.trim_start_matches('/')).exists()).ok_or("there's no init (systemd) on the root file system")?;

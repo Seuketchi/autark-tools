@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 libcryptsetup-rs = { version = "0.16.1", features = ["mutex"] }
-rustix = { version = "1", features = ["fs", "mount", "process", "stdio", "system", "termios"] }
+rustix = { version = "1", features = ["fs", "mm", "mount", "process", "stdio", "system", "termios"] }
 zeroize = "1.9.1"
 
 [dev-dependencies]
