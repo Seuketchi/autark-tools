@@ -275,6 +275,7 @@ impl Panel {
             "actions" => self.actions_card(id, entry),
             "answer" => answer_card(entry),
             "memory" => memory_card(id, entry["text"].as_str().unwrap_or_default(), entry["state"].as_str().unwrap_or_default()).upcast(),
+            "skill" => skill_card(id, &entry["skill"], entry["state"].as_str().unwrap_or_default()).upcast(),
             "task" => task_card(id, &entry["task"], entry["state"].as_str().unwrap_or_default(), entry["unit"].as_str().unwrap_or_default(), entry["next"].as_u64().unwrap_or(0)).upcast(),
             "suggestion" => suggestion_card(entry).upcast(),
             _ => gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
@@ -547,6 +548,79 @@ pub fn memory_card(entry: u64, text: &str, state: &str) -> gtk::Box {
         move |_| answer(true)
     });
     edit_entry.connect_activate({
+        let answer = answer.clone();
+        move |_| answer(true)
+    });
+    skip.connect_clicked(move |_| answer(false));
+    card
+}
+
+/// What a skill's step does, in words.
+fn step_words(step: &Value) -> String {
+    let input = step["input"].as_str().unwrap_or_default();
+    match step["tool"].as_str().unwrap_or_default() {
+        "system" => "looks at this laptop".to_owned(),
+        "memory" => "checks what I remember".to_owned(),
+        "recall" => "searches your notes and earlier chats".to_owned(),
+        "read_file" => format!("reads {input}"),
+        "web" => format!("searches the web for “{input}”"),
+        other => other.to_owned(),
+    }
+}
+
+/// A skill Kith proposes to keep, with Save and Don't save until you answer, then what you chose. The card says
+/// what the skill does and what calls for it; a skill only ever reads.
+fn skill_card(entry: u64, skill: &Value, state: &str) -> gtk::Box {
+    let card = card("assistant-memory-card");
+    let caption = gtk::Label::builder().label("SAVE AS A SKILL?").xalign(0.0).build();
+    caption.add_css_class("assistant-caption");
+    let name = gtk::Label::builder().label(skill["name"].as_str().unwrap_or_default()).xalign(0.0).wrap(true).max_width_chars(34).build();
+    name.add_css_class("assistant-fact");
+    let steps: Vec<String> = skill["steps"].as_array().into_iter().flatten().enumerate().map(|(n, step)| format!("{}. {}", n + 1, step_words(step))).collect();
+    let how = gtk::Label::builder().label(format!("Next time you ask in much these words, Kith:\n{}", steps.join("\n"))).xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).build();
+    how.add_css_class("assistant-key");
+    card.append(&caption);
+    card.append(&name);
+    card.append(&how);
+    if state != "proposed" {
+        caption.set_label("SKILL");
+        card.append(&outcome(state == "saved"));
+        return card;
+    }
+    let save = gtk::Button::builder().label("Save").focus_on_click(false).build();
+    save.add_css_class("assistant-save");
+    let skip = gtk::Button::builder().label("Don’t save").focus_on_click(false).build();
+    skip.add_css_class("assistant-skip");
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.append(&save);
+    buttons.append(&skip);
+    card.append(&buttons);
+    let why = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(34).visible(false).build();
+    why.add_css_class("assistant-error");
+    card.append(&why);
+    let answer = {
+        let (card, name, buttons, why) = (card.clone(), name.clone(), buttons.clone(), why.clone());
+        move |keep: bool| {
+            let title = name.label().to_string();
+            buttons.set_sensitive(false);
+            let (card, buttons, why) = (card.clone(), buttons.clone(), why.clone());
+            glib::spawn_future_local(async move {
+                match async { ai::proxy().await?.save_skill(entry, &title, keep).await }.await {
+                    Ok(()) => {
+                        buttons.set_visible(false);
+                        why.set_visible(false);
+                        card.append(&outcome(keep));
+                    }
+                    Err(error) => {
+                        why.set_label(&said(error));
+                        why.set_visible(true);
+                        buttons.set_sensitive(true);
+                    }
+                }
+            });
+        }
+    };
+    save.connect_clicked({
         let answer = answer.clone();
         move |_| answer(true)
     });

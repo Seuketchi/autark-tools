@@ -21,6 +21,7 @@ mod recall;
 mod route;
 mod runner;
 mod senses;
+mod skills;
 mod server;
 mod soul;
 mod suggest;

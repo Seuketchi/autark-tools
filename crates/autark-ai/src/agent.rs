@@ -99,6 +99,16 @@ pub fn shown(note: &Note) -> String {
     }
 }
 
+/// The loop's own name for a tool a skill or the model named, or `None` if it isn't one of its read-only tools.
+pub fn tool_name(name: &str) -> Option<&'static str> {
+    ["system", "memory", "recall", "read_file", "web"].into_iter().find(|tool| *tool == name)
+}
+
+/// A saved skill's steps as the looks to run first; the web only when it is open.
+pub fn skill_seeds(skill: &crate::skills::Skill, web: bool) -> Vec<(&'static str, String)> {
+    skill.steps.iter().filter_map(|step| tool_name(&step.tool).filter(|tool| web || *tool != "web").map(|tool| (tool, step.input.clone()))).collect()
+}
+
 /// The looks the question itself calls for, which need no model to choose: the laptop's numbers for a system
 /// question, a search of the question for a look-up. The model then only decides whether anything else is needed.
 pub fn seeds(question: &str, web: bool) -> Vec<(&'static str, String)> {
@@ -151,6 +161,8 @@ pub fn gather(
     for _ in 0..MAX_STEPS {
         let tools = open(web, read_a_file);
         let (tool, input) = match seeds.next() {
+            // A saved skill is held to the same rule as the model: no search after a file or notes were read.
+            Some((tool, _)) if !tools.contains(&tool) => continue,
             Some((tool, input)) => (tool.to_owned(), input),
             // A question that names its sources has been looked up; the model is for the ones that don't.
             None if had_seeds => break,
@@ -295,6 +307,19 @@ mod tests {
         let offered: Vec<&String> = ran.iter().filter(|line| line.starts_with("offered")).collect();
         assert_eq!(offered[0], "offered system,memory,recall,read_file,web,answer");
         assert_eq!(offered[1], "offered system,memory,recall,read_file,answer");
+    }
+
+    #[test]
+    fn a_skill_cannot_search_the_web_after_reading_a_file() {
+        let skill = crate::skills::Skill {
+            name: "Todo and news".into(),
+            when: "my todo file and the news".into(),
+            steps: vec![crate::skills::Step { tool: "read_file".into(), input: "~/todo.md".into() }, crate::skills::Step { tool: "web".into(), input: "news".into() }],
+        };
+        let (notes, _) = gather("q", true, skill_seeds(&skill, true), |_, _, _| Ok(json!({ "tool": "answer", "input": "" })), |tool, _| Ok(format!("{tool} result")), |_| true);
+        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["read_file"]);
+        assert_eq!(skill_seeds(&skill, false).len(), 1, "no web steps when the web is closed");
+        assert_eq!(tool_name("run_actions"), None);
     }
 
     #[test]
