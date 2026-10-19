@@ -5,6 +5,7 @@ GenericName=Alarm, Timer and Stopwatch
 Comment=Alarms, a timer and a stopwatch
 Exec=autark-clock
 Icon=autark-clock
+StartupWMClass=org.autark.Clock
 Terminal=false
 Categories=Utility;Clock;
 Keywords=clock;alarm;timer;stopwatch;

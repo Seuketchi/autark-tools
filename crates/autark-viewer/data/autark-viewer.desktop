@@ -5,6 +5,7 @@ GenericName=Image Viewer
 Comment=View pictures
 Exec=autark-viewer %U
 Icon=autark-viewer
+StartupWMClass=org.autark.Viewer
 Terminal=false
 Categories=Graphics;Viewer;
 MimeType=image/png;image/jpeg;image/gif;image/bmp;image/tiff;image/x-icon;image/x-tga;image/x-xpixmap;

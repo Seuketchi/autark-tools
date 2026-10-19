@@ -5,6 +5,7 @@ GenericName=Calculator
 Comment=Work out sums
 Exec=autark-calc
 Icon=autark-calc
+StartupWMClass=org.autark.Calc
 Terminal=false
 Categories=Utility;Calculator;
 Keywords=calculator;maths;sum;

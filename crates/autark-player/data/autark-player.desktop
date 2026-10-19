@@ -5,6 +5,7 @@ GenericName=Media Player
 Comment=Play video and audio
 Exec=autark-player %U
 Icon=autark-player
+StartupWMClass=org.autark.Player
 Terminal=false
 Categories=AudioVideo;Player;
 MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/ogg;audio/mpeg;audio/mp4;audio/ogg;audio/flac;audio/x-wav;audio/webm;audio/opus;audio/x-flac;

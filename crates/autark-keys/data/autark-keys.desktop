@@ -5,6 +5,7 @@ GenericName=Shortcut Cheat Sheet
 Comment=Every key combination the desktop answers
 Exec=autark-keys
 Icon=autark-keys
+StartupWMClass=org.autark.Keys
 Terminal=false
 Categories=Utility;
 Keywords=keyboard;shortcuts;keys;hotkeys;
