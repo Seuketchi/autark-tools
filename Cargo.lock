@@ -521,6 +521,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-showdesktop"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+]
+
+[[package]]
 name = "autark-stats"
 version = "0.0.0"
 dependencies = [
