@@ -552,6 +552,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-splash-font"
+version = "0.0.0"
+dependencies = [
+ "cairo-rs",
+]
+
+[[package]]
 name = "autark-stats"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,10 @@
+[package]
+name = "autark-splash-font"
+description = "Development tool: renders the Geist glyphs the boot splash needs into small alpha-mask files (crates/autark-init/assets/), so the initramfs needs no font library."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+cairo-rs = "0.22"

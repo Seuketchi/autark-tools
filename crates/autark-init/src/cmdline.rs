@@ -16,6 +16,8 @@ pub struct Cmdline {
     /// How long to wait for a device to appear, in seconds (`rd.timeout`).
     pub timeout: u64,
     pub debug: bool,
+    /// `autark.splash=1`: the loading screen instead of the text prompt (off unless asked for, until it has been tried on the laptop).
+    pub splash: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -115,6 +117,7 @@ pub fn parse(line: &str) -> Cmdline {
             "ro" => parsed.read_only = true,
             "rw" => parsed.read_only = false,
             "rd.debug" | "autark.debug" => parsed.debug = true,
+            "autark.splash" => parsed.splash = matches!(value, "1" | "yes" | "true" | "on"),
             _ => {}
         }
     }
@@ -212,5 +215,13 @@ mod tests {
     #[test]
     fn a_broken_timeout_falls_back() {
         assert_eq!(parse("rd.timeout=soon").timeout, 30);
+    }
+
+    #[test]
+    fn the_splash_is_off_unless_asked_for() {
+        assert!(!parse("root=/dev/x").splash);
+        assert!(parse("root=/dev/x autark.splash=1").splash);
+        assert!(!parse("autark.splash=0").splash);
+        assert!(!parse("autark.splash=1 autark.splash=0").splash);
     }
 }
