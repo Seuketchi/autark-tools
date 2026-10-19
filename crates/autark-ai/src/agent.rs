@@ -46,7 +46,7 @@ fn describe(tool: &str) -> &'static str {
         "system" => "system: this laptop's disk, battery, memory and uptime now (input empty)",
         "memory" => "memory: what the user told Kith to remember (input empty)",
         "calendar" => "calendar: the user's calendar events (input: the days, such as today, tomorrow or this week)",
-        "mail" => "mail: the newest messages in the user's inbox, who from and the subject (input: empty, or unread)",
+        "mail" => "mail: the user's inbox: the newest messages, who from and the subject; or one message's text if the input asks what it says, such as \"what did Ada say\" (input: the question)",
         "recall" => "recall: search the user's notes and what they said to Kith before (input: the words to find)",
         "read_file" => "read_file: a file in the user's home folder (input: its path, starting ~/)",
         "web" => "web: a web search for news, releases or facts (input: the search words)",

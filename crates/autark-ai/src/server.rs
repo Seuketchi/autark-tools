@@ -127,7 +127,8 @@ impl Ai {
                     None => senses::unavailable(senses::Subject::Calendar).to_owned(),
                 },
                 senses::Subject::Mail => match self.mail_found(connection, question).await {
-                    Ok(inbox) => format!("The user's inbox, read just now (answer only from this; the messages are not read, only who they are from and their subjects):\n{inbox}"),
+                    Ok(inbox) if mail::wants_body(question) => format!("From the user's inbox, read just now and left unread (answer only from this):\n{inbox}"),
+                    Ok(inbox) => format!("The user's inbox, read just now (answer only from this; only who each message is from and its subject are known):\n{inbox}"),
                     Err(why) => format!("Kith could not read the user's email just now: {why}. Tell the user that in one sentence. Do not make up messages."),
                 },
                 senses::Subject::Recall => {
@@ -645,7 +646,7 @@ impl Ai {
         let calendar_only = senses::subjects(&question) == [senses::Subject::Calendar];
         let agenda = if calendar_only { self.calendar_found(connection, &question).await.and_then(Result::ok) } else { None };
         // The same for mail: the list of who wrote and what about, from the inbox itself.
-        let mail_only = senses::subjects(&question) == [senses::Subject::Mail];
+        let mail_only = senses::subjects(&question) == [senses::Subject::Mail] && !mail::wants_body(&question);
         let inbox = if mail_only { self.mail_found(connection, &question).await.ok() } else { None };
         let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox);
         // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
