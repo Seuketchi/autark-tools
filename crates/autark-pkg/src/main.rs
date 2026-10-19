@@ -98,7 +98,7 @@ fn run() -> Result<()> {
         "list" => list(&config),
         "files" => {
             need("a name")?;
-            let db = Db::open(&config)?;
+            let db = Db::open_read(&config)?;
             for name in names {
                 if db.get(name)?.is_none() {
                     return fail(format!("{name} isn't installed"));
@@ -111,7 +111,7 @@ fn run() -> Result<()> {
         }
         "owns" => {
             need("a path")?;
-            let owners = Db::open(&config)?.owners()?;
+            let owners = Db::open_read(&config)?.owners()?;
             for path in names {
                 match owners.get(path.as_str()) {
                     Some(owner) => println!("{path}: {owner}"),
@@ -173,7 +173,7 @@ fn run() -> Result<()> {
 
 fn search(config: &Config, words: &[String]) -> Result<()> {
     let recipes = recipe::load_all(&config.recipes)?;
-    let installed = Db::open(config)?.all()?;
+    let installed = Db::open_read(config)?.all()?;
     let words: Vec<String> = words.iter().map(|word| word.to_lowercase()).collect();
     for recipe in recipes.values() {
         let haystack = format!("{} {}", recipe.name, recipe.description).to_lowercase();
@@ -192,7 +192,7 @@ fn search(config: &Config, words: &[String]) -> Result<()> {
 
 fn info(config: &Config, name: &str) -> Result<()> {
     let recipes = recipe::load_all(&config.recipes)?;
-    let db = Db::open(config)?;
+    let db = Db::open_read(config)?;
     let installed = db.get(name)?;
     let recipe = recipes.get(name);
     if recipe.is_none() && installed.is_none() {
@@ -226,7 +226,7 @@ fn info(config: &Config, name: &str) -> Result<()> {
 }
 
 fn list(config: &Config) -> Result<()> {
-    for (name, info) in Db::open(config)?.all()? {
+    for (name, info) in Db::open_read(config)?.all()? {
         println!("{name} {}{}", info.version, if info.held { " (held)" } else { "" });
     }
     Ok(())
@@ -234,7 +234,7 @@ fn list(config: &Config) -> Result<()> {
 
 fn install(config: &Config, names: &[String], options: &Options) -> Result<()> {
     let recipes = recipe::load_all(&config.recipes)?;
-    let db = Db::open(config)?;
+    let db = Db::open_for(config, options.dry_run)?;
     let installed = db.all()?;
     let present: BTreeSet<String> = installed.keys().cloned().collect();
     let order = deps::install_order(names, &recipes, &present)?;
@@ -277,7 +277,7 @@ fn put(config: &Config, db: &Db, recipe: &Recipe, options: &Options) -> Result<(
 }
 
 fn remove(config: &Config, names: &[String], options: &Options) -> Result<()> {
-    let db = Db::open(config)?;
+    let db = Db::open_for(config, options.dry_run)?;
     let installed = db.all()?;
     let depends: BTreeMap<String, Vec<String>> = installed.iter().map(|(name, info)| (name.clone(), info.depends.clone())).collect();
     for name in names {
@@ -298,7 +298,7 @@ fn remove(config: &Config, names: &[String], options: &Options) -> Result<()> {
 
 fn upgrade(config: &Config, names: &[String], options: &Options) -> Result<()> {
     let recipes = recipe::load_all(&config.recipes)?;
-    let db = Db::open(config)?;
+    let db = Db::open_for(config, options.dry_run)?;
     let installed = db.all()?;
     let candidates: Vec<&Installed> = if names.is_empty() {
         installed.values().collect()
@@ -340,7 +340,7 @@ fn upgrade(config: &Config, names: &[String], options: &Options) -> Result<()> {
 }
 
 fn rollback(config: &Config, name: &str, options: &Options) -> Result<()> {
-    let db = Db::open(config)?;
+    let db = Db::open_for(config, options.dry_run)?;
     let Some(info) = db.get(name)? else {
         return fail(format!("{name} isn't installed"));
     };
