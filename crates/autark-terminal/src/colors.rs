@@ -20,13 +20,14 @@ fn rgba(hex: &str) -> gdk::RGBA {
     gdk::RGBA::parse(hex).unwrap_or(gdk::RGBA::BLACK)
 }
 
-/// Paints `terminal` with the palette: Linen's surface behind Linen's text, the accent on the cursor and selection.
+/// Paints `terminal` as the design's Terminal window: the sidebar's warm linen behind the heading colour, a block cursor in the
+/// text colour, the accent on the selection.
 pub fn apply(terminal: &Terminal, palette: &Palette, dark: bool) {
     let sixteen: Vec<gdk::RGBA> = (if dark { DARK } else { LIGHT }).iter().map(|hex| rgba(hex)).collect();
     let sixteen: Vec<&gdk::RGBA> = sixteen.iter().collect();
-    terminal.set_colors(Some(&rgba(&palette.text)), Some(&rgba(&palette.surface)), &sixteen);
-    terminal.set_color_cursor(Some(&rgba(&palette.accent)));
-    terminal.set_color_cursor_foreground(Some(&rgba(&palette.on_accent)));
+    terminal.set_colors(Some(&rgba(&palette.heading)), Some(&rgba(&palette.sidebar)), &sixteen);
+    terminal.set_color_cursor(Some(&rgba(&palette.text)));
+    terminal.set_color_cursor_foreground(Some(&rgba(&palette.sidebar)));
     terminal.set_color_highlight(Some(&rgba(&palette.accent_soft)));
     terminal.set_color_highlight_foreground(Some(&rgba(&palette.text)));
 }

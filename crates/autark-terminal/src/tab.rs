@@ -7,14 +7,15 @@ use gtk::prelude::*;
 use gtk::{gio, glib, pango};
 use vte::{Terminal, TerminalExt, TerminalExtManual};
 
-const FONT: &str = "Geist Mono 11";
+const FONT: &str = "Geist Mono 13px";
 
 /// A terminal running the user's shell in `folder` (the shell's own default when there's none). `exited` runs when the
 /// shell ends, so its tab can go.
 pub fn new(folder: Option<&Path>, exited: impl Fn(&Terminal) + 'static) -> Terminal {
     let terminal = Terminal::new();
     terminal.set_font(Some(&pango::FontDescription::from_string(FONT)));
-    terminal.set_cell_height_scale(1.15);
+    terminal.set_cell_height_scale(1.7);
+    terminal.set_cursor_shape(vte::CursorShape::Block);
     terminal.set_scrollback_lines(10_000);
     terminal.set_scroll_on_keystroke(true);
     terminal.set_scroll_on_output(false);
@@ -47,6 +48,15 @@ fn spawn_shell(terminal: &Terminal, folder: Option<&Path>) {
         std::env::vars().filter(|(key, _)| !matches!(key.as_str(), "TERM" | "COLORTERM")).map(|(key, value)| format!("{key}={value}")).collect();
     env.push("TERM=xterm-256color".to_owned());
     env.push("COLORTERM=truecolor".to_owned());
+    // The design's title is "user@host: folder". Bash only says that with a prompt hook, so add one to any the user has.
+    let title = r#"printf '\033]0;%s@%s: %s\007' "$USER" "${HOSTNAME%%.*}" "${PWD/#$HOME/$__autark_home}""#;
+    let title = format!("__autark_home='~';{title}");
+    let hook = match std::env::var("PROMPT_COMMAND") {
+        Ok(existing) if !existing.is_empty() => format!("{title};{existing}"),
+        _ => title,
+    };
+    env.retain(|entry| !entry.starts_with("PROMPT_COMMAND="));
+    env.push(format!("PROMPT_COMMAND={hook}"));
     let env: Vec<&str> = env.iter().map(String::as_str).collect();
     let folder = folder.and_then(Path::to_str);
     terminal.spawn_async(
