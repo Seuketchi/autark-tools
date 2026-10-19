@@ -554,7 +554,7 @@ impl Ai {
         // A question that is only a look-up shows what its sources say: a small model misread their labels.
         let lookup_only = senses::subjects(&question) == [senses::Subject::Web];
         let found = if lookup_only { self.search_found(connection, &question).await } else { None };
-        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 2));
+        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1));
         if verbatim.is_none() {
             let seen = if lookup_only { senses::unavailable(senses::Subject::Web).to_owned() } else { self.senses(connection, &question).await };
             if !seen.is_empty() {

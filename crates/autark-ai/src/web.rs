@@ -114,22 +114,59 @@ fn results(reply: &Value, limit: usize, width: usize) -> String {
 
 /// The top `count` results of a `lookup` as the sources wrote them, for an answer that needs no model; `None`
 /// when there is nothing to show. A small model reading a version table mixed up its labels, so a look-up shows the
-/// source's own words and where they are.
+/// source's own words under its site's name. The panel shows plain text in a narrow column, so there are no
+/// addresses to wrap, and the snippet is tidied: no markdown, no bracketed tags, no search-engine ellipses.
 pub fn quoted(found: &str, count: usize) -> Option<String> {
     let items: Vec<String> = found
         .split("\n\n")
         .filter_map(|block| {
             let mut lines = block.lines();
-            let (title, url) = (lines.next()?.trim(), lines.next()?.trim());
-            if !url.starts_with("https://") {
-                return None;
-            }
-            let snippet = lines.map(str::trim).collect::<Vec<_>>().join(" ");
-            Some(if snippet.is_empty() { format!("• {title}\n  {url}") } else { format!("• {title}: {snippet}\n  {url}") })
+            let (_title, url) = (lines.next()?, lines.next()?.trim());
+            let host = url.strip_prefix("https://")?.split('/').next()?.trim_start_matches("www.");
+            let snippet = tidy(&lines.collect::<Vec<_>>().join(" "));
+            (!snippet.is_empty()).then(|| format!("{host}\n{snippet}"))
         })
         .take(count)
         .collect();
-    if items.is_empty() { None } else { Some(format!("Here is what the top sources say, in their own words:\n{}", items.join("\n"))) }
+    if items.is_empty() { None } else { Some(items.join("\n\n")) }
+}
+
+/// A search snippet as a sentence or two: links reduced to their text, `[tags]` and `[12]` dropped, ellipses
+/// as separators, and no more than about 240 characters, ending at a word.
+fn tidy(snippet: &str) -> String {
+    let mut out = String::new();
+    let mut rest = snippet;
+    while let Some(open) = rest.find('[') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find(']') else {
+            rest = "";
+            break;
+        };
+        let inner = &after[..close];
+        rest = &after[close + 1..];
+        // [text](address) keeps its text; [tarball] and the citation [[12]](address) go.
+        if inner.starts_with('[') && rest.starts_with("](") {
+            rest = rest.find(')').map_or("", |end| &rest[end + 1..]);
+        } else if rest.starts_with('(') {
+            if let Some(end) = rest.find(')') {
+                if !inner.is_empty() && !inner.starts_with('[') && !inner.chars().all(|c| c.is_ascii_digit()) {
+                    out.push_str(inner);
+                }
+                rest = &rest[end + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    let text = out.replace('…', " · ").replace("...", " · ").replace(['|', '#', '*'], " ");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = text.trim_matches(|c: char| c == '·' || c.is_whitespace()).to_owned();
+    if text.chars().count() <= 240 {
+        return text;
+    }
+    let kept: String = text.chars().take(240).collect();
+    let at = kept.rfind(' ').unwrap_or(kept.len());
+    format!("{} …", kept[..at].trim_end_matches(|c: char| c == '·' || c == ',' || c.is_whitespace()))
 }
 
 fn short(text: &str, width: usize) -> String {
@@ -219,13 +256,20 @@ mod tests {
     }
 
     #[test]
-    fn a_lookup_is_quoted_with_its_addresses() {
-        let found = "The Linux Kernel Archives\nhttps://www.kernel.org/\nmainline: 7.3 ; stable: 7.2.11\n\nWikipedia\nhttps://en.wikipedia.org/x\nReleases\n\nThird\nhttps://c.org/\nmore";
+    fn a_lookup_is_quoted_by_site_without_addresses_or_noise() {
+        let found = "The Linux Kernel Archives\nhttps://www.kernel.org/\nLatest Release 7.3 mainline: 7.3 2026-10-18 … stable: 7.2.11 2026-10-15 [tarball] [[75]](https://x.org/n) see [the notes](https://x.org/y)\n\nWikipedia\nhttps://en.wikipedia.org/x\nReleases\n\nThird\nhttp://c.org/\nmore";
         let quoted = quoted(found, 2).unwrap();
-        assert!(quoted.contains("• The Linux Kernel Archives: mainline: 7.3 ; stable: 7.2.11\n  https://www.kernel.org/"));
-        assert!(quoted.contains("https://en.wikipedia.org/x") && !quoted.contains("c.org"));
+        assert_eq!(quoted, "kernel.org\nLatest Release 7.3 mainline: 7.3 2026-10-18 · stable: 7.2.11 2026-10-15 see the notes\n\nen.wikipedia.org\nReleases");
+        assert!(!quoted.contains("http") && !quoted.contains('['));
         assert_eq!(super::quoted("No results.", 2), None);
         assert_eq!(super::quoted("", 2), None);
+    }
+
+    #[test]
+    fn a_long_snippet_ends_at_a_word() {
+        let long = "word ".repeat(100);
+        let tidy = tidy(&long);
+        assert!(tidy.chars().count() <= 245 && tidy.ends_with("word …"), "{tidy}");
     }
 
     #[test]
