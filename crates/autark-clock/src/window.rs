@@ -141,13 +141,12 @@ impl Clock {
             });
             tabs.append(&tab);
         }
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize:"));
+        let controls = autark_common::chrome::controls(false);
         let top = gtk::CenterBox::new();
         top.add_css_class("top");
-        top.set_start_widget(Some(&controls));
+        top.set_start_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
         top.set_center_widget(Some(&tabs));
-        top.set_end_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+        top.set_end_widget(Some(&controls));
         let handle = gtk::WindowHandle::builder().child(&top).build();
 
         // Alarm page.

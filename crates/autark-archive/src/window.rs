@@ -57,17 +57,15 @@ impl Window {
         window.add_css_class("archive");
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
         let title = gtk::Label::builder().xalign(0.0).ellipsize(pango::EllipsizeMode::Middle).build();
         title.add_css_class("title");
         let info = gtk::Label::builder().xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build();
         info.add_css_class("info");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         top.add_css_class("top");
-        top.append(&controls);
         top.append(&title);
         top.append(&info);
+        top.append(&autark_common::chrome::controls(true));
         let handle = gtk::WindowHandle::builder().child(&top).build();
 
         let model = gtk::StringList::new(&[]);

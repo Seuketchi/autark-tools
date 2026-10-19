@@ -31,38 +31,6 @@ window.settings .titlebar {
   padding: 14px 10px;
 }
 
-.sidebar windowcontrols {
-  margin: 2px 6px 12px;
-}
-
-.sidebar windowcontrols button {
-  min-width: 12px;
-  min-height: 12px;
-  margin: 0 8px 0 0;
-  padding: 0;
-  border-radius: 50%;
-}
-
-.sidebar windowcontrols button image {
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  -gtk-icon-size: 1px;
-}
-
-.sidebar windowcontrols button.close {
-  background-color: #E5684F;
-}
-
-.sidebar windowcontrols button.minimize {
-  background-color: #E8B04A;
-}
-
-.sidebar windowcontrols button.maximize {
-  background-color: #6FAF7A;
-}
-
 entry.search {
   min-height: 32px;
   margin: 0 4px 10px;

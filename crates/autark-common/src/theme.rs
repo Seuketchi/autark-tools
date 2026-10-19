@@ -429,6 +429,7 @@ mod style {
         if look.theme.reduce_motion {
             text.push_str("* { transition-duration: 0s; animation: none; }\n");
         }
+        text.push_str(crate::chrome::CSS);
         text.push_str(&adjust(css, &look.theme));
         provider.load_from_string(&text);
     }
