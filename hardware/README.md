@@ -117,10 +117,16 @@ as this is an MSI laptop that may not power the GPU down well.
 
 Two separate things, neither done, both blocked on facts that can't be guessed:
 
-- **The embedded controller** (`msi_ec`: fan modes, keyboard backlight, charge limit) needs a table entry for
-  firmware `15K1IMS1.113`. The register map for that firmware isn't in the kernel and I couldn't find a published one.
-  Borrowing another model's map would write the wrong registers into the controller that runs the fans, so it isn't
-  attempted. A newer out-of-tree `msi-ec` may already have it: worth checking, with a signed module build.
+- **The embedded controller** (`msi_ec`: fan modes, shift mode, keyboard backlight, charge limit): **upstream's newer driver has this
+  laptop's firmware** (checked 2026-10-19). BeardOverflow/msi-ec lists `15K1IMS1.113` explicitly, under the Cyborg 15 (A13VF), with its own
+  register map (charge limit `0xd7`, fan modes `0xd4`, shift mode `0xd2`, keyboard backlight `0x2c` and `0xd3`). That is an entry for this firmware
+  string, not another model's map borrowed in; this laptop is the A13UCK, so the one thing not known is whether the A13UCK's controller matches the
+  A13VF's, which only loading it and reading the values can show. The kernel's own copy (7.1.8) has no `15K1` entry.
+  `autark/scripts/msi-ec-module.sh` builds upstream at a pinned commit (the three files are checked against hashes), compiles it against the
+  running kernel (works as any user, 2.5 s), signs it with the kernel's module key and puts it in `/usr/lib/modules/<kver>/updates/`, where
+  modprobe prefers it to the kernel's own. `build` and `check` were run here; `install` and `load` need root and haven't been. Loading only reads
+  the controller (one bit check at init); nothing is written until someone sets a fan mode, charge limit or backlight, and `remove` puts the
+  kernel's own driver back. A kernel build wipes the module with the rest of `/usr/lib/modules/<kver>`, so run it again after one.
 - **The RGB controller** (`1462:1601`, `MysticLight MS-1565`) has no published protocol that I could find; one OpenRGB
   report describes an MSI Mystic Light device becoming unresponsive after an effect was sent. Nothing is written to it.
   The Hardware window says plainly that it's a separate controller needing a driver profile.
