@@ -8,7 +8,10 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use vte::{Terminal, TerminalExt};
 
-use crate::{check, tab};
+use autark_common::theme::{self, Look};
+
+use crate::config::{self, Config, Scheme};
+use crate::{check, colors, tab};
 
 /// PCRE2_CASELESS | PCRE2_UTF | PCRE2_MULTILINE, which VTE's search wants spelled out.
 const SEARCH_FLAGS: u32 = 0x0000_0008 | 0x0008_0000 | 0x0000_0400;
@@ -54,6 +57,46 @@ impl Window {
 
         let window = gtk::ApplicationWindow::builder().application(app).default_width(900).default_height(560).title("Terminal").child(&column).build();
         window.add_css_class("terminal-window");
+
+        // When the terminal's own scheme (terminal.toml) isn't the desktop's, the window's chrome follows the terminal, not the desktop.
+        let chrome = gtk::CssProvider::new();
+        if let Some(display) = gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(&display, &chrome, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 10);
+        }
+        let restyle = {
+            let (window, chrome) = (window.downgrade(), chrome.clone());
+            std::rc::Rc::new(move |look: &Look, config: &Config| -> bool {
+                let Some(window) = window.upgrade() else { return false };
+                if config.scheme == Scheme::Follow {
+                    window.remove_css_class("scheme-override");
+                    chrome.load_from_string("");
+                } else {
+                    window.add_css_class("scheme-override");
+                    chrome.load_from_string(&colors::chrome_css(&colors::scheme(look, config).0));
+                }
+                true
+            })
+        };
+        restyle(&theme::look(), &config::current());
+        theme::on_change({
+            let restyle = restyle.clone();
+            move |look| {
+                restyle(look, &config::current());
+            }
+        });
+        config::on_change({
+            let restyle = restyle.clone();
+            move |config| restyle(&theme::look(), config)
+        });
+        window.connect_close_request({
+            let chrome = chrome.clone();
+            move |_| {
+                if let Some(display) = gdk::Display::default() {
+                    gtk::style_context_remove_provider_for_display(&display, &chrome);
+                }
+                glib::Propagation::Proceed
+            }
+        });
 
         // The title bar: the title centred, the window buttons at the right.
         let title = gtk::Label::builder().ellipsize(gtk::pango::EllipsizeMode::End).build();
@@ -217,13 +260,16 @@ impl Window {
         }
     }
 
-    /// Ctrl+Shift+V: what's on the clipboard goes to the shell, unless it would run by itself and Kith rates it risky.
-    fn paste(self: &Rc<Self>) {
+    /// Ctrl+Shift+V (the clipboard) and Shift+Insert (the selection): what's there goes to the shell, unless it would run by
+    /// itself and Kith rates it risky. Middle-click paste isn't covered: VTE hands that click to a program that asked for the
+    /// mouse, and there is no way to tell whether one did.
+    fn paste(self: &Rc<Self>, selection: bool) {
         let Some(terminal) = self.current() else {
             return;
         };
         let this = self.clone();
-        terminal.clipboard().read_text_async(None::<&gio::Cancellable>, move |result| {
+        let source = if selection { terminal.primary_clipboard() } else { terminal.clipboard() };
+        source.read_text_async(None::<&gio::Cancellable>, move |result| {
             let Ok(Some(text)) = result else { return };
             let text = text.to_string();
             if !check::runs_itself(&text) {
@@ -316,7 +362,14 @@ impl Window {
             "<Control><Shift>v",
             Box::new({
                 let this = this.clone();
-                move || this.paste()
+                move || this.paste(false)
+            }),
+        );
+        add(
+            "<Shift>Insert",
+            Box::new({
+                let this = this.clone();
+                move || this.paste(true)
             }),
         );
         add(

@@ -4,7 +4,7 @@
 //! scheme = "follow"      # "follow" the desktop's light or dark, or force "light" or "dark" for the terminal's body
 //! font = "Geist Mono"
 //! font_size = 13         # pixels
-//! line_height = 1.7      # 1.0 to 2.0
+//! line_height = 1.0      # 1.0 to 2.0; above 1.0 stretches block and box-drawing characters (VTE draws them to fill the cell)
 //! scrollback = 10000     # lines kept
 //! cursor = "block"       # block, bar or underline
 //! cursor_blink = false
@@ -59,7 +59,7 @@ impl Default for Config {
             scheme: Scheme::Follow,
             font: "Geist Mono".to_owned(),
             font_size: 13.0,
-            line_height: 1.7,
+            line_height: 1.0,
             scrollback: 10_000,
             cursor: Cursor::Block,
             cursor_blink: false,

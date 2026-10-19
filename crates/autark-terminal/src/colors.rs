@@ -26,16 +26,48 @@ fn rgba(hex: &str) -> gdk::RGBA {
     parse(hex).unwrap_or(gdk::RGBA::BLACK)
 }
 
-/// Paints `terminal` as the design's Terminal window: the sidebar's warm linen behind the heading colour, a block cursor in the
-/// text colour, the accent on the selection. `config` can force a light or dark body and replace any of the colours.
-pub fn apply(terminal: &Terminal, look: &Look, config: &Config) {
-    let (palette, dark) = match config.scheme {
+/// The palette the terminal uses, and whether it's dark: the desktop's, or the light or dark one `terminal.toml` asks for.
+pub fn scheme(look: &Look, config: &Config) -> (Palette, bool) {
+    match config.scheme {
         Scheme::Follow => (look.palette.clone(), look.dark),
         Scheme::Light | Scheme::Dark => {
             let dark = config.scheme == Scheme::Dark;
             (Palette::linen(dark, &look.theme.accent, look.theme.contrast), dark)
         }
-    };
+    }
+}
+
+/// The window's title bar, buttons, tabs and bars in `palette`, for a window marked `scheme-override`. The desktop's stylesheet gives the
+/// window the desktop's colours; when the terminal's own scheme is the other one, these rules (as literal colours, since the
+/// named ones are the desktop's) win over them.
+pub fn chrome_css(p: &Palette) -> String {
+    let w = "window.terminal-window.scheme-override";
+    format!(
+        "{w} {{ background-color: {sidebar}; color: {heading}; }}
+{w} .terminal-titlebar {{ border-bottom-color: alpha({text}, 0.06); }}
+{w} .terminal-titlebar .window-title {{ color: {heading}; }}
+{w} windowcontrols button {{ color: {text2}; }}
+{w} windowcontrols button:hover {{ background-color: alpha({text}, 0.08); color: {text}; }}
+{w} windowcontrols button.close:hover {{ background-color: {danger}; color: #FFFFFF; }}
+{w} .tabs > header {{ background-color: {sidebar}; border-bottom-color: {border}; }}
+{w} .tabs > header.top > tabs > tab {{ color: {text2}; }}
+{w} .tabs > header.top > tabs > tab:hover {{ color: {text}; }}
+{w} .tabs > header.top > tabs > tab:checked {{ background-color: {surface}; color: {text}; }}
+{w} .tabs > header button.flat {{ color: {text3}; }}
+{w} .tabs > header button.flat:hover {{ background-color: {accent_soft}; color: {text}; }}
+{w} .paste-warning {{ background-color: {raised}; border-bottom-color: {border}; color: {text}; }}
+{w} .paste-warning label {{ color: {danger}; }}
+{w} searchbar {{ background-color: {sidebar}; border-bottom-color: {border}; }}
+",
+        sidebar = p.sidebar, heading = p.heading, text = p.text, text2 = p.text2, text3 = p.text3, danger = p.danger, border = p.border,
+        surface = p.surface, accent_soft = p.accent_soft, raised = p.raised,
+    )
+}
+
+/// Paints `terminal` as the design's Terminal window: the sidebar's warm linen behind the heading colour, a block cursor in the
+/// text colour, the accent on the selection. `config` can force a light or dark body and replace any of the colours.
+pub fn apply(terminal: &Terminal, look: &Look, config: &Config) {
+    let (palette, dark) = scheme(look, config);
     let mut sixteen: Vec<gdk::RGBA> = (if dark { DARK } else { LIGHT }).iter().map(|hex| rgba(hex)).collect();
     if let Some(custom) = config.palette.as_ref().filter(|custom| custom.len() == 16) {
         let parsed: Vec<gdk::RGBA> = custom.iter().filter_map(|hex| parse(hex)).collect();
