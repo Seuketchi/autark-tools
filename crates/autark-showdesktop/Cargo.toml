@@ -1,0 +1,10 @@
+[package]
+name = "autark-showdesktop"
+description = "Show desktop: hides every window, and a second press brings back just the ones it hid."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["toplevels"] }
