@@ -35,7 +35,7 @@ fn ring(label: &str, kind: &str) {
     let body = if kind == "timer" { "Time’s up" } else { "Alarm" };
     if let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) {
         let hints = HashMap::<&str, glib::Variant>::from([("urgency", 2u8.to_variant())]);
-        let args = ("Clock", 0u32, "", label, body, Vec::<&str>::new(), hints, -1i32).to_variant();
+        let args = ("Clock", 0u32, "autark-clock", label, body, Vec::<&str>::new(), hints, -1i32).to_variant();
         let sent = bus.call_sync(
             Some("org.freedesktop.Notifications"),
             "/org/freedesktop/Notifications",

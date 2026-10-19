@@ -241,7 +241,7 @@ pub async fn notify(connection: &zbus::Connection, text: &str) -> zbus::Result<u
     let mut hints = HashMap::new();
     hints.insert("x-autark-quiet", zbus::Variant::from(true));
     hints.insert("desktop-entry", zbus::Variant::from("autark-ai"));
-    crate::runner::NotificationsProxy::new(connection).await?.notify("Kith", 0, "", "Suggestion", text, &[], hints, -1).await
+    crate::runner::NotificationsProxy::new(connection).await?.notify("Kith", 0, "autark-ai", "Suggestion", text, &[], hints, -1).await
 }
 
 pub async fn close(connection: &zbus::Connection, id: u32) {

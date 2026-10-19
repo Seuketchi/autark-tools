@@ -110,15 +110,19 @@ pub fn new(notification: &Notification, handlers: &Rc<Handlers>) -> gtk::Box {
     card
 }
 
-/// The app's icon from a path or the icon theme, else a tile with the app's initial.
+/// The app's icon from a path or the icon theme; failing that, one named for the app (`Clock` finds `clock` or
+/// `autark-clock`); else a tile with the app's initial.
 fn icon(notification: &Notification) -> gtk::Widget {
     let name = notification.icon.strip_prefix("file://").unwrap_or(&notification.icon);
+    let theme = gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap());
+    let app = notification.app_name.trim().to_lowercase().replace(' ', "-");
     let image = if name.starts_with('/') {
         Some(gtk::Image::from_file(name))
-    } else if !name.is_empty() && gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap()).has_icon(name) {
-        Some(gtk::Image::from_icon_name(name))
     } else {
-        None
+        [name.to_owned(), app.clone(), format!("autark-{app}")]
+            .into_iter()
+            .find(|name| !name.is_empty() && theme.has_icon(name))
+            .map(|name| gtk::Image::from_icon_name(&name))
     };
     if let Some(image) = image {
         image.set_pixel_size(36);

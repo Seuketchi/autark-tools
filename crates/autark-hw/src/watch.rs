@@ -43,7 +43,7 @@ fn what(finding: &Finding) -> &'static str {
 fn notify(summary: &str, body: &str) {
     let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else { return };
     let hints = HashMap::<&str, glib::Variant>::from([("category", "device".to_variant())]);
-    let args = ("Hardware", 0u32, "", summary, body, Vec::<&str>::new(), hints, -1i32).to_variant();
+    let args = ("Hardware", 0u32, "autark-hw", summary, body, Vec::<&str>::new(), hints, -1i32).to_variant();
     let _ = bus.call_sync(
         Some("org.freedesktop.Notifications"),
         "/org/freedesktop/Notifications",

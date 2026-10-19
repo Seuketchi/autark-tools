@@ -208,7 +208,7 @@ async fn warn(power: &Power, supply: Supply, warned: bool) -> bool {
             let connection = zbus::Connection::session().await?;
             let notifications = NotificationsProxy::new(&connection).await?;
             let hints = std::collections::HashMap::from([("urgency", zbus::Variant::U8(2))]);
-            notifications.notify("Power", 0, "battery-caution", "Battery low", &format!("{percentage:.0}% left. Plug in soon."), &[], hints, -1).await
+            notifications.notify("Power", 0, "battery-caution-symbolic", "Battery low", &format!("{percentage:.0}% left. Plug in soon."), &[], hints, -1).await
         };
         if let Err(error) = sent.await {
             eprintln!("power: low battery warning: {error}");
