@@ -122,6 +122,9 @@ pub fn write_gtk_settings(theme: &Theme) -> std::io::Result<()> {
             std::fs::write(&path, updated)?;
         }
     }
+    // libadwaita apps (the browser) learn the system is dark from GNOME's colour-scheme setting, which they only read with the portal
+    // off (ADW_DISABLE_PORTAL=1, set for the session and in the browser's launcher). Without it their pages stay light.
+    let _ = std::process::Command::new("gsettings").args(["set", "org.gnome.desktop.interface", "color-scheme", if theme.dark() { "prefer-dark" } else { "default" }]).output();
     write_gtk_css(&config.join("gtk-4.0"), &theme.palette())
 }
 
