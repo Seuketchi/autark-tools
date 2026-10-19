@@ -54,8 +54,17 @@ async fn program_of(connection: &zbus::Connection, header: &Header<'_>) -> Resul
     Ok(exe.file_name().map(|name| name.to_string_lossy().trim_end_matches(" (deleted)").to_owned()).unwrap_or_default())
 }
 
+/// Opens the sign-in page in the browser: `xdg-open` where it's installed, else `gio open`, else the address is
+/// printed for you to open yourself.
 fn open_in_browser(url: &str) {
-    if std::process::Command::new("xdg-open").arg(url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().is_err() {
+    let opened = ["xdg-open", "gio"].iter().any(|program| {
+        let mut command = std::process::Command::new(program);
+        if *program == "gio" {
+            command.arg("open");
+        }
+        command.arg(url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().is_ok()
+    });
+    if !opened {
         eprintln!("accounts: open this page to sign in: {url}");
     }
 }
