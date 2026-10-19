@@ -58,6 +58,17 @@ pub struct Profile {
     pub writable: bool,
 }
 
+/// One of the laptop controller's own modes (fan mode, performance mode, cooler boost), as the msi-ec driver offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mode {
+    pub label: &'static str,
+    pub note: &'static str,
+    pub current: String,
+    pub choices: Vec<String>,
+    pub path: PathBuf,
+    pub writable: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Controls {
     pub vendor: String,
@@ -69,6 +80,7 @@ pub struct Controls {
     pub temperatures: Vec<Reading>,
     pub radios: Vec<Radio>,
     pub profile: Option<Profile>,
+    pub modes: Vec<Mode>,
 }
 
 fn text(path: &Path) -> Option<String> {
@@ -195,6 +207,28 @@ pub fn detect(sys: &Path) -> Controls {
         let choices = text(&sys.join("firmware/acpi/platform_profile_choices")).map(|text| text.split_whitespace().map(str::to_owned).collect()).unwrap_or_default();
         controls.profile = Some(Profile { current, choices, writable: writable(&profile_path), path: profile_path });
     }
+
+    // The embedded controller's modes, where its driver (msi-ec) is loaded. The fan mode lists only automatic and quiet: the third,
+    // "advanced", runs the fans from a curve nobody has set, so it isn't offered (the helper refuses it too).
+    let ec = sys.join("devices/platform/msi-ec");
+    let offered = |file: &str, only: Option<&[&str]>| -> Vec<String> {
+        text(&ec.join(file)).map(|text| text.split_whitespace().filter(|mode| only.is_none_or(|only| only.contains(mode))).map(str::to_owned).collect()).unwrap_or_default()
+    };
+    for (attribute, available, label, note, only) in [
+        ("fan_mode", Some("available_fan_modes"), "Fan mode", "Automatic runs the fans as the controller sees fit; silent keeps them quieter and lets the laptop get hotter.", Some(&["auto", "silent"][..])),
+        ("shift_mode", Some("available_shift_modes"), "Performance mode", "Turbo for the most speed, eco for the least heat and noise, comfort between.", None),
+        ("cooler_boost", None, "Cooler boost", "Runs the fans at full speed until you turn it off.", None),
+    ] {
+        let path = ec.join(attribute);
+        let Some(current) = text(&path) else { continue };
+        let choices = match available {
+            Some(file) => offered(file, only),
+            None => vec!["off".to_owned(), "on".to_owned()],
+        };
+        if !choices.is_empty() {
+            controls.modes.push(Mode { label, note, current, choices, writable: writable(&path), path });
+        }
+    }
     controls
 }
 
@@ -228,7 +262,9 @@ mod tests {
     }
 
     fn fake_sys() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("autark-hw-sys-{}", std::process::id()));
+        // One folder per call: tests run side by side, and one of them adds files another says aren't there.
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!("autark-hw-sys-{}-{}", std::process::id(), CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let _ = fs::remove_dir_all(&root);
         put(&root, "class/dmi/id/sys_vendor", "Micro-Star International Co., Ltd.\n");
         put(&root, "class/dmi/id/product_name", "Cyborg 15 A13UCK\n");
@@ -280,6 +316,7 @@ mod tests {
         assert_eq!(controls.temperatures, [Reading { label: "Processor".into(), value: "62 °C".into() }]);
         assert_eq!(controls.radios.len(), 1);
         assert!(controls.radios[0].soft_blocked && !controls.radios[0].hard_blocked && controls.radios[0].index == 1);
+        assert!(controls.modes.is_empty(), "no controller driver, no controller modes");
         let profile = controls.profile.as_ref().unwrap();
         assert_eq!((profile.current.as_str(), profile.choices.len()), ("balanced", 3));
         fs::remove_dir_all(&sys).unwrap();
@@ -307,5 +344,21 @@ mod tests {
     fn only_keyboard_lights_are_lights() {
         assert!(is_light("platform::kbd_backlight") && is_light("rgb:kbd_backlight") && is_light("asus::kbd_backlight"));
         assert!(!is_light("input3::capslock") && !is_light("phy0-led") && !is_light("input3::numlock"));
+    }
+
+    #[test]
+    fn the_controllers_modes_are_read_without_the_unsafe_fan_mode() {
+        let root = fake_sys();
+        put(&root, "devices/platform/msi-ec/fan_mode", "auto\n");
+        put(&root, "devices/platform/msi-ec/available_fan_modes", "auto silent advanced\n");
+        put(&root, "devices/platform/msi-ec/shift_mode", "comfort\n");
+        put(&root, "devices/platform/msi-ec/available_shift_modes", "turbo eco comfort\n");
+        put(&root, "devices/platform/msi-ec/cooler_boost", "off\n");
+        let controls = detect(&root);
+        let by = |label: &str| controls.modes.iter().find(|mode| mode.label == label).unwrap();
+        assert_eq!((by("Fan mode").current.as_str(), by("Fan mode").choices.as_slice()), ("auto", &["auto".to_owned(), "silent".to_owned()][..]));
+        assert_eq!(by("Performance mode").choices, ["turbo", "eco", "comfort"]);
+        assert_eq!((by("Cooler boost").current.as_str(), by("Cooler boost").choices.as_slice()), ("off", &["off".to_owned(), "on".to_owned()][..]));
+        fs::remove_dir_all(&root).unwrap();
     }
 }

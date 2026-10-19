@@ -346,6 +346,28 @@ impl Hardware {
             }
             None => self.laptop.append(&line("Power profile", "The kernel doesn’t offer one for this laptop.", None)),
         }
+        for mode in &controls.modes {
+            let choices = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let mut group: Option<gtk::ToggleButton> = None;
+            for choice in &mode.choices {
+                let button = gtk::ToggleButton::with_label(choice);
+                button.add_css_class("choice");
+                button.set_active(*choice == mode.current);
+                button.set_group(group.as_ref());
+                group.get_or_insert(button.clone());
+                let (me, path, value, label) = (Rc::downgrade(self), mode.path.clone(), choice.clone(), mode.label);
+                button.connect_toggled(move |button| {
+                    if !button.is_active() {
+                        return;
+                    }
+                    if let (Some(me), Err(error)) = (me.upgrade(), apply_setting(&path, &value)) {
+                        me.say(&format!("Couldn’t change {}: {error}", label.to_lowercase()));
+                    }
+                });
+                choices.append(&button);
+            }
+            self.laptop.append(&line(mode.label, mode.note, Some(choices.upcast_ref())));
+        }
         for battery in &controls.batteries {
             match &battery.limit {
                 Some(limit) => {
