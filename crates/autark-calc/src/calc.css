@@ -1,0 +1,98 @@
+window.calc {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 15px;
+}
+
+window.calc .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.handle {
+  padding: 14px 16px 0;
+}
+
+.display {
+  padding: 10px 20px 14px;
+}
+
+.history {
+  min-height: 18px;
+  color: @text3;
+  font-family: "Geist Mono", monospace;
+  font-size: 13px;
+}
+
+.display entry.sum {
+  min-height: 0;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: @text;
+  font-size: 34px;
+  font-weight: 500;
+}
+
+.display entry.sum text placeholder {
+  color: @text3;
+}
+
+.answer {
+  min-height: 26px;
+  color: @text2;
+  font-size: 20px;
+}
+
+.pad {
+  padding: 4px 16px 18px;
+}
+
+button.key {
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 14px;
+  background-image: none;
+  box-shadow: none;
+  outline: none;
+  font-size: 20px;
+  color: @text;
+}
+
+button.key.digit {
+  background-color: @raised;
+}
+
+button.key.function {
+  background-color: alpha(@text, 0.1);
+  color: @text2;
+}
+
+button.key.operator {
+  background-color: @accent_soft;
+  color: @accent_text;
+  font-size: 24px;
+}
+
+button.key.equals {
+  background-color: @accent;
+  color: @surface;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+button.key:hover {
+  filter: brightness(0.96);
+}
+
+button.key:active {
+  filter: brightness(0.9);
+}

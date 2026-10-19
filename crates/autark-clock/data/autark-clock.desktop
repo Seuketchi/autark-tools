@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Clock
+GenericName=Alarm, Timer and Stopwatch
+Comment=Alarms, a timer and a stopwatch
+Exec=autark-clock
+Icon=preferences-system-time
+Terminal=false
+Categories=Utility;Clock;
+Keywords=clock;alarm;timer;stopwatch;

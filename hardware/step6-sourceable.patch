@@ -1,0 +1,12 @@
+--- a/step6-boot-inside.sh
++++ b/step6-boot-inside.sh
+@@ -187,6 +187,9 @@
+   ukify inspect /boot/efi/EFI/Linux/autark.efi | grep -E '^\.(linux|initrd|cmdline|osrel|uname)|size'
+ }
+ 
++# step-hardware-generic-inside.sh sources this file for the functions above (step_initramfs, step_uki) and not for its steps.
++[ "${AUTARK_SOURCE_ONLY:-}" = 1 ] && return 0
++
+ run_pkg cpio      cpio-2.15.tar.bz2  pkg_cpio
+ run_pkg firmware  -                  step_firmware
+ run_pkg microcode -                  step_microcode

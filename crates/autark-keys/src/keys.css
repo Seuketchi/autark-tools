@@ -1,0 +1,70 @@
+window.keys {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+window.keys .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.top {
+  padding: 14px 16px;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+.top .title {
+  font-weight: 500;
+}
+
+.list {
+  padding: 8px 24px 20px;
+}
+
+.group {
+  padding-top: 8px;
+}
+
+.heading {
+  padding: 14px 0 6px;
+  color: @text3;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.row {
+  min-height: 34px;
+  border-bottom: 1px solid alpha(@text, 0.05);
+}
+
+.cap {
+  padding: 2px 8px;
+  border: 1px solid alpha(@text, 0.16);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background-color: @raised;
+  color: @text2;
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+}
+
+.or {
+  color: @text3;
+  font-size: 12px;
+}
+
+.problem {
+  color: @danger;
+}
+
+.foot {
+  padding: 12px 24px;
+  border-top: 1px solid alpha(@text, 0.08);
+  color: @text3;
+}

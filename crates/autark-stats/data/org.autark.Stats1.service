@@ -1,0 +1,4 @@
+# D-Bus activation (session bus): /usr/share/dbus-1/services/
+[D-BUS Service]
+Name=org.autark.Stats1
+Exec=/usr/bin/autark-stats

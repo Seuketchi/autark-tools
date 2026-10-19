@@ -1,0 +1,12 @@
+[source.crates-io]
+replace-with = "vendored"
+
+[source.vendored]
+directory = "/sources/crates-8b"
+
+# Crates the shared vendored set (/sources/crates-8b, root-owned) doesn't have yet. `autark-terminal` needs vte4, and
+# without these cargo can't resolve the workspace at all. Delete this block and vendor-extra/ once they're in /sources.
+[patch.crates-io]
+io-lifetimes = { path = "vendor-extra/io-lifetimes-2.0.4" }
+vte4 = { path = "vendor-extra/vte4-0.10.0" }
+vte4-sys = { path = "vendor-extra/vte4-sys-0.10.0" }

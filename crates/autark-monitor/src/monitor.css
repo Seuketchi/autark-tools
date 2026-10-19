@@ -37,7 +37,7 @@ windowcontrols button image {
   min-height: 0;
   margin: 0;
   padding: 0;
-  -gtk-icon-size: 0;
+  -gtk-icon-size: 1px;
 }
 
 windowcontrols button.close {

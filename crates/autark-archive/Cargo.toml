@@ -1,0 +1,11 @@
+[package]
+name = "autark-archive"
+description = "Archives: look inside a zip or tar, take things out, and pack files up; extraction never overwrites anything."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["style"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }

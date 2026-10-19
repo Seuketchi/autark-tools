@@ -1,0 +1,6 @@
+# D-Bus activation: /usr/share/dbus-1/system-services/
+[D-BUS Service]
+Name=org.autark.Hardware1
+Exec=/bin/false
+User=root
+SystemdService=autark-hw-helper.service

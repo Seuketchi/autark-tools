@@ -1,0 +1,11 @@
+[package]
+name = "autark-calc"
+description = "Calculator: type a sum or press keys; the answer shows as you go."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["style"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }

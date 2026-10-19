@@ -23,9 +23,10 @@ impl Ollama {
         Self { agent, url: config.url.trim_end_matches('/').to_owned(), model: config.model.clone() }
     }
 
-    /// One answer that matches `schema`, at temperature 0 so the same input decides the same way.
+    /// One answer that matches `schema`, at temperature 0 so the same input decides the same way. At most 400 tokens: a
+    /// small model can run on inside a JSON string, and the caller would wait out the whole timeout.
     pub fn json(&self, system: &str, user: &str, schema: &Value) -> Result<Value, String> {
-        let body = self.request(system, user, json!({ "stream": false, "format": schema, "options": { "temperature": 0 } }))?;
+        let body = self.request(system, user, json!({ "stream": false, "format": schema, "options": { "temperature": 0, "num_predict": 400 } }))?;
         let reply: Value = serde_json::from_reader(body).map_err(|err| format!("Ollama's reply: {err}"))?;
         let content = reply["message"]["content"].as_str().ok_or("Ollama's reply has no message")?;
         serde_json::from_str(content).map_err(|err| format!("the model's answer isn't the asked-for JSON: {err}"))
@@ -74,6 +75,8 @@ impl Ollama {
         let mut body = json!({
             "model": self.model,
             "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }],
+            // Loading the model from disk takes tens of seconds; keep it in memory between the calls of a work session.
+            "keep_alive": "30m",
         });
         if let (Some(body), Value::Object(extra)) = (body.as_object_mut(), extra) {
             body.extend(extra);

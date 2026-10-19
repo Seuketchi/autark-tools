@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
 trait Ai {
-    fn rank(&self, query: &str, items: &[String]) -> zbus::Result<Vec<f64>>;
+    fn rank_for(&self, source: &str, query: &str, items: &[String]) -> zbus::Result<Vec<f64>>;
 }
 
 /// Stops a walk through a huge tree.
@@ -90,7 +90,7 @@ pub async fn rank(query: &str, root: &Path, hits: &[Hit]) -> Option<Vec<Hit>> {
     let candidates: Vec<&Hit> = hits.iter().take(RANKED).collect();
     let items: Vec<String> = candidates.iter().map(|hit| hit.path.strip_prefix(root).unwrap_or(&hit.path).display().to_string()).collect();
     let connection = zbus::Connection::session().await.ok()?;
-    let scores = AiProxy::new(&connection).await.ok()?.rank(query, &items).await.ok()?;
+    let scores = AiProxy::new(&connection).await.ok()?.rank_for("files", query, &items).await.ok()?;
     if scores.len() != candidates.len() {
         return None;
     }

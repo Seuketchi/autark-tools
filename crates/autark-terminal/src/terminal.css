@@ -1,0 +1,80 @@
+window.terminal-window {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+window.terminal-window .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.tabs > header {
+  background-color: @sidebar;
+  border-bottom: 1px solid @border;
+  padding: 4px 8px 0;
+}
+
+.tabs > header.top > tabs > tab {
+  background: none;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  box-shadow: none;
+  padding: 6px 10px;
+  margin: 0 2px;
+  color: @text2;
+}
+
+.tabs > header.top > tabs > tab:hover {
+  color: @text;
+}
+
+.tabs > header.top > tabs > tab:checked {
+  background-color: @surface;
+  color: @text;
+}
+
+.tabs > header button.flat {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  color: @text3;
+}
+
+.tabs > header button.flat:hover {
+  background-color: @accent_soft;
+  color: @text;
+}
+
+.tab-close {
+  opacity: 0.55;
+}
+
+.tab-close:hover {
+  opacity: 1;
+}
+
+vte-terminal.autark-terminal {
+  padding: 8px 10px;
+}
+
+.paste-warning {
+  background-color: @raised;
+  border-bottom: 1px solid @border;
+  padding: 8px 12px;
+  color: @text;
+}
+
+.paste-warning label {
+  color: @danger;
+}
+
+searchbar {
+  background-color: @sidebar;
+  border-bottom: 1px solid @border;
+}

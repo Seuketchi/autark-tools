@@ -17,3 +17,6 @@ toml = "1.1.8"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+
+[build-dependencies]
+cc = "1.2.56"

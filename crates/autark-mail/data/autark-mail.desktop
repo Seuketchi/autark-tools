@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Mail
+GenericName=Email Client
+Comment=Read and send email from all your accounts
+Exec=autark-mail
+Icon=mail-message
+Terminal=false
+Categories=Network;Email;
+Keywords=mail;email;inbox;message;

@@ -72,6 +72,32 @@ pub const SYSTEM_PROMPT: &str = "You judge how risky it is to run one shell comm
 risk is the probability, from 0 to 1, that it destroys data, can't be undone, weakens security or affects other machines. \
 Reading, listing, building and ordinary edits are near 0. reason is one short phrase saying what could go wrong, or empty.";
 
+/// The same judgement as a Jev question: the command as the state, and a noul for how likely it does harm.
+pub fn jev_question(command: &str) -> (String, Value) {
+    let state = format!("A shell command the user is about to run on their own laptop:\n{command}");
+    let questions = json!({
+        "risk": {
+            "type": "noul",
+            "instructions": "Running this command destroys data, can't be undone, weakens security or affects other machines. \
+                             Reading, listing, building and ordinary edits do not.",
+        },
+    });
+    (state, questions)
+}
+
+/// Whether a notification needs the user's attention now, even while they are focused, as a Jev noul.
+pub fn jev_urgent(app: &str, summary: &str, body: &str) -> (String, Value) {
+    let state = format!("A notification on the user's laptop, from {app}:\n{summary}\n{body}");
+    let questions = json!({
+        "urgent": {
+            "type": "noul",
+            "instructions": "The user would want to be interrupted for this now, even while concentrating: a call, a message from a person \
+                             waiting on them, an alarm, a reminder about to start, or a security or battery warning. Updates, promotions, news and routine status are not.",
+        },
+    });
+    (state, questions)
+}
+
 pub fn schema() -> Value {
     json!({
         "type": "object",

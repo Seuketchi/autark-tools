@@ -536,3 +536,49 @@ button.assistant-send {
   box-shadow: none;
   font-size: 12px;
 }
+
+/* The Apps view: every installed app, in place of the results */
+
+.browse {
+  padding: 6px;
+  border-radius: 8px;
+  color: @text2;
+}
+
+.browse:hover {
+  background-color: alpha(@text, 0.08);
+}
+
+.dialog.browsing .browse {
+  background-color: alpha(@text, 0.08);
+  color: @text;
+}
+
+.apps {
+  border-top: 1px solid alpha(@text, 0.08);
+}
+
+.app-grid {
+  padding: 12px;
+  background: none;
+}
+
+.app-grid flowboxchild {
+  padding: 0;
+  border-radius: 10px;
+}
+
+.app-grid flowboxchild:hover {
+  background-color: alpha(@text, 0.06);
+}
+
+.app-grid flowboxchild:selected,
+.app-grid flowboxchild:focus {
+  background-color: @accent;
+  color: @surface;
+}
+
+.app-tile {
+  min-width: 112px;
+  padding: 14px 6px 10px;
+}

@@ -1,0 +1,13 @@
+[package]
+name = "autark-hw-helper"
+description = "Root helper for autark-hw: loads a driver for hardware that's here, and changes a few safe settings, after polkit agrees."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-io = "2.6.0"
+autark-hw = { version = "0.0.0", path = "../autark-hw" }
+blocking = "1.7.0"
+zbus = "6.0.0"

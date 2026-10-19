@@ -169,3 +169,12 @@ popover.panel switch:checked {
   border-radius: 3px;
   background-color: @accent;
 }
+
+/* Shown while the screen is being recorded */
+
+.recording,
+.recording label,
+.recording .recording-dot {
+  color: @danger;
+  font-weight: 500;
+}

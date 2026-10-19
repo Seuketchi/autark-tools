@@ -2,11 +2,14 @@
 //! with Ask Kith, which turns the launcher into Kith's view (see `kith`).
 //!
 //! Runs once and stays resident: each later `autark-launcher` opens or closes it, so the
-//! compositor binds Super+Space to that. `--daemon` starts it hidden, for login.
+//! compositor binds Super+Space to that. `--daemon` starts it hidden, for login. `--clipboard` opens it on the clipboard history (Super+V), `--apps` opens it on the Apps view
+//! (every installed app), or closes it if that is showing.
 
 mod actions;
 mod ai;
+mod apps;
 mod assistant;
+mod clipboard;
 mod face;
 mod kith;
 mod search;
@@ -23,6 +26,8 @@ use search::{Hit, Icon, Index, Target};
 fn main() -> glib::ExitCode {
     let daemon = std::env::args().any(|arg| arg == "--daemon");
     let assistant = std::env::args().any(|arg| arg == "--assistant");
+    let apps = std::env::args().any(|arg| arg == "--apps");
+    let clipboard = std::env::args().any(|arg| arg == "--clipboard");
     let app = gtk::Application::builder()
         .application_id("org.autark.Launcher")
         .build();
@@ -44,20 +49,40 @@ fn main() -> glib::ExitCode {
         }
     });
     app.add_action(&toggle_assistant);
+    // `--apps` does the same for the Apps view.
+    let toggle_apps = gio::SimpleAction::new("apps", None);
+    toggle_apps.connect_activate({
+        let (app, get) = (app.downgrade(), get.clone());
+        move |_, _| {
+            let Some(app) = app.upgrade() else { return };
+            get(&app).toggle_apps();
+        }
+    });
+    app.add_action(&toggle_apps);
+    // `--clipboard` does the same for the clipboard history.
+    let toggle_clipboard = gio::SimpleAction::new("clipboard", None);
+    toggle_clipboard.connect_activate({
+        let (app, get) = (app.downgrade(), get.clone());
+        move |_, _| {
+            let Some(app) = app.upgrade() else { return };
+            get(&app).toggle_clipboard();
+        }
+    });
+    app.add_action(&toggle_clipboard);
     // Started hidden, the first activation is the daemon's own and shows nothing.
-    let skip = Cell::new(daemon || assistant);
+    let skip = Cell::new(daemon || assistant || apps || clipboard);
     app.connect_activate(move |app| {
         let launcher = get(app);
         if !skip.replace(false) {
             launcher.toggle();
         }
     });
-    if assistant {
+    if assistant || apps || clipboard {
         if let Err(err) = app.register(None::<&gio::Cancellable>) {
             eprintln!("launcher: {err}");
             return glib::ExitCode::FAILURE;
         }
-        app.activate_action("assistant", None);
+        app.activate_action(if assistant { "assistant" } else if clipboard { "clipboard" } else { "apps" }, None);
         if app.is_remote() {
             // The call goes out before this exits; the app is left as it is rather than torn down unrun.
             if let Some(connection) = app.dbus_connection()
@@ -82,6 +107,9 @@ struct Launcher {
     entry: gtk::Entry,
     results: gtk::Box,
     scroller: gtk::ScrolledWindow,
+    /// Every installed app, shown in place of the results while `browsing`.
+    grid: Rc<apps::Grid>,
+    browsing: Cell<bool>,
     footer: gtk::Box,
     kith_hint: gtk::Label,
     kith: Rc<kith::View>,
@@ -91,6 +119,9 @@ struct Launcher {
     /// Showing Kith's view rather than results.
     asking: Cell<bool>,
     index: RefCell<Index>,
+    /// What was copied, newest first, and when; shown in place of the results while `clipping`.
+    clips: RefCell<std::collections::VecDeque<(String, std::time::SystemTime)>>,
+    clipping: Cell<bool>,
     hits: RefCell<Vec<Hit>>,
     rows: RefCell<Vec<gtk::Box>>,
     selected: Cell<usize>,
@@ -127,7 +158,12 @@ impl Launcher {
         header.add_css_class("header");
         header.append(&search_icon);
         header.append(kith_face.visor.widget());
+        let browse = gtk::Button::from_icon_name("view-app-grid-symbolic");
+        browse.add_css_class("browse");
+        browse.set_valign(gtk::Align::Center);
+        browse.set_tooltip_text(Some("All apps"));
         header.append(&entry);
+        header.append(&browse);
         header.append(&esc);
 
         let results = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -155,6 +191,17 @@ impl Launcher {
             .child(&results)
             .build();
         dialog.append(&scroller);
+        // Built once the launcher is, as opening an app closes the launcher.
+        let opener: Rc<RefCell<std::rc::Weak<Launcher>>> = Rc::default();
+        let grid = apps::Grid::new({
+            let opener = opener.clone();
+            move |app| {
+                if let Some(launcher) = opener.borrow().upgrade() {
+                    launcher.launch(app);
+                }
+            }
+        });
+        dialog.append(&grid.root);
         dialog.append(&footer);
         // Built once the launcher is, as its Open button closes the launcher.
         let hide: Rc<RefCell<std::rc::Weak<Launcher>>> = Rc::default();
@@ -194,6 +241,8 @@ impl Launcher {
             entry,
             results,
             scroller,
+            grid,
+            browsing: Cell::new(false),
             footer,
             kith_hint,
             kith,
@@ -201,11 +250,39 @@ impl Launcher {
             ai: Cell::new(kith::Settings::load()),
             asking: Cell::new(false),
             index: RefCell::new(Index::load()),
+            clips: RefCell::default(),
+            clipping: Cell::new(false),
             hits: RefCell::default(),
             rows: RefCell::default(),
             selected: Cell::new(0),
         });
         *hide.borrow_mut() = Rc::downgrade(&launcher);
+        // What's copied arrives from a thread of its own; this looks for it a few times a second.
+        let copies = clipboard::watch();
+        glib::timeout_add_local(std::time::Duration::from_millis(250), {
+            let launcher = Rc::downgrade(&launcher);
+            move || {
+                let Some(launcher) = launcher.upgrade() else { return glib::ControlFlow::Break };
+                let mut any = false;
+                while let Ok(text) = copies.try_recv() {
+                    launcher.remember(text);
+                    any = true;
+                }
+                if any && launcher.clipping.get() && launcher.window.is_visible() {
+                    launcher.search();
+                }
+                glib::ControlFlow::Continue
+            }
+        });
+        *opener.borrow_mut() = Rc::downgrade(&launcher);
+        browse.connect_clicked({
+            let launcher = Rc::downgrade(&launcher);
+            move |_| {
+                if let Some(launcher) = launcher.upgrade() {
+                    if launcher.browsing.get() { launcher.leave_apps() } else { launcher.show_apps() }
+                }
+            }
+        });
 
         launcher.entry.connect_changed({
             let launcher = Rc::downgrade(&launcher);
@@ -213,6 +290,7 @@ impl Launcher {
                 if let Some(launcher) = launcher.upgrade() {
                     // Changing what's asked goes back to results, where Ask Kith asks again.
                     launcher.leave_kith();
+                    launcher.leave_apps();
                     launcher.search();
                 }
             }
@@ -223,6 +301,8 @@ impl Launcher {
                 if let Some(launcher) = launcher.upgrade() {
                     if launcher.asking.get() {
                         launcher.kith.activate();
+                    } else if launcher.browsing.get() {
+                        launcher.grid.focus();
                     } else {
                         launcher.open(launcher.selected.get());
                     }
@@ -245,6 +325,8 @@ impl Launcher {
                     gdk::Key::Return | gdk::Key::KP_Enter if control && launcher.asking.get() => launcher.follow_up(),
                     gdk::Key::Tab if !launcher.asking.get() && launcher.kith_row().is_some() => launcher.select(launcher.kith_row().unwrap_or(0)),
                     _ if launcher.asking.get() => return glib::Propagation::Proceed,
+                    gdk::Key::Down if launcher.browsing.get() && launcher.entry.has_focus() => launcher.grid.focus(),
+                    _ if launcher.browsing.get() => return glib::Propagation::Proceed,
                     gdk::Key::Down if count > 0 => launcher.select((launcher.selected.get() + 1) % count),
                     gdk::Key::Up if count > 0 => launcher.select((launcher.selected.get() + count - 1) % count),
                     _ => return glib::Propagation::Proceed,
@@ -283,13 +365,101 @@ impl Launcher {
         self.ai.set(kith::Settings::load());
         self.kith_hint.set_visible(self.ai.get().offered());
         self.leave_kith();
+        self.leave_clipboard();
         self.entry.set_text("");
         self.search();
         self.window.present();
         self.entry.grab_focus();
     }
 
+    /// Opens the launcher on the clipboard history, or closes it if that is what shows.
+    fn toggle_clipboard(self: &Rc<Self>) {
+        if self.window.is_visible() && self.clipping.get() {
+            self.hide();
+            return;
+        }
+        if !self.window.is_visible() {
+            self.toggle();
+        }
+        self.leave_apps();
+        self.leave_kith();
+        self.clipping.set(true);
+        self.kith_hint.set_visible(false);
+        self.entry.set_placeholder_text(Some("Search the clipboard history"));
+        self.entry.set_text("");
+        self.search();
+        self.entry.grab_focus();
+    }
+
+    /// Back to searching apps, files and actions.
+    fn leave_clipboard(&self) {
+        if self.clipping.replace(false) {
+            self.entry.set_placeholder_text(Some("Search apps, files and actions"));
+        }
+    }
+
+    /// Keeps a copy at the front of the history, once however many times it's copied.
+    fn remember(&self, text: String) {
+        let mut clips = self.clips.borrow_mut();
+        clips.retain(|(kept, _)| *kept != text);
+        clips.push_front((text, std::time::SystemTime::now()));
+        clips.truncate(clipboard::KEEP);
+    }
+
+    /// The history as results, filtered by what's typed.
+    fn clip_hits(&self, query: &str) -> Vec<Hit> {
+        let query = query.trim().to_lowercase();
+        let now = std::time::SystemTime::now();
+        self.clips
+            .borrow()
+            .iter()
+            .filter(|(text, _)| query.is_empty() || text.to_lowercase().contains(&query))
+            .map(|(text, at)| Hit {
+                group: search::Group::Clipboard,
+                title: clipboard::title(text, 80),
+                detail: format!("{} characters · {}", text.chars().count(), clipboard::ago(now.duration_since(*at).map_or(0, |elapsed| elapsed.as_secs()))),
+                icon: Icon::Glyph("edit-paste-symbolic"),
+                target: Target::Clip(text.clone()),
+            })
+            .collect()
+    }
+
+    /// Opens the launcher on the Apps view, or closes it if that is what shows.
+    fn toggle_apps(self: &Rc<Self>) {
+        if self.window.is_visible() && self.browsing.get() {
+            self.hide();
+            return;
+        }
+        if !self.window.is_visible() {
+            self.toggle();
+        }
+        self.show_apps();
+    }
+
+    fn show_apps(self: &Rc<Self>) {
+        self.leave_kith();
+        self.entry.set_text("");
+        self.grid.fill(self.index.borrow().all_apps());
+        self.browsing.set(true);
+        self.dialog.add_css_class("browsing");
+        self.scroller.set_visible(false);
+        self.grid.root.set_visible(true);
+        self.entry.grab_focus();
+    }
+
+    /// Back to results, as typing does.
+    fn leave_apps(&self) {
+        if !self.browsing.replace(false) {
+            return;
+        }
+        self.dialog.remove_css_class("browsing");
+        self.grid.root.set_visible(false);
+        self.scroller.set_visible(true);
+    }
+
     fn hide(&self) {
+        self.leave_clipboard();
+        self.leave_apps();
         self.leave_kith();
         self.window.set_visible(false);
     }
@@ -334,7 +504,7 @@ impl Launcher {
     }
 
     fn search(self: &Rc<Self>) {
-        let hits = self.index.borrow().search(&self.entry.text(), self.ai.get().offered());
+        let hits = if self.clipping.get() { self.clip_hits(&self.entry.text()) } else { self.index.borrow().search(&self.entry.text(), self.ai.get().offered()) };
         while let Some(child) = self.results.first_child() {
             self.results.remove(&child);
         }
@@ -400,7 +570,11 @@ impl Launcher {
         text.set_valign(gtk::Align::Center);
         text.append(&title);
         text.append(&detail);
-        let open = gtk::Label::new(Some(if matches!(hit.target, Target::Kith(_)) { "↵ ask" } else { "↵ open" }));
+        let open = gtk::Label::new(Some(match hit.target {
+            Target::Kith(_) => "↵ ask",
+            Target::Clip(_) => "↵ copy",
+            _ => "↵ open",
+        }));
         open.add_css_class("open");
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -459,6 +633,16 @@ impl Launcher {
         }
     }
 
+    /// Starts an app, counts the opening for ranking, and closes the launcher.
+    fn launch(&self, app: &gio::AppInfo) {
+        let context = WidgetExt::display(&self.window).app_launch_context();
+        if let Err(err) = app.launch(&[], Some(&context)) {
+            eprintln!("launcher: opening {}: {err}", app.display_name());
+        }
+        self.index.borrow_mut().opened(app);
+        self.hide();
+    }
+
     fn open(self: &Rc<Self>, index: usize) {
         let hits = self.hits.borrow();
         let Some(hit) = hits.get(index) else {
@@ -473,10 +657,10 @@ impl Launcher {
         let context = WidgetExt::display(&self.window).app_launch_context();
         match &hit.target {
             Target::App(app) => {
-                if let Err(err) = app.launch(&[], Some(&context)) {
-                    eprintln!("launcher: opening {}: {err}", hit.title);
-                }
-                self.index.borrow_mut().opened(app);
+                let app = app.clone();
+                drop(hits);
+                self.launch(&app);
+                return;
             }
             Target::File(uri) => {
                 if let Err(err) = gio::AppInfo::launch_default_for_uri(uri, Some(&context)) {
@@ -484,6 +668,11 @@ impl Launcher {
                 }
             }
             Target::Kith(_) => {}
+            Target::Clip(text) => {
+                if let Err(err) = clipboard::copy(text.clone()) {
+                    eprintln!("launcher: copying: {err}");
+                }
+            }
             Target::Action(action) => {
                 let action = *action;
                 glib::spawn_future_local(async move {

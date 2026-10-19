@@ -15,6 +15,7 @@ pub enum Group {
     Files,
     Actions,
     Kith,
+    Clipboard,
 }
 
 impl Group {
@@ -24,6 +25,7 @@ impl Group {
             Group::Files => "FILES",
             Group::Actions => "ACTIONS",
             Group::Kith => "KITH",
+            Group::Clipboard => "CLIPBOARD",
         }
     }
 }
@@ -34,6 +36,8 @@ pub enum Target {
     Action(Action),
     /// Ask Kith about what's typed.
     Kith(String),
+    /// An earlier copy, to put back on the clipboard.
+    Clip(String),
 }
 
 pub enum Icon {
@@ -77,6 +81,13 @@ impl Index {
     /// Re-reads installed apps; cheap enough to do each time the launcher opens.
     pub fn refresh(&mut self) {
         self.apps = gio::AppInfo::all().into_iter().filter(|app| app.should_show()).collect();
+    }
+
+    /// Every app that shows in menus, by name.
+    pub fn all_apps(&self) -> Vec<gio::AppInfo> {
+        let mut apps = self.apps.clone();
+        apps.sort_by_key(|app| app.display_name().to_lowercase());
+        apps
     }
 
     pub fn opened(&mut self, app: &gio::AppInfo) {

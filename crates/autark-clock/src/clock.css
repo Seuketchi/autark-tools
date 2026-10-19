@@ -1,0 +1,218 @@
+window.clock {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 14px;
+}
+
+window.clock .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.top {
+  padding: 14px 16px 6px;
+}
+
+.tabs {
+  padding: 3px;
+  border-radius: 10px;
+  background-color: alpha(@text, 0.08);
+}
+
+button.tab {
+  min-height: 0;
+  min-width: 0;
+  padding: 5px 16px;
+  border: none;
+  border-radius: 8px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  outline: none;
+  color: @text2;
+}
+
+button.tab:checked {
+  background-color: @surface;
+  color: @text;
+  box-shadow: 0 1px 3px alpha(@shadow, 0.18);
+}
+
+.page {
+  padding: 18px 24px 24px;
+}
+
+.big {
+  font-family: "Geist Mono", monospace;
+  font-size: 56px;
+  font-weight: 300;
+}
+
+.mono {
+  font-family: "Geist Mono", monospace;
+  font-size: 13px;
+}
+
+.dim {
+  color: @text3;
+}
+
+.empty {
+  padding: 40px 0;
+  color: @text3;
+}
+
+button.action {
+  min-height: 0;
+  min-width: 0;
+  padding: 10px 22px;
+  border: none;
+  border-radius: 12px;
+  background-image: none;
+  box-shadow: none;
+  outline: none;
+  font-weight: 500;
+}
+
+button.action.primary {
+  background-color: @accent;
+  color: @surface;
+}
+
+button.action.danger {
+  background-color: @danger;
+  color: @surface;
+}
+
+button.action.plain {
+  background-color: alpha(@text, 0.08);
+  color: @text;
+}
+
+button.action:disabled {
+  opacity: 0.4;
+}
+
+/* Alarms */
+
+.alarm {
+  padding: 12px 4px;
+  border-bottom: 1px solid alpha(@text, 0.07);
+}
+
+.alarm.off .alarm-time,
+.alarm.off .alarm-sub {
+  color: @text3;
+}
+
+.alarm-time {
+  font-family: "Geist Mono", monospace;
+  font-size: 32px;
+  font-weight: 300;
+}
+
+.alarm-sub {
+  color: @text3;
+  font-size: 13px;
+}
+
+button.trash {
+  min-height: 0;
+  min-width: 0;
+  padding: 6px;
+  border: none;
+  border-radius: 8px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: @text3;
+}
+
+button.trash:hover {
+  background-color: alpha(@text, 0.08);
+  color: @danger;
+}
+
+.form {
+  padding: 16px;
+  border-radius: 14px;
+  background-color: @raised;
+}
+
+.colon {
+  font-size: 36px;
+  font-weight: 300;
+}
+
+spinbutton.digits {
+  min-width: 64px;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+
+spinbutton.digits text {
+  font-family: "Geist Mono", monospace;
+  font-size: 40px;
+  font-weight: 300;
+}
+
+.unit {
+  color: @text3;
+  font-size: 12px;
+}
+
+entry.field {
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+button.day {
+  min-height: 0;
+  min-width: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 999px;
+  background-image: none;
+  background-color: alpha(@text, 0.08);
+  box-shadow: none;
+  color: @text2;
+}
+
+button.day:checked {
+  background-color: @accent;
+  color: @surface;
+}
+
+.problem {
+  color: @danger;
+}
+
+.lap {
+  padding: 10px 4px;
+  border-bottom: 1px solid alpha(@text, 0.07);
+}
+
+switch {
+  min-height: 0;
+  background-image: none;
+  background-color: alpha(@text, 0.16);
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+switch:checked {
+  background-color: @accent;
+}
+
+switch slider {
+  background-image: none;
+  background-color: @surface;
+  border: none;
+  box-shadow: 0 1px 2px alpha(@shadow, 0.3);
+}

@@ -1,0 +1,78 @@
+window.viewer {
+  background-color: @ground;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+window.viewer .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.top {
+  padding: 10px 14px;
+  background-color: alpha(@surface, 0.86);
+  border-bottom: 1px solid alpha(@text, 0.08);
+  transition: opacity 220ms ease;
+}
+
+.top.faded {
+  opacity: 0;
+}
+
+.top .title {
+  font-weight: 500;
+}
+
+.top .info {
+  color: @text3;
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+}
+
+.top button.tool {
+  min-height: 0;
+  min-width: 0;
+  padding: 6px;
+  border: none;
+  border-radius: 8px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  outline: none;
+  color: @text2;
+}
+
+.top button.tool:hover {
+  background-color: alpha(@text, 0.08);
+  color: @text;
+}
+
+.glyph {
+  color: @text3;
+}
+
+.open {
+  padding: 8px 18px;
+  border-radius: 10px;
+  background-image: none;
+  background-color: @accent;
+  color: @surface;
+  font-weight: 500;
+}
+
+.hint {
+  color: @text3;
+}
+
+.problem {
+  margin: 0 40px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background-color: alpha(@text, 0.08);
+  color: @text;
+}

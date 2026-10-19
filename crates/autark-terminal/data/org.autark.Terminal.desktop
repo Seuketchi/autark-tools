@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+GenericName=Terminal
+Comment=Run commands in tabs
+Exec=autark-terminal %F
+Icon=autark-terminal
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;console;
+StartupWMClass=org.autark.Terminal
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=autark-terminal

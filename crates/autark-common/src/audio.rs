@@ -282,6 +282,86 @@ fn format(rate: u32, channels: u32) -> Vec<u8> {
     pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &Value::Object(object)).map(|(cursor, _)| cursor.into_inner()).unwrap_or_default()
 }
 
+/// What's playing on the default output, as chunks of interleaved 48 kHz stereo samples, until this is dropped. It
+/// listens to the output's monitor, not the microphone, so only what you could hear is in it.
+pub struct Capture {
+    pub samples: async_channel::Receiver<Vec<f32>>,
+    quit: pw::channel::Sender<()>,
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        let _ = self.quit.send(());
+    }
+}
+
+/// Starts listening. If the sound system can't be reached the chunks simply never come, and the error is printed.
+pub fn capture_output() -> Capture {
+    // Room for several seconds, so a busy reader loses nothing; a reader that stops loses the newest.
+    let (chunks, received) = async_channel::bounded(512);
+    let (quit, quit_received) = pw::channel::channel();
+    std::thread::spawn(move || {
+        if let Err(error) = capture(chunks, quit_received) {
+            eprintln!("audio: capture: {error}");
+        }
+    });
+    Capture { samples: received, quit }
+}
+
+/// 32-bit float stereo at 48 kHz, which the graph converts to whatever the output runs at.
+fn stereo_format() -> Vec<u8> {
+    let mut info = pw::spa::param::audio::AudioInfoRaw::new();
+    info.set_format(pw::spa::param::audio::AudioFormat::F32LE);
+    info.set_rate(RATE);
+    info.set_channels(2);
+    let mut position = [0; pw::spa::param::audio::MAX_CHANNELS];
+    position[0] = pw::spa::sys::SPA_AUDIO_CHANNEL_FL;
+    position[1] = pw::spa::sys::SPA_AUDIO_CHANNEL_FR;
+    info.set_position(position);
+    let object = pw::spa::pod::Object { type_: pw::spa::utils::SpaTypes::ObjectParamFormat.as_raw(), id: ParamType::EnumFormat.as_raw(), properties: info.into() };
+    pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &Value::Object(object)).map(|(cursor, _)| cursor.into_inner()).unwrap_or_default()
+}
+
+fn capture(chunks: Sender<Vec<f32>>, quit: pw::channel::Receiver<()>) -> Result<(), pw::Error> {
+    pw::init();
+    let main_loop = pw::main_loop::MainLoopRc::new(None)?;
+    let context = pw::context::ContextRc::new(&main_loop, None)?;
+    let core = context.connect_rc(None)?;
+    let _quit = quit.attach(main_loop.loop_(), {
+        let main_loop = main_loop.clone();
+        move |()| main_loop.quit()
+    });
+    let stream = pw::stream::StreamBox::new(
+        &core,
+        "autark-recorder",
+        properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Capture",
+            *pw::keys::MEDIA_ROLE => "Screen",
+            *pw::keys::STREAM_CAPTURE_SINK => "true",
+            *pw::keys::APP_NAME => "Screen recording",
+        },
+    )?;
+    let _listener = stream
+        .add_local_listener_with_user_data(chunks)
+        .process(|stream, chunks| {
+            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(data) = buffer.datas_mut().first_mut() else { return };
+            let size = data.chunk().size() as usize;
+            let Some(bytes) = data.data() else { return };
+            let samples: Vec<f32> = bytes[..size.min(bytes.len())].as_chunks::<4>().0.iter().map(|sample| f32::from_le_bytes(*sample)).collect();
+            if !samples.is_empty() {
+                let _ = chunks.try_send(samples);
+            }
+        })
+        .register()?;
+    let format = stereo_format();
+    let mut params = [Pod::from_bytes(&format).ok_or(pw::Error::CreationFailed)?];
+    stream.connect(pw::spa::utils::Direction::Input, None, pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS, &mut params)?;
+    main_loop.run();
+    Ok(())
+}
+
 /// The default input's level while this is kept: peaks from 0 to 1, about every 20 ms. Dropping it stops
 /// listening, and with it the microphone.
 pub struct Meter {

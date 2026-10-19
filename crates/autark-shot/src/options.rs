@@ -33,11 +33,13 @@ pub struct Options {
     pub thumbnail: bool,
     /// The last area chosen, as output name and logical x, y, width, height; the options bar starts there.
     pub area: Option<(String, i32, i32, i32, i32)>,
+    /// Whether recordings carry what's playing on the output. Not in the options bar; edit shot.toml.
+    pub record_audio: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { save_to: SaveTo::Folder, timer: 0, pointer: false, thumbnail: true, area: None }
+        Self { save_to: SaveTo::Folder, timer: 0, pointer: false, thumbnail: true, area: None, record_audio: true }
     }
 }
 
@@ -86,7 +88,7 @@ mod tests {
 
     #[test]
     fn options_round_trip_and_default() {
-        let options = Options { save_to: SaveTo::Both, timer: 5, pointer: true, thumbnail: false, area: Some(("eDP-1".into(), 10, 20, 300, 200)) };
+        let options = Options { save_to: SaveTo::Both, timer: 5, pointer: true, thumbnail: false, area: Some(("eDP-1".into(), 10, 20, 300, 200)), record_audio: false };
         assert_eq!(toml::from_str::<Options>(&toml::to_string(&options).unwrap()).unwrap(), options);
         assert_eq!(toml::from_str::<Options>("").unwrap(), Options::default());
         assert!(SaveTo::Both.folder() && SaveTo::Both.clipboard() && !SaveTo::Clipboard.folder());

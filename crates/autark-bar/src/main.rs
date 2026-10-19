@@ -1,4 +1,5 @@
-//! Top bar: app menu, clock, Wi-Fi, battery, volume, Kith, notification centre button.
+//! Top bar: app menu, clock, Wi-Fi, battery, volume, Kith, notification centre button, and a Recording item while the
+//! screen is being recorded.
 
 mod app_name;
 mod battery;
@@ -8,6 +9,7 @@ mod kith;
 mod logo;
 mod menu;
 mod notifications;
+mod recording;
 mod shared;
 mod volume;
 mod wifi;
@@ -40,6 +42,7 @@ struct Sources {
     clock: Shared<String>,
     notifications: Shared<bool>,
     kith: Shared<kith::Kith>,
+    recording: Shared<bool>,
 }
 
 fn start(app: &gtk::Application) {
@@ -61,6 +64,7 @@ fn start(app: &gtk::Application) {
         clock: clock::source(&config.clock_format),
         notifications: notifications::source(),
         kith: kith::source(),
+        recording: recording::source(),
     });
 
     let watched = sources.clone();
@@ -118,6 +122,7 @@ fn bar(app: &gtk::Application, monitor: &gdk::Monitor, sources: &Sources) -> gtk
     start.append(&app_name::view(&sources.app_name));
 
     let end = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    end.append(&recording::view(&sources.recording));
     end.append(&wifi::view(&sources.wifi));
     end.append(&volume::view(&sources.volume));
     end.append(&battery::view(&sources.battery, &sources.battery_percent));

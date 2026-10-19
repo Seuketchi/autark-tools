@@ -71,7 +71,7 @@ fn report(config: &Config, id: &str, task: &tasks::Task) -> Result<Report, Strin
         "required": ["summary", "report", "urgent"],
     });
     let start = Instant::now();
-    let answer = Ollama::new(&config.ollama).json(SYSTEM, &user, &schema);
+    let answer = Ollama::new(&config.ollama).json(&format!("{SYSTEM}{}", crate::soul::voice()), &user, &schema);
     log::record("task", "ollama", json!({ "task": task.name, "prompt": task.prompt, "reads": task.reads, "urls": task.urls }), &answer, start.elapsed());
     let answer = answer?;
     let summary = answer["summary"].as_str().unwrap_or_default().trim().to_owned();

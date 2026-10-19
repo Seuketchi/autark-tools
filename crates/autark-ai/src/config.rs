@@ -12,6 +12,8 @@ pub struct Ai {
     pub ollama: Ollama,
     pub features: Features,
     pub jev: Jev,
+    pub mcp: Mcp,
+    pub web: Web,
     pub tasks: crate::tasks::Limits,
     pub suggestions: crate::suggest::Limits,
 }
@@ -50,7 +52,7 @@ impl Default for Features {
 }
 
 /// Which features Jev answers, unless `local_only` is on. Off by default: text goes to the cloud only
-/// when you choose. Until Jev's client is built, Ollama answers them all.
+/// when you choose. Ollama answers the rest, and whatever Jev can't.
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Jev {
@@ -64,4 +66,21 @@ pub struct Jev {
     pub files: bool,
     /// Rank, for Settings' search.
     pub settings: bool,
+}
+
+/// `autark-ai mcp`. It only reads, unless you let it act.
+#[derive(Deserialize, Default, Clone, Copy)]
+#[serde(default, deny_unknown_fields)]
+pub struct Mcp {
+    /// Offers `run_actions` to the client: the catalog's actions (volume, brightness, Wi-Fi, Focus, night light,
+    /// lock, sleep, open an app), which then run without asking you. Off by default.
+    pub act: bool,
+}
+
+/// Web search through Firecrawl (https://docs.firecrawl.dev), for `Search` and the MCP server's `web_search`.
+/// The query goes to Firecrawl, so it is off by default, and `local_only` overrides it.
+#[derive(Deserialize, Default, Clone, Copy)]
+#[serde(default, deny_unknown_fields)]
+pub struct Web {
+    pub search: bool,
 }

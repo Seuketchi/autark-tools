@@ -1,0 +1,13 @@
+[package]
+name = "autark-clock"
+description = "Clock: alarms, a timer and a stopwatch; alarms and timers ring through systemd timers, with the window closed."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["audio", "style"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"

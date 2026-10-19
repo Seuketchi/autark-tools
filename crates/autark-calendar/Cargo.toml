@@ -1,0 +1,19 @@
+[package]
+name = "autark-calendar"
+description = "Calendar: events from every account you've signed in (Google, iCloud, Fastmail, any CalDAV server), for you and for Kith."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-io = "2.6.0"
+autark-accounts = { version = "0.0.0", path = "../autark-accounts" }
+autark-common = { version = "0.0.0", path = "../autark-common", features = ["style"] }
+autark-pim = { version = "0.0.0", path = "../autark-pim" }
+blocking = "1.7.0"
+chrono = "0.4.45"
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+zbus = "6.0.0"

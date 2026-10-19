@@ -13,7 +13,7 @@ use crate::{bus, config, icon, ui};
 
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
 trait Ai {
-    fn rank(&self, query: &str, items: Vec<String>) -> zbus::Result<Vec<f64>>;
+    fn rank_for(&self, source: &str, query: &str, items: Vec<String>) -> zbus::Result<Vec<f64>>;
 }
 
 pub struct Shell {
@@ -220,7 +220,7 @@ async fn rank(query: &str) -> Result<Vec<f64>, String> {
     let connection = bus::session().await.map_err(|error| error.to_string())?;
     let proxy = AiProxy::new(&connection).await.map_err(|error| bus::message(error, "The AI daemon"))?;
     let items = INDEX.iter().map(|(label, _)| label.to_string()).collect();
-    proxy.rank(query, items).await.map_err(|error| bus::message(error, "The AI daemon"))
+    proxy.rank_for("settings", query, items).await.map_err(|error| bus::message(error, "The AI daemon"))
 }
 
 fn nav_button(pane: &'static panes::Pane) -> gtk::Button {
