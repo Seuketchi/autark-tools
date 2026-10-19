@@ -35,7 +35,7 @@ impl Default for Dock {
             dots: true,
             position: Position::Bottom,
             autohide: false,
-            pinned: ["org.autark.Files", "firefox", "foot", "galley", "org.autark.Settings"].map(String::from).to_vec(),
+            pinned: ["org.autark.Files", "firefox", "org.autark.Terminal", "galley", "org.autark.Settings"].map(String::from).to_vec(),
         }
     }
 }
