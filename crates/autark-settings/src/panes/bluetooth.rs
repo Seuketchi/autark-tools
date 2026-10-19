@@ -190,13 +190,28 @@ impl Bluetooth {
         });
     }
 
-    fn unavailable(&self, text: &str) {
+    fn unavailable(self: &Rc<Self>, text: &str) {
         ui::clear(&self.top);
         ui::clear(&self.lists);
         let label = ui::note(&format!("{text} Bluetooth is set through BlueZ."));
         label.add_css_class("unavailable");
         label.set_wrap(true);
         self.top.append(&label);
+        // The service is usually just off, which is root's to start; the helper does it with your password.
+        let turn_on = ui::button("Turn on Bluetooth", {
+            let this = self.clone();
+            move |button| {
+                let again = this.clone();
+                crate::privileged::apply(button, "turn Bluetooth on", &["service", "enable", "bluetooth"], None, &this.status, move |_| {
+                    glib::spawn_future_local(async move {
+                        glib::timeout_future_seconds(2).await;
+                        again.start().await;
+                    });
+                });
+            }
+        });
+        turn_on.set_halign(gtk::Align::Start);
+        self.top.append(&turn_on);
     }
 
     fn report(&self, error: Option<String>) {

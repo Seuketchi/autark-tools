@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::{gdk, gio, glib};
 
 use crate::panes::{self, INDEX, PANES};
 use crate::{bus, config, icon, ui};
@@ -77,6 +77,17 @@ impl Shell {
         window.set_child(Some(&main));
 
         let shell = Rc::new(Self { window, nav, browse, results, pages, search, searches: Cell::new(0), debounce: ui::Debounce::default(), first: RefCell::new(None) });
+        // `win.show-pane` with a pane's id opens it, for a pane that points at another (Network at Wi-Fi).
+        let open = gio::SimpleAction::new("show-pane", Some(glib::VariantTy::STRING));
+        open.connect_activate({
+            let shell = Rc::downgrade(&shell);
+            move |_, id| {
+                if let (Some(shell), Some(id)) = (shell.upgrade(), id.and_then(|id| id.get::<String>())) {
+                    shell.show(&id);
+                }
+            }
+        });
+        shell.window.add_action(&open);
         for (id, button) in &shell.nav {
             let (shell, id) = (Rc::downgrade(&shell), *id);
             button.connect_clicked(move |_| {

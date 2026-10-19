@@ -1,6 +1,5 @@
 //! Date & Time: the time now, the time zone, automatic time from the network, and whether the bar's clock is 24-hour.
-//! The zone and automatic time are `timedatectl`'s, which asks polkit; when that says no, the pane shows what it said
-//! and nothing changes. The bar's clock format is `bar.toml`, which the bar watches.
+//! The zone and automatic time are root's, so they go through the helper with your password (see `privileged.rs`). The bar's clock format is `bar.toml`, which the bar watches.
 
 use std::process::Command;
 use std::rc::Rc;
@@ -8,7 +7,7 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::prelude::*;
 
-use crate::{config, ui};
+use crate::{config, privileged, ui};
 
 const TWENTY_FOUR: &str = "%a %-d %b  %H:%M";
 const TWELVE: &str = "%a %-d %b  %-I:%M %p";
@@ -50,8 +49,8 @@ pub fn build() -> gtk::Widget {
     group.append(&ui::row("Now", None, &now));
 
     let ntp = ui::switch(state.get("NTP").is_some_and(|value| value == "yes"), {
-        let report = report.clone();
-        move |on| report(run(&["timedatectl", "set-ntp", if on { "true" } else { "false" }]))
+        let status = status.clone();
+        move |on| privileged::apply(&status.clone(), "change automatic time", &["ntp", if on { "on" } else { "off" }], None, &status, |_| {})
     });
     let synced = if state.get("NTPSynchronized").is_some_and(|value| value == "yes") { "Synchronised with a time server" } else { "Not synchronised yet" };
     group.append(&ui::row("Set time automatically", Some(synced), &ntp));
@@ -67,17 +66,14 @@ pub fn build() -> gtk::Widget {
         zone.set_selected(index as u32);
     }
     zone.connect_selected_notify({
-        let (report, zones, current) = (report.clone(), zones.clone(), std::cell::RefCell::new(current));
+        let (status, zones, current) = (status.clone(), zones.clone(), Rc::new(std::cell::RefCell::new(current)));
         move |zone| {
-            let Some(chosen) = zones.get(zone.selected() as usize) else { return };
-            if *current.borrow() == *chosen {
+            let Some(chosen) = zones.get(zone.selected() as usize).cloned() else { return };
+            if *current.borrow() == chosen {
                 return;
             }
-            let result = run(&["timedatectl", "set-timezone", chosen]);
-            if result.is_ok() {
-                *current.borrow_mut() = chosen.clone();
-            }
-            report(result);
+            let (current, wanted) = (current.clone(), chosen.clone());
+            privileged::apply(zone, "change the time zone", &["timezone", &chosen], None, &status, move |_| *current.borrow_mut() = wanted);
         }
     });
     group.append(&ui::row("Time zone", Some("Type to search"), &zone));
@@ -104,14 +100,4 @@ fn timedate() -> std::collections::HashMap<String, String> {
 fn zones() -> Vec<String> {
     let output = Command::new("timedatectl").arg("list-timezones").output().map(|output| String::from_utf8_lossy(&output.stdout).into_owned()).unwrap_or_default();
     output.lines().map(str::to_owned).collect()
-}
-
-/// Runs a command; its complaint is the error.
-fn run(command: &[&str]) -> Result<(), String> {
-    let output = Command::new(command[0]).args(&command[1..]).output().map_err(|error| format!("{}: {error}", command[0]))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let said = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(if said.is_empty() { format!("{} failed", command.join(" ")) } else { format!("{said} (changing this needs permission this session doesn't have)") })
 }

@@ -1,12 +1,12 @@
 //! Language & Region: the system language (`LANG`), from the locales the system has generated. Changing it is
-//! `localectl`'s, which asks polkit; when that says no, the pane shows what it said. The keyboard layouts are on the
+//! root's, so it goes through the helper with your password (see `privileged.rs`). The keyboard layouts are on the
 //! Keyboard pane.
 
 use std::process::Command;
 
 use gtk::prelude::*;
 
-use crate::ui;
+use crate::{privileged, ui};
 
 pub fn build() -> gtk::Widget {
     let (page, column) = ui::page();
@@ -26,24 +26,13 @@ pub fn build() -> gtk::Widget {
 
     let group = ui::group();
     let language = ui::choice(&options, &current, {
-        let (status, current) = (status.clone(), std::cell::RefCell::new(current.clone()));
+        let (status, current) = (status.clone(), std::rc::Rc::new(std::cell::RefCell::new(current.clone())));
         move |locale| {
             if *current.borrow() == locale {
                 return;
             }
-            let output = Command::new("localectl").arg("set-locale").arg(format!("LANG={locale}")).output();
-            let result = match output {
-                Ok(output) if output.status.success() => Ok(()),
-                Ok(output) => Err(format!("{} (changing this needs permission this session doesn't have)", String::from_utf8_lossy(&output.stderr).trim())),
-                Err(error) => Err(format!("localectl: {error}")),
-            };
-            if result.is_ok() {
-                *current.borrow_mut() = locale.to_owned();
-            }
-            status.set_visible(result.is_err());
-            if let Err(error) = result {
-                status.set_label(&error);
-            }
+            let (current, wanted) = (current.clone(), locale.to_owned());
+            privileged::apply(&status.clone(), "change the system language", &["locale", locale], None, &status, move |_| *current.borrow_mut() = wanted);
         }
     });
     group.append(&ui::row("Language and formats", Some("Dates, numbers and messages"), &language));
