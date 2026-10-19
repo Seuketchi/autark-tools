@@ -96,7 +96,7 @@ const CATALOG: [(&str, &str); 10] = [
 /// handed the field fills it in for sentences that never asked, and every extra field costs generated tokens.
 fn wants_task(text: &str) -> bool {
     let text = text.to_lowercase();
-    ["every ", "each ", "daily", "weekly", "monthly", "nightly", "hourly", "weekday", "weekend", "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays"]
+    ["every ", "each ", "remind me", "daily", "weekly", "monthly", "nightly", "hourly", "weekday", "weekend", "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays"]
         .iter()
         .any(|word| text.contains(word))
 }
@@ -132,7 +132,9 @@ pub fn system_prompt(facts: &[String], text: &str) -> String {
         prompt.push_str(
             "task: the sentence asks for something to be done again and again on a schedule: a short name, the instruction to carry out \
              each time (prompt), every (day, weekdays, weekends, a weekday such as monday, or month), day (of the month, for month) and \
-             time (24-hour, HH:MM). The files it needs go in files. Leave the question empty.\n",
+             time (24-hour, HH:MM). The files it needs go in files. Leave the question empty. \
+             For \"remind me to X by/at TIME\" set remind true: prompt is then the reminder's own words (\"Time to X\"), every is day \
+             unless a day is named, and time is exactly the time said.\n",
         );
     }
     prompt.push_str("confidence: how sure you are of the whole answer, from 0 to 1.\n");
@@ -184,6 +186,7 @@ pub fn schema(candidates: &[String], text: &str) -> Value {
                 "every": { "enum": ["day", "weekdays", "weekends", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "month"] },
                 "day": { "type": "number" },
                 "time": { "type": "string" },
+                "remind": { "type": "boolean" },
             },
             "required": ["name", "prompt", "every", "time"],
         });
@@ -231,6 +234,8 @@ struct RawTask {
     day: f64,
     #[serde(default)]
     time: String,
+    #[serde(default)]
+    remind: bool,
 }
 
 #[derive(Deserialize)]
@@ -266,7 +271,7 @@ fn named_in(text: &str, url: &str) -> bool {
 pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String]) -> Result<Routed, String> {
     let answer: Answer = serde_json::from_value(answer).map_err(|err| format!("the route doesn't fit the schema: {err}"))?;
     let confidence = answer.confidence.clamp(0.0, 1.0);
-    let actions = answer
+    let mut actions = answer
         .actions
         .into_iter()
         .map(|raw| {
@@ -294,11 +299,15 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
     let task = match answer.task.filter(|task| !task.name.trim().is_empty() && !task.prompt.trim().is_empty()) {
         Some(raw) => {
             let when = crate::tasks::When { every: raw.every, day: raw.day.clamp(0.0, 31.0) as u8, time: raw.time };
-            let task = crate::tasks::Task { name: raw.name, prompt: raw.prompt, when, reads: std::mem::take(&mut files), urls: crate::web::named(text) };
+            let task = crate::tasks::Task { name: raw.name, prompt: raw.prompt, when, reads: std::mem::take(&mut files), urls: crate::web::named(text), remind: raw.remind || text.to_lowercase().contains("remind me") };
             Some(crate::tasks::check(task).map_err(|why| format!("the task doesn't fit: {why}"))?)
         }
         None => None,
     };
+    // "sleep" in "remind me to sleep" isn't a request to put the laptop to sleep now: a task is for later.
+    if task.is_some() {
+        actions.clear();
+    }
     let mut question = if task.is_some() { String::new() } else { answer.question.trim().to_owned() };
     // A small model sometimes carries on after the question mark with its own answer and filler; the field is only the question.
     if let Some(end) = question.find('?') {
@@ -504,6 +513,17 @@ mod tests {
         );
         assert_eq!(routed.confidence, 0.8);
         assert!(routed.question.is_empty());
+    }
+
+    #[test]
+    fn a_reminder_is_a_task_for_later_and_never_an_action() {
+        let answer = json!({ "confidence": 0.95, "question": "", "actions": [ { "name": "sleep", "confidence": 0.95 } ],
+            "task": { "name": "Sleep", "prompt": "Time to sleep", "every": "day", "time": "22:00", "remind": false } });
+        let routed = parse(answer, "remind me to sleep by 10pm", &[], &[]).unwrap();
+        assert!(routed.actions.is_empty());
+        let task = routed.task.unwrap();
+        assert!(task.remind);
+        assert_eq!(task.when.calendar().unwrap(), "*-*-* 22:00:00");
     }
 
     #[test]
