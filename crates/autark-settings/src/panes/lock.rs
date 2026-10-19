@@ -12,7 +12,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use zeroize::Zeroizing;
 
-use crate::{bus, config, icon, ui};
+use crate::{bus, config, icon, privileged, ui};
 
 #[zbus::proxy(interface = "net.reactivated.Fprint.Manager", default_service = "net.reactivated.Fprint", default_path = "/net/reactivated/Fprint/Manager")]
 trait Manager {
@@ -386,7 +386,7 @@ fn sudo_switch(report: impl Fn(Result<(), String>) + Clone + 'static) -> gtk::Sw
         }
         asking.set(true);
         let (switch, asking, report) = (switch.clone(), asking.clone(), report.clone());
-        ask_password(switch.root().and_downcast::<gtk::Window>().as_ref(), move |password| {
+        privileged::ask_password(switch.root().and_downcast::<gtk::Window>().as_ref(), "change how sudo checks who you are", move |password| {
             let (switch, asking, report) = (switch.clone(), asking.clone(), report.clone());
             glib::spawn_future_local(async move {
                 let result = match password {
@@ -406,88 +406,11 @@ fn sudo_switch(report: impl Fn(Result<(), String>) + Clone + 'static) -> gtk::Sw
 }
 
 async fn run_helper(on: bool, password: Zeroizing<String>) -> Result<(), String> {
-    let (sender, receiver) = async_channel::bounded(1);
-    std::thread::spawn(move || {
-        use std::io::Write;
-        let result = (|| {
-            let mut child = std::process::Command::new("sudo")
-                .args(["-S", "-k", "-p", "", HELPER, if on { "on" } else { "off" }])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|error| format!("sudo: {error}"))?;
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(format!("{}\n", password.as_str()).as_bytes());
-            }
-            let output = child.wait_with_output().map_err(|error| format!("sudo: {error}"))?;
-            if output.status.success() {
-                return Ok(());
-            }
-            let said = String::from_utf8_lossy(&output.stderr).lines().rfind(|line| !line.trim().is_empty()).unwrap_or("").to_owned();
-            Err(if said.contains("incorrect password") || said.contains("try again") { "That password isn’t right.".to_owned() } else { format!("sudo: {said}") })
-        })();
-        let _ = sender.send_blocking(result);
-    });
-    receiver.recv().await.unwrap_or_else(|_| Err("sudo stopped unexpectedly.".into()))
-}
-
-/// A small dialog for the password sudo needs; `answered` gets it, or nothing when cancelled.
-fn ask_password(parent: Option<&gtk::Window>, answered: impl Fn(Option<Zeroizing<String>>) + 'static) {
-    let window = gtk::Window::builder().title("Password").modal(true).resizable(false).default_width(340).build();
-    window.set_transient_for(parent);
-    // Settings' own app id, so the bar and dock count it as Settings.
-    window.set_application(parent.and_then(|parent| parent.application()).as_ref());
-    window.add_css_class("settings");
-    window.add_css_class("dialog");
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    column.add_css_class("page");
-    let note = ui::note("Settings needs your password to change how sudo checks who you are.");
-    note.set_wrap(true);
-    column.append(&note);
-    let entry = gtk::PasswordEntry::builder().show_peek_icon(true).placeholder_text("Password").build();
-    entry.add_css_class("field");
-    entry.update_property(&[gtk::accessible::Property::Label("Password")]);
-    column.append(&entry);
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    buttons.set_halign(gtk::Align::End);
-    let answered = Rc::new(RefCell::new(Some(Box::new(answered) as Box<dyn Fn(Option<Zeroizing<String>>)>)));
-    let finish = {
-        let (answered, window) = (answered.clone(), window.downgrade());
-        move |password: Option<Zeroizing<String>>| {
-            if let Some(answered) = answered.borrow_mut().take() {
-                answered(password);
-            }
-            if let Some(window) = window.upgrade() {
-                window.close();
-            }
-        }
-    };
-    let cancel = ui::button("Cancel", {
-        let finish = finish.clone();
-        move |_| finish(None)
-    });
-    let go = ui::button("Continue", {
-        let (finish, entry) = (finish.clone(), entry.clone());
-        move |_| finish(Some(Zeroizing::new(entry.text().to_string())))
-    });
-    go.add_css_class("suggested");
-    entry.connect_activate({
-        let finish = finish.clone();
-        move |entry| finish(Some(Zeroizing::new(entry.text().to_string())))
-    });
-    // Closing the window counts as cancelling.
-    window.connect_close_request(move |_| {
-        if let Some(answered) = answered.borrow_mut().take() {
-            answered(None);
-        }
-        glib::Propagation::Proceed
-    });
-    buttons.append(&cancel);
-    buttons.append(&go);
-    column.append(&buttons);
-    window.set_child(Some(&column));
-    window.present();
+    match privileged::sudo(HELPER, vec![if on { "on" } else { "off" }.to_owned()], password, None).await {
+        Ok(_) => Ok(()),
+        Err(privileged::Failure::Password) => Err("That password isn’t right.".to_owned()),
+        Err(privileged::Failure::Other(text)) => Err(text),
+    }
 }
 
 #[cfg(test)]

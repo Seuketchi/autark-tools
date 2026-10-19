@@ -167,8 +167,6 @@ impl Hardware {
         let window = gtk::ApplicationWindow::builder().application(app).title("Hardware").default_width(760).default_height(780).build();
         window.add_css_class("hw");
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
         let title = gtk::Label::builder().label("Hardware").xalign(0.0).build();
         title.add_css_class("page-title");
         let subtitle = gtk::Label::builder().label("Scanning…").xalign(0.0).build();
@@ -182,9 +180,9 @@ impl Hardware {
         rescan.set_valign(gtk::Align::Center);
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         top.add_css_class("top");
-        top.append(&controls);
         top.append(&names);
         top.append(&rescan);
+        top.append(&autark_common::chrome::controls(true));
         let handle = gtk::WindowHandle::builder().child(&top).build();
 
         let (attention, laptop, live, radios, list) = (gtk::Box::new(gtk::Orientation::Vertical, 10), card(), card(), card(), gtk::Box::new(gtk::Orientation::Vertical, 0));

@@ -1,4 +1,4 @@
-//! The window: the sidebar (window controls, search, the panes) and the open pane. Panes are built the first
+//! The window: the sidebar (search, the panes) and the open pane. Panes are built the first
 //! time they're opened and kept, each keeping itself current.
 
 use std::cell::{Cell, RefCell};
@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::{gdk, gio, glib};
 
 use crate::panes::{self, INDEX, PANES};
 use crate::{bus, config, icon, ui};
@@ -35,9 +35,6 @@ impl Shell {
         window.add_css_class("settings");
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
-        controls.set_halign(gtk::Align::Start);
         let search = gtk::SearchEntry::builder().placeholder_text("Search").build();
         search.add_css_class("search");
 
@@ -63,17 +60,34 @@ impl Shell {
         side.add_css_class("sidebar");
         side.set_size_request(252, -1);
         side.set_hexpand(false);
-        side.append(&gtk::WindowHandle::builder().child(&controls).build());
         side.append(&search);
         side.append(&gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&lists).build());
 
         let pages = gtk::Stack::builder().hexpand(true).vexpand(true).transition_type(gtk::StackTransitionType::None).build();
         let main = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         main.append(&side);
-        main.append(&gtk::WindowHandle::builder().child(&pages).hexpand(true).build());
+        // The window buttons float at the pane's top right, above the pane's own title.
+        let controls = autark_common::chrome::controls(true);
+        controls.set_valign(gtk::Align::Start);
+        controls.set_margin_top(10);
+        controls.set_margin_end(12);
+        let over = gtk::Overlay::builder().child(&pages).hexpand(true).build();
+        over.add_overlay(&controls);
+        main.append(&gtk::WindowHandle::builder().child(&over).hexpand(true).build());
         window.set_child(Some(&main));
 
         let shell = Rc::new(Self { window, nav, browse, results, pages, search, searches: Cell::new(0), debounce: ui::Debounce::default(), first: RefCell::new(None) });
+        // `win.show-pane` with a pane's id opens it, for a pane that points at another (Network at Wi-Fi).
+        let open = gio::SimpleAction::new("show-pane", Some(glib::VariantTy::STRING));
+        open.connect_activate({
+            let shell = Rc::downgrade(&shell);
+            move |_, id| {
+                if let (Some(shell), Some(id)) = (shell.upgrade(), id.and_then(|id| id.get::<String>())) {
+                    shell.show(&id);
+                }
+            }
+        });
+        shell.window.add_action(&open);
         for (id, button) in &shell.nav {
             let (shell, id) = (Rc::downgrade(&shell), *id);
             button.connect_clicked(move |_| {

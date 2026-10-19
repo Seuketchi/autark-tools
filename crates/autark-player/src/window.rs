@@ -83,15 +83,13 @@ impl Player {
         let problem = gtk::Label::builder().wrap(true).max_width_chars(60).justify(gtk::Justification::Center).halign(gtk::Align::Center).valign(gtk::Align::Center).visible(false).build();
         problem.add_css_class("problem");
 
-        let controls_icon = gtk::WindowControls::new(gtk::PackType::Start);
-        controls_icon.set_decoration_layout(Some("close,minimize,maximize:"));
         let title = gtk::Label::builder().xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::Middle).build();
         title.add_css_class("title");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         top.add_css_class("top");
         top.set_valign(gtk::Align::Start);
-        top.append(&controls_icon);
         top.append(&title);
+        top.append(&autark_common::chrome::controls(true));
         top.set_visible(true);
 
         let play = icon_button("media-playback-start-symbolic", "Play (Space)");

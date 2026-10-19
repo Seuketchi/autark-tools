@@ -174,8 +174,7 @@ impl Viewer {
         canvas.add_css_class("canvas");
         canvas.set_cursor_from_name(Some("grab"));
 
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
+        let controls = autark_common::chrome::controls(true);
         let title = gtk::Label::builder().xalign(0.0).ellipsize(pango::EllipsizeMode::Middle).build();
         title.add_css_class("title");
         let info = gtk::Label::builder().xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build();
@@ -188,7 +187,7 @@ impl Viewer {
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         top.add_css_class("top");
         top.set_valign(gtk::Align::Start);
-        for widget in [controls.upcast_ref::<gtk::Widget>(), title.upcast_ref(), info.upcast_ref(), previous.upcast_ref(), next.upcast_ref(), rotate.upcast_ref(), fit.upcast_ref(), fullscreen.upcast_ref()] {
+        for widget in [title.upcast_ref::<gtk::Widget>(), info.upcast_ref(), previous.upcast_ref(), next.upcast_ref(), rotate.upcast_ref(), fit.upcast_ref(), fullscreen.upcast_ref(), controls.upcast_ref()] {
             top.append(widget);
         }
 
