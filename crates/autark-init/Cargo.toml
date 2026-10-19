@@ -1,9 +1,15 @@
 [package]
 name = "autark-init"
-description = "Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup and tpm2-tss, then hands over to systemd."
+description = "Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup (and its systemd TPM2 token), then hands over to systemd."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
+libcryptsetup-rs = { version = "0.16.1", features = ["mutex"] }
+rustix = { version = "1", features = ["fs", "mount", "process", "stdio", "system", "termios"] }
+zeroize = "1.9.1"
+
+[dev-dependencies]
+libcryptsetup-rs = { version = "0.16.1", features = ["mutex"] }
