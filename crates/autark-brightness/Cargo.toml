@@ -1,0 +1,12 @@
+[package]
+name = "autark-brightness"
+description = "Screen brightness up, down or to a level, for the brightness keys: through logind, so it needs no root."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+autark-common = { version = "0.0.0", path = "../autark-common" }
+async-io = "2.6.0"
+zbus = "6.0.0"
