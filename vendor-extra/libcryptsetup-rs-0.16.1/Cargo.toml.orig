@@ -1,0 +1,59 @@
+[package]
+name = "libcryptsetup-rs"
+version = "0.16.1"
+authors = ["John Baublitz <jbaublitz@redhat.com>"]
+edition = "2021"
+rust-version = "1.87.0"  # LOWEST SUPPORTED RUST TOOLCHAIN
+description = "High level Rust bindings for libcryptsetup"
+license = "MPL-2.0"
+documentation = "https://docs.rs/libcryptsetup-rs"
+homepage = "https://stratis-storage.github.io/"
+repository = "https://github.com/stratis-storage/libcryptsetup-rs"
+build = "build.rs"
+keywords = ["Linux", "encryption", "storage"]
+categories = ["cryptography", "api-bindings", "os::linux-apis"]
+exclude = [".clippy.toml", ".githooks/*", ".gitignore", ".github/*", "Makefile"]
+
+[dependencies.libcryptsetup-rs-sys]
+version = "0.7.0"
+path = "./libcryptsetup-rs-sys"
+
+[dependencies]
+either = "1.6.1"
+libc = "0.2.155"
+bitflags = "2.3.1"
+log = "0.4.20"
+per-thread-mutex = "0.1.4"
+serde_json = "1.0.0"
+
+[dependencies.uuid]
+version = "1.0.0"
+features = ["v4"]
+
+[build-dependencies]
+pkg-config = "0.3.17"
+semver = "1.0.0"
+
+[dev-dependencies]
+base64 = "0.22.0"
+env_logger = "0.11.0"
+loopdev-3 = "0.5.0"
+nix = {version="0.31.1", features=["user"]}
+rand = "0.10.0"
+
+[features]
+mutex = []
+static = ["libcryptsetup-rs-sys/static"]
+
+[lints.rust]
+warnings = { level = "deny" }
+future_incompatible = { level = "deny", priority = 1 }
+unused = { level = "deny", priority = 2}
+rust_2018_idioms = { level = "deny", priority = 3 }
+nonstandard_style = { level = "deny", priority = 4 }
+
+[lints.clippy]
+all = { level = "deny" }
+cargo = { level = "deny", priority = 1 }
+multiple-crate-versions = { level = "allow", priority = 2 }
+ptr-as-ptr = { level = "deny", priority = 3 }
