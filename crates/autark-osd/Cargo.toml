@@ -1,0 +1,12 @@
+[package]
+name = "autark-osd"
+description = "Volume, mute, microphone and brightness keys: does the change and shows it as a pop-up through the notification daemon."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-io = "2.6.0"
+autark-common = { version = "0.0.0", path = "../autark-common" }
+zbus = "6.0.0"

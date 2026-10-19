@@ -25,6 +25,7 @@ members = [
     "crates/autark-nightlight",
     "crates/autark-notes",
     "crates/autark-notifyd",
+    "crates/autark-osd",
     "crates/autark-pim",
     "crates/autark-pkg",
     "crates/autark-player",
