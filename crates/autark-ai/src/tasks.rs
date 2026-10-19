@@ -34,6 +34,9 @@ pub struct Task {
     /// Pages it fetches, https only.
     #[serde(default)]
     pub urls: Vec<String>,
+    /// A reminder: `prompt` is the message itself, shown as it is, as a banner, with no model involved.
+    #[serde(default)]
+    pub remind: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -125,6 +128,12 @@ pub fn check(mut task: Task) -> Result<Task, String> {
         return Err("a task's name can't hold a new line or %".to_owned());
     }
     task.when.calendar()?;
+    if task.remind {
+        // The message is shown as written, so nothing is read or fetched for it.
+        task.reads.clear();
+        task.urls.clear();
+        return Ok(task);
+    }
     let mut reads = Vec::new();
     for path in &task.reads {
         let resolved = crate::files::allowed(path.trim()).map_err(|why| format!("{path}: {why}"))?;
@@ -244,12 +253,22 @@ mod tests {
 
     #[test]
     fn tasks_are_checked() {
-        let task = Task { name: " Peek ".into(), prompt: "Summarise it".into(), when: when("day", 0, "08:00"), reads: vec!["~/.ssh/config".into()], urls: Vec::new() };
+        let task = Task { name: " Peek ".into(), prompt: "Summarise it".into(), when: when("day", 0, "08:00"), reads: vec!["~/.ssh/config".into()], urls: Vec::new(), remind: false };
         assert!(check(task.clone()).is_err());
         let task = Task { reads: vec!["~/autark/log.md".into(), "autark/log.md".into()], urls: vec!["http://example.com".into()], ..task };
         assert!(check(task.clone()).is_err());
         let task = check(Task { urls: vec!["https://www.linuxfromscratch.org/blfs/advisories/".into()], ..task }).unwrap();
         assert_eq!(task.name, "Peek");
         assert_eq!(task.reads, vec!["~/autark/log.md"]);
+    }
+
+    #[test]
+    fn a_reminder_is_its_message_and_a_time() {
+        let reminder = Task { name: "Sleep".into(), prompt: " Time to sleep ".into(), when: when("day", 0, "21:30"), reads: vec!["~/.ssh/config".into()], urls: vec!["http://example.com".into()], remind: true };
+        let reminder = check(reminder).unwrap();
+        assert_eq!(reminder.prompt, "Time to sleep");
+        assert!(reminder.reads.is_empty() && reminder.urls.is_empty());
+        assert_eq!(reminder.when.calendar().unwrap(), "*-*-* 21:30:00");
+        assert!(check(Task { when: when("day", 0, "9.30pm"), ..reminder }).is_err());
     }
 }

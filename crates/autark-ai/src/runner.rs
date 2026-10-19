@@ -31,6 +31,9 @@ const SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop,
 pub fn run(id: &str) -> Result<(), String> {
     let config: Config = autark_common::config::load("ai");
     let task = tasks::load(id)?;
+    if task.remind {
+        return async_io::block_on(remind(&task)).map_err(|err| format!("sending the reminder: {err}"));
+    }
     let result = report(&config, id, &task);
     let delivered = async_io::block_on(deliver(&task, &result));
     if let Err(err) = delivered {
@@ -99,6 +102,15 @@ fn save(id: &str, task: &tasks::Task, report: &str) -> Result<std::path::PathBuf
         let _ = std::fs::remove_file(path);
     }
     Ok(latest)
+}
+
+/// A reminder is its own words as a banner that stays until it's dismissed (normal urgency, so Do Not Disturb still holds it back), and it needs neither the model nor Settings' AI switch.
+async fn remind(task: &tasks::Task) -> zbus::Result<()> {
+    let connection = zbus::Connection::session().await?;
+    let proxy = NotificationsProxy::new(&connection).await?;
+    let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
+    hints.insert("desktop-entry", Variant::from("autark-ai"));
+    proxy.notify("Kith", 0, "", &task.name, &task.prompt, &[], hints, 0).await.map(drop)
 }
 
 /// The result as a card in the notification centre, a banner only if it's urgent; or why the task didn't run.
