@@ -188,6 +188,18 @@ impl Chat {
     }
 
     /// The recent conversation, for the model: what you said, what ran and what Kith answered.
+    /// What you and Kith said, with when: the week Kith keeps, for Recall to search.
+    pub fn spoken(&self) -> Vec<(u64, &'static str, String)> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.what {
+                What::You { text } => Some((entry.time, "you", text.clone())),
+                What::Answer { text, .. } => Some((entry.time, "Kith", text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn transcript(&self) -> String {
         let start = self.entries.len().saturating_sub(RECENT);
         let mut lines = Vec::new();
