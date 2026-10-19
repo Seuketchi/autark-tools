@@ -171,6 +171,17 @@ pub fn check(mut task: Task) -> Result<Task, String> {
     Ok(task)
 }
 
+/// Forgets a task that has nothing left to keep (a reminder that has been delivered): its folder and its timer's
+/// file. The timer should already be off; `daemon-reload` makes systemd drop it from its list.
+pub fn forget(id: &str) {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return;
+    }
+    let _ = std::fs::remove_dir_all(folder().join(id));
+    let _ = std::fs::remove_file(units().join(format!("autark-task@{id}.timer")));
+    let _ = std::process::Command::new("systemctl").args(["--user", "daemon-reload"]).output();
+}
+
 /// A task's id from its name: "Morning build summary" is `morning-build-summary`, numbered when taken.
 fn id_for(name: &str, taken: impl Fn(&str) -> bool) -> String {
     let mut slug = String::new();

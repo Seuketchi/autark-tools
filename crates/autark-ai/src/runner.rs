@@ -36,7 +36,12 @@ pub fn run(id: &str) -> Result<(), String> {
         switch_off(id);
     }
     if task.remind {
-        return async_io::block_on(remind(&task)).map_err(|err| format!("sending the reminder: {err}"));
+        let sent = async_io::block_on(remind(&task)).map_err(|err| format!("sending the reminder: {err}"));
+        // A one-off reminder has done its job once it's delivered: nothing is left in the task list.
+        if sent.is_ok() && task.when.every.trim().eq_ignore_ascii_case("once") {
+            tasks::forget(id);
+        }
+        return sent;
     }
     let result = report(&config, id, &task);
     let delivered = async_io::block_on(deliver(&task, &result));
