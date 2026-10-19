@@ -26,7 +26,11 @@ pub async fn stored(connection: &zbus::Connection, name: &str) -> zbus::Result<S
     let attributes = HashMap::from([("application", "autark-ai"), ("key", name)]);
     let (unlocked, locked): (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) = service.call("SearchItems", &(attributes,)).await?;
     let Some(item) = unlocked.first() else {
-        let why = if locked.is_empty() { "none saved: add it in Settings › AI" } else { "the keyring is locked" };
+        let why = if !locked.is_empty() || any_locked(connection).await {
+            "the keyring is locked: lock the screen and unlock it with your password"
+        } else {
+            "none saved: add it in Settings › AI"
+        };
         return Err(zbus::Error::Failure(why.to_owned()));
     };
     // The "plain" algorithm: the secret crosses the session bus, which only this user's processes reach.
@@ -37,6 +41,23 @@ pub async fn stored(connection: &zbus::Connection, name: &str) -> zbus::Result<S
         let _ = session.call_noreply("Close", &()).await;
     }
     String::from_utf8(secret?.2).map_err(|_| zbus::Error::Failure("the saved key isn't text".to_owned()))
+}
+
+/// Whether any keyring collection is locked. A search skips a locked collection's items without listing them, so a
+/// locked keyring looks the same as an empty one unless this is asked.
+async fn any_locked(connection: &zbus::Connection) -> bool {
+    let check = async {
+        let service = zbus::Proxy::new(connection, SERVICE, "/org/freedesktop/secrets", "org.freedesktop.Secret.Service").await?;
+        let collections: Vec<OwnedObjectPath> = service.get_property("Collections").await?;
+        for path in collections {
+            let collection = zbus::Proxy::new(connection, SERVICE, path.as_str(), "org.freedesktop.Secret.Collection").await?;
+            if collection.get_property::<bool>("Locked").await? {
+                return Ok::<bool, zbus::Error>(true);
+            }
+        }
+        Ok(false)
+    };
+    check.await.unwrap_or(false)
 }
 
 /// Asks `questions` (id to typed question) about `state`, and returns the `answers` object.
