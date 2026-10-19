@@ -17,6 +17,7 @@ mod log;
 mod mcp;
 mod memory;
 mod ollama;
+mod recall;
 mod route;
 mod runner;
 mod senses;

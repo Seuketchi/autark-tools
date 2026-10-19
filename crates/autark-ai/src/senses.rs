@@ -13,6 +13,8 @@ pub enum Subject {
     Tasks,
     /// News and look-ups: a web search, when it is on.
     Web,
+    /// What the user said to Kith before, and what is in their notes.
+    Recall,
 }
 
 /// What the question is about.
@@ -35,6 +37,9 @@ pub fn subjects(question: &str) -> Vec<Subject> {
     if has(&["news", "latest", "look up", "lookup", "search for", "search the web", "what happened"]) {
         found.push(Subject::Web);
     }
+    if has(&["my notes", "in my notes", "we discussed", "we talked", "we decided", "i told you", "you told me", "did i say", "did i tell", "remember when", "last week", "what did i"]) {
+        found.push(Subject::Recall);
+    }
     found
 }
 
@@ -45,7 +50,7 @@ pub fn unavailable(subject: Subject) -> &'static str {
         Subject::Mail => "Kith cannot read the user's email yet: no mail account is connected. Tell the user that in one sentence. Do not make up messages.",
         Subject::Tasks => "Kith cannot see the user's tasks yet: no task list is connected. Tell the user that in one sentence. Do not make up tasks.",
         Subject::Web => "Kith cannot search the internet right now: web search is off or not set up. Tell the user that in one sentence. Do not make up news or links.",
-        Subject::System => "",
+        Subject::System | Subject::Recall => "",
     }
 }
 
