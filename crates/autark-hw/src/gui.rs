@@ -33,7 +33,7 @@ fn snapshot() -> Snapshot {
     let loaded = doctor::loaded_modules();
     let notes = kernel_log::read();
     let findings = doctor::diagnose(&Machine { devices: &devices, aliases: &aliases, loaded: &loaded, notes: &notes, firmware_root: Path::new("/lib/firmware") });
-    let loose = doctor::loose_notes(&findings, &notes).into_iter().cloned().collect();
+    let loose = doctor::loose_notes(&findings, &notes, &doctor::loaded_modules()).into_iter().cloned().collect();
     let lighting = doctor::lighting_devices(&findings).into_iter().map(|device| device.title()).collect();
     Snapshot { kernel, findings, loose, lighting }
 }
