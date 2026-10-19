@@ -99,6 +99,7 @@ fn wants_task(text: &str) -> bool {
     ["every ", "each ", "remind me", "daily", "weekly", "monthly", "nightly", "hourly", "weekday", "weekend", "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays"]
         .iter()
         .any(|word| text.contains(word))
+        || crate::schedule::once(&text, chrono::Local::now().naive_local()).is_some()
 }
 
 /// Whether the sentence asks to remember something or says something lasting about the user; only then is the
@@ -298,8 +299,12 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
     // A task asks for later, so nothing is answered now; its files are the task's.
     let task = match answer.task.filter(|task| !task.name.trim().is_empty() && !task.prompt.trim().is_empty()) {
         Some(raw) => {
-            let when = crate::tasks::When { every: raw.every, day: raw.day.clamp(0.0, 31.0) as u8, time: raw.time };
-            let task = crate::tasks::Task { name: raw.name, prompt: raw.prompt, when, reads: std::mem::take(&mut files), urls: crate::web::named(text), remind: raw.remind || text.to_lowercase().contains("remind me") };
+            // A one-off time is read from the sentence by code; the model's guess at a date is not used.
+            let when = match crate::schedule::once(text, chrono::Local::now().naive_local()) {
+                Some(at) => crate::tasks::When { every: "once".to_owned(), date: at.date().to_string(), day: 0, time: at.format("%H:%M").to_string() },
+                None => crate::tasks::When { every: raw.every, date: String::new(), day: raw.day.clamp(0.0, 31.0) as u8, time: raw.time },
+            };
+            let task = crate::tasks::Task { name: raw.name, prompt: raw.prompt, when, reads: std::mem::take(&mut files), urls: crate::web::named(text), remind: raw.remind || text.to_lowercase().contains("remind me"), skill: String::new() };
             Some(crate::tasks::check(task).map_err(|why| format!("the task doesn't fit: {why}"))?)
         }
         None => None,
@@ -513,6 +518,20 @@ mod tests {
         );
         assert_eq!(routed.confidence, 0.8);
         assert!(routed.question.is_empty());
+    }
+
+    #[test]
+    fn a_one_off_reminder_is_read_by_code_not_guessed_by_the_model() {
+        // The model guesses a daily 22:00; the sentence says "in 30 minutes".
+        let answer = json!({ "confidence": 0.95, "question": "", "actions": [],
+            "task": { "name": "Stretch", "prompt": "Time to stretch", "every": "day", "time": "22:00", "remind": true } });
+        let routed = parse(answer, "remind me in 30 minutes to stretch", &[], &[]).unwrap();
+        let task = routed.task.unwrap();
+        assert_eq!(task.when.every, "once");
+        let at = chrono::NaiveDateTime::parse_from_str(&format!("{} {}", task.when.date, task.when.time), "%Y-%m-%d %H:%M").unwrap();
+        let ahead = (at - chrono::Local::now().naive_local()).num_minutes();
+        assert!((28..=31).contains(&ahead), "{ahead} minutes ahead");
+        assert!(wants_task("remind me tomorrow at 9am to call") && !wants_task("how many hours are in a day"));
     }
 
     #[test]

@@ -20,6 +20,7 @@ mod ollama;
 mod recall;
 mod route;
 mod runner;
+mod schedule;
 mod senses;
 mod skills;
 mod server;

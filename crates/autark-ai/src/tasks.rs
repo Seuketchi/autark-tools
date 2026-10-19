@@ -37,12 +37,18 @@ pub struct Task {
     /// A reminder: `prompt` is the message itself, shown as it is, as a banner, with no model involved.
     #[serde(default)]
     pub remind: bool,
+    /// The saved skill (see `skills`) whose steps this task runs each time, by name; empty for none.
+    #[serde(default)]
+    pub skill: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct When {
-    /// `day`, `weekdays`, `weekends`, a weekday (`monday`…) or `month`.
+    /// `day`, `weekdays`, `weekends`, a weekday (`monday`…), `month`, or `once` for a single time on `date`.
     pub every: String,
+    /// `YYYY-MM-DD`, for `once`.
+    #[serde(default)]
+    pub date: String,
     /// The day of the month, for `month`.
     #[serde(default)]
     pub day: u8,
@@ -64,6 +70,10 @@ impl When {
         let at = format!("{hour:02}:{minute:02}:00");
         let every = self.every.trim().to_lowercase();
         Ok(match every.as_str() {
+            "once" => {
+                let date = chrono::NaiveDate::parse_from_str(self.date.trim(), "%Y-%m-%d").map_err(|_| format!("“{}” isn't a date like 2026-10-20", self.date))?;
+                format!("{date} {at}")
+            }
             "day" => format!("*-*-* {at}"),
             "weekdays" => format!("Mon..Fri *-*-* {at}"),
             "weekends" => format!("Sat,Sun *-*-* {at}"),
@@ -74,6 +84,14 @@ impl When {
                 None => return Err(format!("“{every}” isn't a schedule Kith knows")),
             },
         })
+    }
+}
+
+impl When {
+    /// Whether a `once` time is still ahead of `now`, within a minute's grace so one made for this minute holds.
+    pub fn upcoming(&self, now: chrono::NaiveDateTime) -> bool {
+        let at = chrono::NaiveDate::parse_from_str(self.date.trim(), "%Y-%m-%d").ok().and_then(|date| chrono::NaiveTime::parse_from_str(self.time.trim(), "%H:%M").ok().map(|time| date.and_time(time)));
+        at.is_some_and(|at| at + chrono::Duration::minutes(1) > now)
     }
 }
 
@@ -128,6 +146,9 @@ pub fn check(mut task: Task) -> Result<Task, String> {
         return Err("a task's name can't hold a new line or %".to_owned());
     }
     task.when.calendar()?;
+    if task.when.every.trim().eq_ignore_ascii_case("once") && !task.when.upcoming(chrono::Local::now().naive_local()) {
+        return Err("that time has passed".to_owned());
+    }
     if task.remind {
         // The message is shown as written, so nothing is read or fetched for it.
         task.reads.clear();
@@ -229,7 +250,7 @@ mod tests {
     use super::*;
 
     fn when(every: &str, day: u8, time: &str) -> When {
-        When { every: every.into(), day, time: time.into() }
+        When { every: every.into(), date: String::new(), day, time: time.into() }
     }
 
     #[test]
@@ -253,7 +274,7 @@ mod tests {
 
     #[test]
     fn tasks_are_checked() {
-        let task = Task { name: " Peek ".into(), prompt: "Summarise it".into(), when: when("day", 0, "08:00"), reads: vec!["~/.ssh/config".into()], urls: Vec::new(), remind: false };
+        let task = Task { name: " Peek ".into(), prompt: "Summarise it".into(), when: when("day", 0, "08:00"), reads: vec!["~/.ssh/config".into()], urls: Vec::new(), remind: false, skill: String::new() };
         assert!(check(task.clone()).is_err());
         let task = Task { reads: vec!["~/autark/log.md".into(), "autark/log.md".into()], urls: vec!["http://example.com".into()], ..task };
         assert!(check(task.clone()).is_err());
@@ -263,8 +284,20 @@ mod tests {
     }
 
     #[test]
+    fn a_one_off_is_a_date_and_a_time_that_has_not_passed() {
+        let once = |date: &str, time: &str| When { every: "once".into(), date: date.into(), day: 0, time: time.into() };
+        assert_eq!(once("2026-10-20", "9:05").calendar().unwrap(), "2026-10-20 09:05:00");
+        assert!(once("tomorrow", "09:00").calendar().is_err());
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 10, 19).unwrap().and_hms_opt(18, 0, 0).unwrap();
+        assert!(once("2026-10-19", "18:30").upcoming(now) && once("2026-10-19", "18:00").upcoming(now), "this minute still holds");
+        assert!(!once("2026-10-19", "17:00").upcoming(now) && !once("2026-10-18", "23:59").upcoming(now));
+        let past = Task { name: "Old".into(), prompt: "Stretch".into(), when: once("2020-01-01", "09:00"), reads: Vec::new(), urls: Vec::new(), remind: true, skill: String::new() };
+        assert_eq!(check(past).unwrap_err(), "that time has passed");
+    }
+
+    #[test]
     fn a_reminder_is_its_message_and_a_time() {
-        let reminder = Task { name: "Sleep".into(), prompt: " Time to sleep ".into(), when: when("day", 0, "21:30"), reads: vec!["~/.ssh/config".into()], urls: vec!["http://example.com".into()], remind: true };
+        let reminder = Task { name: "Sleep".into(), prompt: " Time to sleep ".into(), when: when("day", 0, "21:30"), reads: vec!["~/.ssh/config".into()], urls: vec!["http://example.com".into()], remind: true, skill: String::new() };
         let reminder = check(reminder).unwrap();
         assert_eq!(reminder.prompt, "Time to sleep");
         assert!(reminder.reads.is_empty() && reminder.urls.is_empty());

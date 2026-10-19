@@ -376,7 +376,18 @@ impl Ai {
         self.announce(emitter, self.busy.change(1, 0)).await;
         let answer = self.json("route", json!(text), route::system_prompt(&facts, text), user, route::schema(&candidates, text)).await;
         self.announce(emitter, self.busy.change(-1, 0)).await;
-        answer.and_then(|answer| route::parse(answer, text, &candidates, &facts)).map_err(Error::Engine)
+        answer
+            .and_then(|answer| route::parse(answer, text, &candidates, &facts))
+            .map(|mut routed| {
+                // A task that names a saved skill runs that skill's steps each time.
+                if let Some(task) = &mut routed.task
+                    && let Some(skill) = skills::matching(text, &skills::all())
+                {
+                    task.skill = skill.name;
+                }
+                routed
+            })
+            .map_err(Error::Engine)
     }
 
     async fn announce(&self, emitter: &SignalEmitter<'_>, state: Option<&'static str>) {
