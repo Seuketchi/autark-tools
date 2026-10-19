@@ -112,6 +112,26 @@ fn results(reply: &Value, limit: usize, width: usize) -> String {
     if text.is_empty() { "No results.".to_owned() } else { text.join("\n\n") }
 }
 
+/// The top `count` results of a `lookup` as the sources wrote them, for an answer that needs no model; `None`
+/// when there is nothing to show. A small model reading a version table mixed up its labels, so a look-up shows the
+/// source's own words and where they are.
+pub fn quoted(found: &str, count: usize) -> Option<String> {
+    let items: Vec<String> = found
+        .split("\n\n")
+        .filter_map(|block| {
+            let mut lines = block.lines();
+            let (title, url) = (lines.next()?.trim(), lines.next()?.trim());
+            if !url.starts_with("https://") {
+                return None;
+            }
+            let snippet = lines.map(str::trim).collect::<Vec<_>>().join(" ");
+            Some(if snippet.is_empty() { format!("• {title}\n  {url}") } else { format!("• {title}: {snippet}\n  {url}") })
+        })
+        .take(count)
+        .collect();
+    if items.is_empty() { None } else { Some(format!("Here is what the top sources say, in their own words:\n{}", items.join("\n"))) }
+}
+
 fn short(text: &str, width: usize) -> String {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.chars().count() <= width {
@@ -196,6 +216,16 @@ mod tests {
         assert!(found.contains("stable: 7.2.11 | a | b | xxx"));
         assert!(found.len() < 3 * (LOOKUP_WIDTH + 40));
         assert!(found.contains('…'));
+    }
+
+    #[test]
+    fn a_lookup_is_quoted_with_its_addresses() {
+        let found = "The Linux Kernel Archives\nhttps://www.kernel.org/\nmainline: 7.3 ; stable: 7.2.11\n\nWikipedia\nhttps://en.wikipedia.org/x\nReleases\n\nThird\nhttps://c.org/\nmore";
+        let quoted = quoted(found, 2).unwrap();
+        assert!(quoted.contains("• The Linux Kernel Archives: mainline: 7.3 ; stable: 7.2.11\n  https://www.kernel.org/"));
+        assert!(quoted.contains("https://en.wikipedia.org/x") && !quoted.contains("c.org"));
+        assert_eq!(super::quoted("No results.", 2), None);
+        assert_eq!(super::quoted("", 2), None);
     }
 
     #[test]

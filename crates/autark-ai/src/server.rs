@@ -127,11 +127,11 @@ impl Ai {
         seen.join("\n\n")
     }
 
-    /// Search results for a look-up question, or why Kith can't search, in the words the model is given.
-    async fn looked_up(&self, connection: &zbus::Connection, question: &str) -> String {
+    /// The short search results for a look-up question, or `None` when search is off or failed. Logged like any call.
+    async fn search_found(&self, connection: &zbus::Connection, question: &str) -> Option<String> {
         let config = self.config();
         if !config.web.search || config.local_only {
-            return senses::unavailable(senses::Subject::Web).to_owned();
+            return None;
         }
         let start = Instant::now();
         let result = async {
@@ -141,12 +141,17 @@ impl Ai {
         }
         .await;
         log::record("search", "firecrawl", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
-        match result {
-            Ok(found) if !found.trim().is_empty() => format!(
+        result.ok().filter(|found| !found.trim().is_empty())
+    }
+
+    /// Search results for a look-up question, or why Kith can't search, in the words the model is given.
+    async fn looked_up(&self, connection: &zbus::Connection, question: &str) -> String {
+        match self.search_found(connection, question).await {
+            Some(found) => format!(
                 "Web search results for the question. Answer only from these. Say which site you take it from. Copy names and numbers exactly as written, \
                  keeping each label (\"stable\", \"mainline\", \"beta\") with its own number; if they don't answer it, say so.\n{found}"
             ),
-            _ => senses::unavailable(senses::Subject::Web).to_owned(),
+            None => senses::unavailable(senses::Subject::Web).to_owned(),
         }
     }
 
@@ -253,7 +258,7 @@ impl Ai {
             let user = if ask.context.is_empty() { ask.prompt.clone() } else { format!("{}\n\nQuestion: {}", ask.context, ask.prompt) };
             let start = Instant::now();
             let mut text = String::new();
-            let result = ollama.stream(&ask.system, &user, |piece| {
+            let mut write = |piece: &str| -> bool {
                 if stopped.lock().map(|mut stopped| stopped.remove(&id)).unwrap_or(false) {
                     return false;
                 }
@@ -272,13 +277,20 @@ impl Ai {
                     eprintln!("ai: sending an answer: {err}");
                 }
                 true
-            });
+            };
+            let result = match &ask.verbatim {
+                Some(said) => {
+                    write(said);
+                    Ok(())
+                }
+                None => ollama.stream(&ask.system, &user, &mut write),
+            };
             let answer = result.map(|()| json!(text));
             let mut input = json!({ "prompt": ask.prompt, "context": ask.context });
             if let (Some(input), Value::Object(logged)) = (input.as_object_mut(), logged) {
                 input.extend(logged);
             }
-            log::record(if chat.is_some() { "chat" } else { "ask" }, "ollama", input, &answer, start.elapsed());
+            log::record(if chat.is_some() { "chat" } else { "ask" }, if ask.verbatim.is_some() { "firecrawl" } else { "ollama" }, input, &answer, start.elapsed());
             announce(if started { busy.change(0, -1) } else { busy.change(-1, 0) });
             let error = answer.err().unwrap_or_default();
             if let Ok(mut stopped) = stopped.lock() {
@@ -415,6 +427,8 @@ struct Ask {
     context: String,
     /// The conversation's entry the answer goes in, for a chat answer.
     entry: Option<u64>,
+    /// An answer written already, shown as it is with no model: what a look-up's sources say.
+    verbatim: Option<String>,
 }
 
 const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
@@ -537,12 +551,18 @@ impl Ai {
             context.push_str(&format!("Conversation so far:\n{conversation}\n\n"));
         }
         context.push_str(&read);
-        let seen = self.senses(connection, &question).await;
-        if !seen.is_empty() {
-            context.push_str(&format!("\n{seen}"));
+        // A question that is only a look-up shows what its sources say: a small model misread their labels.
+        let lookup_only = senses::subjects(&question) == [senses::Subject::Web];
+        let found = if lookup_only { self.search_found(connection, &question).await } else { None };
+        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 2));
+        if verbatim.is_none() {
+            let seen = if lookup_only { senses::unavailable(senses::Subject::Web).to_owned() } else { self.senses(connection, &question).await };
+            if !seen.is_empty() {
+                context.push_str(&format!("\n{seen}"));
+            }
         }
         let logged = json!({ "files": outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>() });
-        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry) }, logged);
+        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim }, logged);
         Ok((id, entry, outcome))
     }
 
@@ -772,7 +792,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None }, json!({})))
+        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None }, json!({})))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
@@ -784,7 +804,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None }, json!({ "files": read })), outcome))
+        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None }, json!({ "files": read })), outcome))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.
