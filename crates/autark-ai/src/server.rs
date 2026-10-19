@@ -290,6 +290,7 @@ impl Ai {
                         let (notes, stopped) = agent::gather(
                             &ask.prompt,
                             web_open,
+                            agent::seeds(&ask.prompt, web_open),
                             |system, step, schema| {
                                 let start = Instant::now();
                                 let choice = ollama.json(system, step, schema);

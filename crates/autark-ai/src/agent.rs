@@ -97,32 +97,65 @@ pub fn shown(note: &Note) -> String {
     }
 }
 
-/// Runs the loop. `decide` is one model call (system prompt, user text, schema) and `run` one tool (name, input);
-/// `shown_step` is told each step as it starts and says whether to go on (false when the user pressed Stop).
-/// Returns what was found, which may be nothing, and whether it was stopped.
+/// The looks the question itself calls for, which need no model to choose: the laptop's numbers for a system
+/// question, a search of the question for a look-up. The model then only decides whether anything else is needed.
+pub fn seeds(question: &str, web: bool) -> Vec<(&'static str, String)> {
+    senses::subjects(question)
+        .into_iter()
+        .filter_map(|subject| match subject {
+            senses::Subject::System => Some(("system", String::new())),
+            senses::Subject::Web if web => Some(("web", question.chars().take(200).collect())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What to search for: the model's words, unless they are empty or just the tool's name, then the question.
+fn query(input: &str, question: &str) -> String {
+    let words = input.trim();
+    if words.chars().count() < 4 || words.eq_ignore_ascii_case("web") || words.eq_ignore_ascii_case("search") {
+        question.chars().take(200).collect()
+    } else {
+        words.chars().take(200).collect()
+    }
+}
+
+/// Runs the loop. `seeds` run first, then `decide` (one model call: system prompt, user text, schema) picks more,
+/// `run` runs a tool (name, input), and `shown_step` is told each step as it starts and says whether to go on
+/// (false when the user pressed Stop). Seeds count toward the step limit. Returns what was found, which may be
+/// nothing, and whether it was stopped.
 pub fn gather(
     question: &str,
     web: bool,
+    seeds: Vec<(&'static str, String)>,
     mut decide: impl FnMut(&str, &str, &Value) -> Result<Value, String>,
     mut run: impl FnMut(&str, &str) -> Result<String, String>,
     mut shown_step: impl FnMut(&Note) -> bool,
 ) -> (Vec<Note>, bool) {
     let mut notes: Vec<Note> = Vec::new();
     let mut read_a_file = false;
+    let mut seeds = seeds.into_iter();
     for _ in 0..MAX_STEPS {
         let tools = open(web, read_a_file);
-        let choice = match decide(&system_prompt(&tools), &user(question, &notes), &schema(&tools)) {
-            Ok(choice) => choice,
-            Err(why) => {
-                eprintln!("ai: the tool loop's step: {why}");
-                break;
+        let (tool, input) = match seeds.next() {
+            Some((tool, input)) => (tool.to_owned(), input),
+            None => {
+                let choice = match decide(&system_prompt(&tools), &user(question, &notes), &schema(&tools)) {
+                    Ok(choice) => choice,
+                    Err(why) => {
+                        eprintln!("ai: the tool loop's step: {why}");
+                        break;
+                    }
+                };
+                let tool = choice["tool"].as_str().unwrap_or("answer");
+                if !tools.contains(&tool) {
+                    break;
+                }
+                let input = choice["input"].as_str().unwrap_or_default().trim();
+                (tool.to_owned(), if tool == "web" { query(input, question) } else { input.chars().take(200).collect() })
             }
         };
-        let tool = choice["tool"].as_str().unwrap_or("answer");
-        if !tools.contains(&tool) {
-            break;
-        }
-        let input: String = choice["input"].as_str().unwrap_or_default().trim().chars().take(200).collect();
+        let tool = tool.as_str();
         if notes.iter().any(|note| note.tool == tool && note.input == input) {
             break;
         }
@@ -191,6 +224,7 @@ mod tests {
         let (notes, stopped) = gather(
             "is my disk ok and what's the newest kernel",
             web,
+            Vec::new(),
             |_, _, schema| {
                 let (tool, input) = script.get(at).copied().unwrap_or(("answer", ""));
                 at += 1;
@@ -247,10 +281,10 @@ mod tests {
     #[test]
     fn a_failed_tool_is_a_note_and_the_user_can_stop_it() {
         let mut calls = 0;
-        let (notes, stopped) = gather("q", false, |_, _, _| Ok(json!({ "tool": "read_file", "input": "~/.ssh/id_ed25519" })), |_, _| Err("Kith doesn't read dotfiles".to_owned()), |_| true);
+        let (notes, stopped) = gather("q", false, Vec::new(), |_, _, _| Ok(json!({ "tool": "read_file", "input": "~/.ssh/id_ed25519" })), |_, _| Err("Kith doesn't read dotfiles".to_owned()), |_| true);
         assert_eq!(notes[0].result, "failed: Kith doesn't read dotfiles");
         assert!(!stopped);
-        let (notes, stopped) = gather("q", false, |_, _, _| Ok(json!({ "tool": "system", "input": "" })), |_, _| Ok(String::new()), |_| {
+        let (notes, stopped) = gather("q", false, Vec::new(), |_, _, _| Ok(json!({ "tool": "system", "input": "" })), |_, _| Ok(String::new()), |_| {
             calls += 1;
             false
         });
@@ -263,6 +297,7 @@ mod tests {
         let (notes, stopped) = gather(
             "q",
             true,
+            Vec::new(),
             |_, _, _| if std::mem::take(&mut first) { Ok(json!({ "tool": "system", "input": "" })) } else { Err("timeout".to_owned()) },
             |_, _| Ok("disk 80%".to_owned()),
             |_| true,
@@ -278,6 +313,24 @@ mod tests {
         assert!(wants_agent("check my battery then tell me the news"));
         assert!(!wants_agent("how much disk is left"));
         assert!(!wants_agent("why is the sky blue"));
+    }
+
+    #[test]
+    fn what_the_question_calls_for_runs_first_without_the_model() {
+        let q = "how much disk is left and what's the latest kernel news";
+        assert_eq!(seeds(q, true), vec![("system", String::new()), ("web", q.to_owned())]);
+        assert_eq!(seeds(q, false), vec![("system", String::new())]);
+        let mut asked = 0;
+        let (notes, _) = gather(q, true, seeds(q, true), |_, _, _| { asked += 1; Ok(json!({ "tool": "answer", "input": "" })) }, |tool, _| Ok(format!("{tool} result")), |_| true);
+        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["system", "web"]);
+        assert_eq!(asked, 1, "the model is asked once, whether anything else is needed");
+    }
+
+    #[test]
+    fn a_junk_search_is_the_question_instead() {
+        assert_eq!(query("web", "latest kernel news"), "latest kernel news");
+        assert_eq!(query("", "latest kernel news"), "latest kernel news");
+        assert_eq!(query("linux 7.3 release", "latest kernel news"), "linux 7.3 release");
     }
 
     #[test]
