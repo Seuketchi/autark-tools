@@ -103,7 +103,7 @@ fn tools(offered: Offered) -> Value {
     if offered.act {
         tools.as_array_mut().into_iter().for_each(|tools| tools.push(json!({
             "name": "run_actions",
-            "description": "Changes the laptop through Kith's catalog, without asking the user: set_volume and set_brightness (percent), mute, wifi, focus and night_light (on), lock, sleep, open_app (name). Lock and sleep run last.",
+            "description": "Changes the laptop through Kith's catalog, without asking the user: set_volume and set_brightness (percent), mute, wifi, focus and night_light (on), lock, sleep, open_app (name), open_url (url). Lock and sleep run last.",
             "inputSchema": { "type": "object", "properties": { "actions": { "type": "array", "items": { "type": "object", "properties": { "action": { "type": "string" } }, "required": ["action"] }, "description": "e.g. [{\"action\":\"mute\",\"on\":true},{\"action\":\"set_volume\",\"percent\":30}]" } }, "required": ["actions"] },
         })));
     }

@@ -60,6 +60,10 @@ pub enum Action {
     OpenApp {
         name: String,
     },
+    /// Opens a web address in the default browser.
+    OpenUrl {
+        url: String,
+    },
     /// Only a suggestion offers these three; they aren't in the catalog the model picks from.
     /// Asks an app you started to quit, by its cgroup under `app.slice`.
     QuitApp {
@@ -75,7 +79,7 @@ pub enum Action {
     },
 }
 
-const CATALOG: [(&str, &str); 9] = [
+const CATALOG: [(&str, &str); 10] = [
     ("set_volume", "set the sound volume (number: percent)"),
     ("mute", "mute or unmute the sound (on: true mutes)"),
     ("set_brightness", "set the screen brightness (number: percent)"),
@@ -85,6 +89,7 @@ const CATALOG: [(&str, &str); 9] = [
     ("lock", "lock the screen"),
     ("sleep", "put the laptop to sleep"),
     ("open_app", "open an app (text: its name)"),
+    ("open_url", "open a website in the browser (text: its address, such as youtube.com)"),
 ];
 
 /// Whether the sentence asks for something on a schedule. Only then is the model offered `task`: a small model
@@ -136,6 +141,7 @@ pub fn system_prompt(facts: &[String], text: &str) -> String {
         "Examples (only actions the sentence asks for; none otherwise):\n\
          mute -> {\"actions\":[{\"name\":\"mute\",\"on\":true,\"confidence\":0.95}],\"question\":\"\",\"confidence\":0.95}\n\
          turn the volume down a bit and open files -> {\"actions\":[{\"name\":\"set_volume\",\"number\":30,\"confidence\":0.7},{\"name\":\"open_app\",\"text\":\"Files\",\"confidence\":0.95}],\"question\":\"\",\"confidence\":0.85}\n\
+         open youtube -> {\"actions\":[{\"name\":\"open_url\",\"text\":\"youtube.com\",\"confidence\":0.9}],\"question\":\"\",\"confidence\":0.9}\n\
          why is the sky blue -> {\"actions\":[],\"question\":\"Why is the sky blue?\",\"confidence\":0.9}",
     );
     if !facts.is_empty() {
@@ -238,6 +244,25 @@ struct RawAction {
 
 /// Checks the model's answer against the catalog, the candidate files and the facts already kept. With no
 /// actions, question or fact, the whole sentence is the question: you asked Kith, so Kith answers.
+/// Whether the sentence names the website: its address (`youtube.com`) or its name (`youtube`); an address with a
+/// path or query has to be written out whole. Asked to "look up" something, a small model invents plausible pages,
+/// so `open_url` keeps to the sites the user asked for.
+fn named_in(text: &str, url: &str) -> bool {
+    let text = text.to_lowercase();
+    let url = url.trim().to_lowercase();
+    let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+    let (host, path) = match rest.find(['/', '?', '#']) {
+        Some(at) => rest.split_at(at),
+        None => (rest, ""),
+    };
+    if !path.trim_matches('/').is_empty() {
+        return text.contains(rest) || text.contains(&url);
+    }
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    let name = host.split('.').next().unwrap_or_default();
+    text.contains(host) || (name.len() >= 3 && text.contains(name))
+}
+
 pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String]) -> Result<Routed, String> {
     let answer: Answer = serde_json::from_value(answer).map_err(|err| format!("the route doesn't fit the schema: {err}"))?;
     let confidence = answer.confidence.clamp(0.0, 1.0);
@@ -248,7 +273,13 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
             let sure = raw.confidence.unwrap_or(confidence).clamp(0.0, 1.0);
             action(raw).map(|action| Chosen { action, confidence: sure })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|chosen| match &chosen.action {
+            Action::OpenUrl { url } => named_in(text, url),
+            _ => true,
+        })
+        .collect::<Vec<_>>();
     let mut remember: String = answer.remember.trim().chars().take(200).collect();
     if facts.iter().any(|fact| fact.eq_ignore_ascii_case(&remember)) {
         remember.clear();
@@ -284,7 +315,7 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
 
 /// What Jev is asked about each catalog action: whether the sentence asks for it, and for the ones with a
 /// switch, which way (the noul is the chance of the first).
-const JEV_ACTIONS: [(&str, &str, Option<&str>); 9] = [
+const JEV_ACTIONS: [(&str, &str, Option<&str>); 10] = [
     ("set_volume", "The user gives a sound volume level, or says to turn the sound up or down. Muting or unmuting alone is not this.", None),
     ("mute", "The user asks for the sound to be muted or unmuted.", Some("The user wants the sound muted, not unmuted.")),
     ("set_brightness", "The user asks for the screen brightness to be set or changed.", None),
@@ -294,6 +325,7 @@ const JEV_ACTIONS: [(&str, &str, Option<&str>); 9] = [
     ("lock", "The user asks for the screen to be locked.", None),
     ("sleep", "The user asks for the laptop to be put to sleep.", None),
     ("open_app", "The user asks for an app to be opened.", None),
+    ("open_url", "The user asks for a website or a web page to be opened, such as YouTube or a web address.", None),
 ];
 
 /// Percent levels a Jev score picks between; the score, 0 to 4, is interpolated to 0 to 100.
@@ -397,6 +429,7 @@ fn action(raw: RawAction) -> Result<Action, String> {
         "night_light" => Action::NightLight { on: on()? },
         "lock" => Action::Lock,
         "sleep" => Action::Sleep,
+        "open_url" => Action::OpenUrl { url: text()? },
         _ => Action::OpenApp { name: text()? },
     })
 }
@@ -471,6 +504,28 @@ mod tests {
         );
         assert_eq!(routed.confidence, 0.8);
         assert!(routed.question.is_empty());
+    }
+
+    #[test]
+    fn a_website_is_an_action_with_its_address() {
+        let answer = json!({ "confidence": 0.9, "question": "", "files": [], "actions": [ { "name": "open_url", "text": "youtube.com", "confidence": 0.9 } ] });
+        let routed = parse(answer, "open youtube", &[], &[]).unwrap();
+        assert_eq!(routed.actions, vec![Chosen { action: Action::OpenUrl { url: "youtube.com".to_owned() }, confidence: 0.9 }]);
+        assert_eq!(serde_json::to_value(&routed).unwrap()["actions"][0], json!({ "action": "open_url", "url": "youtube.com", "confidence": 0.9 }));
+    }
+
+    #[test]
+    fn a_website_must_be_one_the_sentence_names() {
+        assert!(named_in("open youtube", "youtube.com"));
+        assert!(named_in("go to github.com", "https://github.com/"));
+        assert!(named_in("open https://example.org/a/b please", "https://example.org/a/b"));
+        assert!(!named_in("lookup the latest news on the Linux 7.3 release", "https://www.phoronix.com/news/Linux-7.3-Release-Notes.html"));
+        assert!(!named_in("open the browser", "https://google.com"));
+        assert!(!named_in("open youtube", "https://youtube.com/watch?v=abc"));
+        let invented = json!({ "confidence": 0.9, "question": "", "files": [], "actions": [ { "name": "open_url", "text": "https://www.phoronix.com/news/x.html", "confidence": 0.9 } ] });
+        let routed = parse(invented, "lookup the latest news on Linux 7.3", &[], &[]).unwrap();
+        assert!(routed.actions.is_empty());
+        assert_eq!(routed.question, "lookup the latest news on Linux 7.3");
     }
 
     #[test]

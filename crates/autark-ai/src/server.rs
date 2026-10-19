@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, chat, check, events, files, jev, log, memory, route, soul, suggest, tasks, web};
+use crate::{act, chat, check, events, files, jev, log, memory, route, senses, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -110,6 +110,41 @@ impl Ai {
             return Err(Error::Disabled(format!("{name} is off in ai.toml")));
         }
         Ok(())
+    }
+
+    /// What Kith can see about what `question` is about, as context for the answer (see `senses`): the laptop's own
+    /// numbers for a system question, search results for a look-up when search is on, and for anything Kith has no
+    /// source for, a line saying so. Empty when the question is about none of these.
+    async fn senses(&self, connection: &zbus::Connection, question: &str) -> String {
+        let mut seen: Vec<String> = Vec::new();
+        for subject in senses::subjects(question) {
+            seen.push(match subject {
+                senses::Subject::System => senses::system(),
+                senses::Subject::Web => self.looked_up(connection, question).await,
+                other => senses::unavailable(other).to_owned(),
+            });
+        }
+        seen.join("\n\n")
+    }
+
+    /// Search results for a look-up question, or why Kith can't search, in the words the model is given.
+    async fn looked_up(&self, connection: &zbus::Connection, question: &str) -> String {
+        let config = self.config();
+        if !config.web.search || config.local_only {
+            return senses::unavailable(senses::Subject::Web).to_owned();
+        }
+        let start = Instant::now();
+        let result = async {
+            let key = web::key(connection).await?;
+            let query = question.to_owned();
+            blocking::unblock(move || web::search(&key, &query)).await
+        }
+        .await;
+        log::record("search", "firecrawl", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
+        match result {
+            Ok(found) if !found.trim().is_empty() => format!("Web search results for the question (answer only from these, and give the address of what you cite):\n{found}"),
+            _ => senses::unavailable(senses::Subject::Web).to_owned(),
+        }
     }
 
     /// `Check`'s risk from Jev, logged like any call. The command leaves the laptop, which is why `[jev] terminal` is off by default.
@@ -380,7 +415,10 @@ struct Ask {
 }
 
 const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
-                          Use the context when it's given; say so when it doesn't hold the answer.";
+                          You can only see the context given with the question and what you remember about the user. \
+                          You cannot see the user's calendar, mail, tasks, files, screen or system status, and you cannot look \
+                          anything up on the internet, unless it is in the context. When asked for something you can't see or \
+                          don't know, say so in one sentence and what you would need. Never invent events, names, numbers, links or news.";
 
 /// An error as the conversation shows it.
 fn said(error: &Error) -> String {
@@ -480,7 +518,7 @@ impl Ai {
 
     /// `AskFiles` as part of the conversation: answered with what was said before and what Kith remembers, the
     /// answer kept as an entry that grows as it's written. Returns the answer's id, its entry and the files.
-    async fn chat_answer(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, question: String, files: Vec<String>) -> Result<(u32, u64, Vec<(String, String)>), Error> {
+    async fn chat_answer(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, question: String, files: Vec<String>) -> Result<(u32, u64, Vec<(String, String)>), Error> {
         self.allowed(self.config().features.ask, "ask")?;
         let (read, outcome) = blocking::unblock(move || files::read(&files)).await;
         let conversation = lock(&self.chat).transcript();
@@ -496,6 +534,10 @@ impl Ai {
             context.push_str(&format!("Conversation so far:\n{conversation}\n\n"));
         }
         context.push_str(&read);
+        let seen = self.senses(connection, &question).await;
+        if !seen.is_empty() {
+            context.push_str(&format!("\n{seen}"));
+        }
         let logged = json!({ "files": outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>() });
         let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry) }, logged);
         Ok((id, entry, outcome))
@@ -722,19 +764,23 @@ impl Ai {
 
     /// Starts a generated answer and returns its id. The text arrives as `AnswerPiece` signals,
     /// then `AnswerDone`, whose error is empty on success.
-    async fn ask(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, context: String) -> Result<u32, Error> {
+    async fn ask(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, context: String) -> Result<u32, Error> {
         self.allowed(self.config().features.ask, "ask")?;
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
+        let seen = self.senses(connection, &prompt).await;
+        let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
         Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None }, json!({})))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
     /// says how each went, an empty reason for read, before the answer streams.
-    async fn ask_files(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, files: Vec<String>) -> Result<(u32, Vec<(String, String)>), Error> {
+    async fn ask_files(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, files: Vec<String>) -> Result<(u32, Vec<(String, String)>), Error> {
         self.allowed(self.config().features.ask, "ask")?;
         let (context, outcome) = blocking::unblock(move || files::read(&files)).await;
         let read = json!(outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>());
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
+        let seen = self.senses(connection, &prompt).await;
+        let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
         Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None }, json!({ "files": read })), outcome))
     }
 

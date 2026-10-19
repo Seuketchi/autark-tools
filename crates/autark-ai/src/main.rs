@@ -18,6 +18,7 @@ mod memory;
 mod ollama;
 mod route;
 mod runner;
+mod senses;
 mod server;
 mod soul;
 mod suggest;

@@ -93,6 +93,7 @@ async fn one(session: &zbus::Connection, system: &mut Option<zbus::Connection>, 
             result.await.map_err(|error| said("logind", error))
         }
         Action::OpenApp { name } => open(name),
+        Action::OpenUrl { url } => spawn("gio", &["open".to_owned(), web_address(url)?]),
         Action::QuitApp { app } => quit(app),
         Action::OpenFile { path } => {
             let path = openable(path)?;
@@ -139,6 +140,25 @@ fn open(name: &str) -> Result<(), String> {
     let app = autark_common::desktop::find_app(name).ok_or_else(|| format!("no app called “{name}”"))?;
     let (program, args) = app.command.split_first().ok_or_else(|| format!("{} has no command", app.name))?;
     spawn(program, args).map_err(|error| format!("{}: {error}", app.name))
+}
+
+/// A web address that is safe to hand to the browser: http or https only, with a bare name such as `youtube.com`
+/// becoming https; no spaces or control characters, no user name before the host, and a host with a dot.
+fn web_address(text: &str) -> Result<String, String> {
+    let text = text.trim();
+    let (scheme, rest) = match text.split_once("://") {
+        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
+        None => ("https".to_owned(), text),
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let name = host.split(':').next().unwrap_or_default();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("only http and https addresses open, not “{text}”"));
+    }
+    if text.chars().any(|c| c.is_whitespace() || c.is_control()) || host.contains('@') || !name.contains('.') || name.starts_with('.') || name.ends_with('.') {
+        return Err(format!("“{text}” isn't a web address"));
+    }
+    Ok(format!("{scheme}://{rest}"))
 }
 
 /// Starts a program in a process group of its own, so it outlives `autark-ai` restarting.
@@ -194,5 +214,21 @@ fn said(service: &str, error: zbus::Error) -> String {
         zbus::Error::FDO(inner) if matches!(**inner, zbus::fdo::Error::ServiceUnknown(_)) => format!("{service} isn't running"),
         zbus::Error::MethodError(_, Some(message), _) => format!("{service}: {message}"),
         _ => format!("{service}: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_name_becomes_https_and_only_web_addresses_open() {
+        assert_eq!(web_address("youtube.com").unwrap(), "https://youtube.com");
+        assert_eq!(web_address(" https://github.com/Seuketchi ").unwrap(), "https://github.com/Seuketchi");
+        assert_eq!(web_address("HTTP://example.org/a?b=c#d").unwrap(), "http://example.org/a?b=c#d");
+        assert_eq!(web_address("localhost.localdomain:8080/x").unwrap(), "https://localhost.localdomain:8080/x");
+        for bad in ["youtube", "file:///etc/passwd", "javascript:alert(1)", "ftp://x.org", "https://google.com@evil.org", "https://a b.com", "", "https://.com", "evil.\ncom"] {
+            assert!(web_address(bad).is_err(), "{bad:?} should not open");
+        }
     }
 }
