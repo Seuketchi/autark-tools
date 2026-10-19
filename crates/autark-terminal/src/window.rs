@@ -217,13 +217,16 @@ impl Window {
         }
     }
 
-    /// Ctrl+Shift+V: what's on the clipboard goes to the shell, unless it would run by itself and Kith rates it risky.
-    fn paste(self: &Rc<Self>) {
+    /// Ctrl+Shift+V (the clipboard) and Shift+Insert (the selection): what's there goes to the shell, unless it would run by
+    /// itself and Kith rates it risky. Middle-click paste isn't covered: VTE hands that click to a program that asked for the
+    /// mouse, and there is no way to tell whether one did.
+    fn paste(self: &Rc<Self>, selection: bool) {
         let Some(terminal) = self.current() else {
             return;
         };
         let this = self.clone();
-        terminal.clipboard().read_text_async(None::<&gio::Cancellable>, move |result| {
+        let source = if selection { terminal.primary_clipboard() } else { terminal.clipboard() };
+        source.read_text_async(None::<&gio::Cancellable>, move |result| {
             let Ok(Some(text)) = result else { return };
             let text = text.to_string();
             if !check::runs_itself(&text) {
@@ -316,7 +319,14 @@ impl Window {
             "<Control><Shift>v",
             Box::new({
                 let this = this.clone();
-                move || this.paste()
+                move || this.paste(false)
+            }),
+        );
+        add(
+            "<Shift>Insert",
+            Box::new({
+                let this = this.clone();
+                move || this.paste(true)
             }),
         );
         add(

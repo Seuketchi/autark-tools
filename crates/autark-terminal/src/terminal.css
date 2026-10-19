@@ -5,6 +5,14 @@ window.terminal-window {
   font-size: 13px;
 }
 
+/* GTK styles the window's titlebar widget itself, from named colours that other apps' gtk.css can hold in the other theme's values; draw the
+   window's own background through it instead. */
+window.terminal-window .titlebar {
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
 .terminal-titlebar {
   min-height: 40px;
   padding: 0 14px;
