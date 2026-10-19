@@ -181,6 +181,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-brightness"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "autark-common",
+ "zbus",
+]
+
+[[package]]
 name = "autark-calc"
 version = "0.0.0"
 dependencies = [

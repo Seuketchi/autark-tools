@@ -5,6 +5,7 @@ members = [
     "crates/autark-ai",
     "crates/autark-archive",
     "crates/autark-bar",
+    "crates/autark-brightness",
     "crates/autark-calc",
     "crates/autark-calendar",
     "crates/autark-clock",
