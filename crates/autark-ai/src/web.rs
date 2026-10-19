@@ -49,6 +49,10 @@ pub fn fetch(url: &str) -> Result<String, String> {
 const SEARCH_URL: &str = "https://api.firecrawl.dev/v2/search";
 /// How many results a search keeps.
 const RESULTS: usize = 5;
+/// What a lookup for a conversation keeps: a small model on this laptop reads every character slowly, and
+/// mixes up labels in a long table, so it gets the best few results, each cut short.
+const LOOKUP_RESULTS: usize = 3;
+const LOOKUP_WIDTH: usize = 400;
 
 /// Firecrawl's API key: `FIRECRAWL_API_KEY`, else the keyring's (`application = autark-ai`, `key = firecrawl`).
 /// Never logged.
@@ -62,8 +66,17 @@ pub async fn key(connection: &zbus::Connection) -> Result<String, String> {
 /// The best results for `query`, one after another as title, address and snippet. Only search results come
 /// back, not whole pages, and no more than a page's worth.
 pub fn search(key: &str, query: &str) -> Result<String, String> {
+    ask_firecrawl(key, query, RESULTS, usize::MAX)
+}
+
+/// `search`, short enough for the local model to read in a conversation.
+pub fn lookup(key: &str, query: &str) -> Result<String, String> {
+    ask_firecrawl(key, query, LOOKUP_RESULTS, LOOKUP_WIDTH)
+}
+
+fn ask_firecrawl(key: &str, query: &str, limit: usize, width: usize) -> Result<String, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).https_only(true).http_status_as_error(false).build().into();
-    let body = json!({ "query": query, "limit": RESULTS, "sources": ["web"], "timeout": 25000 });
+    let body = json!({ "query": query, "limit": limit, "sources": ["web"], "timeout": 25000 });
     let response = agent
         .post(SEARCH_URL)
         .header("Authorization", format!("Bearer {key}"))
@@ -77,24 +90,35 @@ pub fn search(key: &str, query: &str) -> Result<String, String> {
         return Err(format!("Firecrawl: {status} {detail}"));
     }
     let reply: Value = serde_json::from_str(&text).map_err(|err| format!("Firecrawl's reply: {err}"))?;
-    Ok(cut(&results(&reply)))
+    Ok(cut(&results(&reply, limit, width)))
 }
 
 /// The results in a reply, which groups them by source (`data.web`) or lists them flat (`data`).
-fn results(reply: &Value) -> String {
+/// `width` cuts each snippet to that many characters, its white space (a table's rows, say) run together.
+fn results(reply: &Value, limit: usize, width: usize) -> String {
     let data = &reply["data"];
     let items = data["web"].as_array().or_else(|| data.as_array()).map(Vec::as_slice).unwrap_or_default();
     let text: Vec<String> = items
         .iter()
-        .take(RESULTS)
+        .take(limit)
         .filter_map(|item| {
             let url = item["url"].as_str().filter(|url| allowed(url).is_ok())?;
             let title = item["title"].as_str().unwrap_or_default().trim();
             let snippet = item["description"].as_str().unwrap_or_default().trim();
+            let snippet = if width == usize::MAX { snippet.to_owned() } else { short(snippet, width) };
             Some(format!("{title}\n{url}\n{snippet}"))
         })
         .collect();
     if text.is_empty() { "No results.".to_owned() } else { text.join("\n\n") }
+}
+
+fn short(text: &str, width: usize) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= width {
+        return text;
+    }
+    let kept: String = text.chars().take(width).collect();
+    format!("{}…", kept.trim_end())
 }
 
 fn cut(text: &str) -> String {
@@ -158,9 +182,20 @@ mod tests {
         let item = json!({ "url": "https://a.org/x", "title": " A ", "description": "About a" });
         let bad = json!({ "url": "http://plain.org", "title": "B" });
         let grouped = json!({ "success": true, "data": { "web": [item, bad] } });
-        assert_eq!(results(&grouped), "A\nhttps://a.org/x\nAbout a");
-        assert_eq!(results(&json!({ "data": [item] })), "A\nhttps://a.org/x\nAbout a");
-        assert_eq!(results(&json!({})), "No results.");
+        assert_eq!(results(&grouped, RESULTS, usize::MAX), "A\nhttps://a.org/x\nAbout a");
+        assert_eq!(results(&json!({ "data": [item] }), RESULTS, usize::MAX), "A\nhttps://a.org/x\nAbout a");
+        assert_eq!(results(&json!({}), RESULTS, usize::MAX), "No results.");
+    }
+
+    #[test]
+    fn a_lookup_keeps_the_best_few_and_cuts_them_short() {
+        let long = format!("stable: 7.2.11\n\n| a | b |\n{}", "x".repeat(900));
+        let items: Vec<Value> = (1..=5).map(|n| json!({ "title": format!("R{n}"), "url": format!("https://r{n}.org/"), "description": long })).collect();
+        let found = results(&json!({ "data": { "web": items } }), LOOKUP_RESULTS, LOOKUP_WIDTH);
+        assert_eq!(found.matches("https://").count(), 3);
+        assert!(found.contains("stable: 7.2.11 | a | b | xxx"));
+        assert!(found.len() < 3 * (LOOKUP_WIDTH + 40));
+        assert!(found.contains('…'));
     }
 
     #[test]

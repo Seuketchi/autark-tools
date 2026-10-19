@@ -137,12 +137,15 @@ impl Ai {
         let result = async {
             let key = web::key(connection).await?;
             let query = question.to_owned();
-            blocking::unblock(move || web::search(&key, &query)).await
+            blocking::unblock(move || web::lookup(&key, &query)).await
         }
         .await;
         log::record("search", "firecrawl", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
         match result {
-            Ok(found) if !found.trim().is_empty() => format!("Web search results for the question (answer only from these, and give the address of what you cite):\n{found}"),
+            Ok(found) if !found.trim().is_empty() => format!(
+                "Web search results for the question. Answer only from these. Say which site you take it from. Copy names and numbers exactly as written, \
+                 keeping each label (\"stable\", \"mainline\", \"beta\") with its own number; if they don't answer it, say so.\n{found}"
+            ),
             _ => senses::unavailable(senses::Subject::Web).to_owned(),
         }
     }
