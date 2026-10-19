@@ -34,6 +34,9 @@ impl State {
 
 const GLASS: &str = "#24221E";
 const EYE: &str = "#7FC1A1";
+/// The face inverted for a dark background, where dark glass would vanish: a pale plate with deep sage eyes.
+const GLASS_ON_DARK: &str = "#ECE8E1";
+const EYE_ON_DARK: &str = "#2F6B52";
 /// Rings and dots: the design's sage, lighter on a dark background.
 const SAGE: &str = "#3F7A5F";
 
@@ -213,7 +216,9 @@ impl Visor {
         let size = f64::from(width.min(height));
         cr.translate((f64::from(width) - size) / 2.0, (f64::from(height) - size) / 2.0);
         cr.scale(size / 120.0, size / 120.0);
-        let sage = if crate::theme::look().dark { EYE } else { SAGE };
+        let dark = crate::theme::look().dark;
+        let sage = if dark { EYE } else { SAGE };
+        let (glass, eye) = if dark { (GLASS_ON_DARK, EYE_ON_DARK) } else { (GLASS, EYE) };
 
         if state == State::Listening || self.inner.pulse.get() {
             for delay in [0.0, PULSE / 2.0] {
@@ -228,7 +233,7 @@ impl Visor {
             }
         }
 
-        crate::theme::set_source(cr, GLASS, 1.0);
+        crate::theme::set_source(cr, glass, 1.0);
         rounded_rect(cr, 14.0, 20.0, 92.0, 80.0, 30.0);
         let _ = cr.fill();
 
@@ -237,7 +242,7 @@ impl Visor {
         let (dx, dy) = (4.0 * up, -5.0 * up);
         let squeeze = if self.inner.blinks.get() && state == State::Idle && !still { blink(now) } else { 1.0 };
         let ry = if state == State::Listening { 12.0 * 1.2 } else { 12.0 } * squeeze;
-        crate::theme::set_source(cr, EYE, 1.0);
+        crate::theme::set_source(cr, eye, 1.0);
         for x in [44.0, 76.0] {
             ellipse(cr, x + dx, 58.0 + dy, 7.0, ry);
             let _ = cr.fill();
