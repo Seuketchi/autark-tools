@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="power-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9BE08A"/><stop offset="1" stop-color="#3E9B4F"/></linearGradient>
+<linearGradient id="power-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="power-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="power-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="power-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#power-c)"><rect width="64" height="64" fill="url(#power-bg)"/><rect width="64" height="33.3" fill="url(#power-gl)"/><rect y="60" width="64" height="4" fill="url(#power-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#power-ds)"><path d="M14 22h30a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4z" fill="#FFFFFF" opacity="0.97"/><path d="M50 28h2.5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H50z" fill="#FFFFFF" opacity="0.97"/><rect x="14" y="26" width="9" height="12" rx="2" fill="#3E9B4F"/><rect x="25" y="26" width="9" height="12" rx="2" fill="#3E9B4F"/><rect x="36" y="26" width="6" height="12" rx="2" fill="#3E9B4F" opacity=".35"/></g>
+</svg>

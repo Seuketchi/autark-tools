@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="shot-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B79BFF"/><stop offset="1" stop-color="#6C4FD8"/></linearGradient>
+<linearGradient id="shot-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="shot-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="shot-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="shot-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#shot-c)"><rect width="64" height="64" fill="url(#shot-bg)"/><rect width="64" height="33.3" fill="url(#shot-gl)"/><rect y="60" width="64" height="4" fill="url(#shot-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#shot-ds)"><path d="M24 16h16l3 5h6a4 4 0 0 1 4 4v18a4 4 0 0 1-4 4H15a4 4 0 0 1-4-4V25a4 4 0 0 1 4-4h6z" fill="#FFFFFF" opacity="0.97"/><circle cx="32" cy="33" r="8" fill="#6C4FD8"/><circle cx="32" cy="33" r="3.5" fill="#FFFFFF" opacity="0.9"/></g>
+</svg>

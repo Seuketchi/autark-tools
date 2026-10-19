@@ -267,7 +267,7 @@ fn display(path: &Path) -> String {
 /// A notification through `org.freedesktop.Notifications`; a recording shouldn't fail for want of one.
 fn notify(summary: &str, body: &str) {
     let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else { return };
-    let args = ("autark-shot", 0u32, "", summary, body, Vec::<&str>::new(), std::collections::HashMap::<&str, glib::Variant>::new(), -1i32).to_variant();
+    let args = ("autark-shot", 0u32, "autark-shot", summary, body, Vec::<&str>::new(), std::collections::HashMap::<&str, glib::Variant>::new(), -1i32).to_variant();
     let _ = bus.call_sync(
         Some("org.freedesktop.Notifications"),
         "/org/freedesktop/Notifications",

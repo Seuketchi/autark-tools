@@ -110,7 +110,7 @@ async fn remind(task: &tasks::Task) -> zbus::Result<()> {
     let proxy = NotificationsProxy::new(&connection).await?;
     let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
     hints.insert("desktop-entry", Variant::from("autark-ai"));
-    proxy.notify("Kith", 0, "", &task.name, &task.prompt, &[], hints, 0).await.map(drop)
+    proxy.notify("Kith", 0, "autark-ai", &task.name, &task.prompt, &[], hints, 0).await.map(drop)
 }
 
 /// The result as a card in the notification centre, a banner only if it's urgent; or why the task didn't run.
@@ -137,7 +137,7 @@ async fn deliver(task: &tasks::Task, result: &Result<Report, String>) -> zbus::R
     };
     hints.insert("desktop-entry", Variant::from("autark-ai"));
     let actions: Vec<&str> = actions.iter().map(String::as_str).collect();
-    proxy.notify("Kith", 0, "", &summary, &body, &actions, hints, -1).await.map(drop)
+    proxy.notify("Kith", 0, "autark-ai", &summary, &body, &actions, hints, -1).await.map(drop)
 }
 
 fn uri(path: &std::path::Path) -> String {
