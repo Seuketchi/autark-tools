@@ -84,6 +84,14 @@ pub fn read(account: &Account, folder: &str, uid: u32) -> Result<Message, String
     result
 }
 
+/// Reads a message and leaves it as it was: unread stays unread.
+pub fn peek(account: &Account, folder: &str, uid: u32) -> Result<Message, String> {
+    let mut session = open(account)?;
+    let result = session.select(folder).and_then(|_| session.fetch(uid)).map(|raw| mime::parse(&raw));
+    session.logout();
+    result
+}
+
 pub fn mark(account: &Account, folder: &str, uid: u32, flag: &str, add: bool) -> Result<(), String> {
     let mut session = open(account)?;
     let result = session.select(folder).and_then(|_| session.flag(uid, &[flag], add));

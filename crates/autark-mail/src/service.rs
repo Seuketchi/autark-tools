@@ -1,4 +1,4 @@
-//! `org.autark.Mail1`: mail for Kith while the app runs. Reading is open to the session; sending asks nothing
+//! `org.autark.Mail1`: mail for Kith, served by the app or by `autark-mail daemon`. Reading is open to the session; sending asks nothing
 //! here because Kith asks you first, on a card showing the whole message, before it calls.
 
 use autark_pim::mime::{Address, Outgoing};
@@ -42,17 +42,15 @@ impl Service {
         let account = account_by(&account).await?;
         let folder = if folder.trim().is_empty() { "INBOX".to_owned() } else { folder };
         let message = blocking::unblock(move || backend::read(&account, &folder, uid)).await.map_err(failed)?;
-        let mut text = logic::body_text(&message);
-        if text.len() > 8 * 1024 {
-            let mut end = 8 * 1024;
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-            text.push_str("\n(the message goes on)");
-        }
-        let names = |list: &[Address]| list.iter().map(|a| if a.name.is_empty() { a.email.clone() } else { format!("{} <{}>", a.name, a.email) }).collect::<Vec<_>>();
-        Ok(json!({ "from": names(&message.from), "to": names(&message.to), "subject": message.subject, "date": message.date, "text": text, "attachments": message.attachments.iter().map(|a| a.name.clone()).collect::<Vec<_>>() }).to_string())
+        Ok(message_json(&message))
+    }
+
+    /// The same as `Read`, but the message stays unread: for Kith, which looks without changing anything.
+    async fn peek(&self, account: String, folder: String, uid: u32) -> zbus::fdo::Result<String> {
+        let account = account_by(&account).await?;
+        let folder = if folder.trim().is_empty() { "INBOX".to_owned() } else { folder };
+        let message = blocking::unblock(move || backend::peek(&account, &folder, uid)).await.map_err(failed)?;
+        Ok(message_json(&message))
     }
 
     /// Sends a plain-text message from `account`. `to` and `cc` are address lists such as `a@x.org, b@y.org`.
@@ -78,4 +76,18 @@ impl Service {
 async fn account_by(id: &str) -> zbus::fdo::Result<autark_accounts::model::Account> {
     let id = id.to_owned();
     blocking::unblock(move || account(&id)).await
+}
+
+fn message_json(message: &autark_pim::mime::Message) -> String {
+    let mut text = logic::body_text(message);
+    if text.len() > 8 * 1024 {
+        let mut end = 8 * 1024;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push_str("\n(the message goes on)");
+    }
+    let names = |list: &[Address]| list.iter().map(|a| if a.name.is_empty() { a.email.clone() } else { format!("{} <{}>", a.name, a.email) }).collect::<Vec<_>>();
+    json!({ "from": names(&message.from), "to": names(&message.to), "subject": message.subject, "date": message.date, "text": text, "attachments": message.attachments.iter().map(|a| a.name.clone()).collect::<Vec<_>>() }).to_string()
 }
