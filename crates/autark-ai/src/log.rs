@@ -22,6 +22,10 @@ pub fn record(call: &str, engine: &str, input: Value, answer: &Result<Value, Str
 }
 
 fn append(line: &str) -> std::io::Result<()> {
+    // Tests run calls with no config, which would otherwise land in the real log as if they had happened.
+    if cfg!(test) {
+        return Ok(());
+    }
     let path = path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
