@@ -138,7 +138,7 @@ async fn remind(task: &tasks::Task) -> zbus::Result<()> {
     let proxy = NotificationsProxy::new(&connection).await?;
     let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
     hints.insert("desktop-entry", Variant::from("autark-ai"));
-    proxy.notify("Kith", 0, "autark-ai", &task.name, &task.prompt, &[], hints, 0).await.map(drop)
+    proxy.notify("Kith", 0, "autark-ai", "Reminder", &task.prompt, &[], hints, 0).await.map(drop)
 }
 
 /// The result as a card in the notification centre, a banner only if it's urgent; or why the task didn't run.

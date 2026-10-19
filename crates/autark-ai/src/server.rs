@@ -358,6 +358,10 @@ impl Ai {
     /// Routes `text`, with the conversation so far when there is one.
     async fn routed(&self, emitter: &SignalEmitter<'_>, connection: &zbus::Connection, text: &str, conversation: &str) -> Result<route::Routed, Error> {
         self.allowed(self.config().features.route, "route")?;
+        // A clear one-off reminder is read by code: instant, and the time is never a model's guess.
+        if let Some(routed) = route::reminder(text, chrono::Local::now().naive_local()) {
+            return Ok(routed);
+        }
         let facts = memory::facts();
         let candidates = route::candidates(text, &facts);
         let config = self.config();

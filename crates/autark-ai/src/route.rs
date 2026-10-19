@@ -102,6 +102,21 @@ fn wants_task(text: &str) -> bool {
         || crate::schedule::once(&text, chrono::Local::now().naive_local()).is_some()
 }
 
+/// A one-off reminder ("remind me in 30 minutes to stretch") built by code, with no model: the time and the words
+/// are read from the sentence. `None` for anything else, which goes on to the model.
+pub fn reminder(text: &str, now: chrono::NaiveDateTime) -> Option<Routed> {
+    if !text.to_lowercase().contains("remind me") {
+        return None;
+    }
+    let at = crate::schedule::once(text, now)?;
+    let message: String = crate::schedule::message(text)?.chars().filter(|c| !c.is_control() && *c != '%').take(200).collect();
+    let name: String = format!("Reminder: {message}").chars().take(60).collect();
+    let when = crate::tasks::When { every: "once".to_owned(), date: at.date().to_string(), day: 0, time: at.format("%H:%M").to_string() };
+    let task = crate::tasks::Task { name, prompt: message, when, reads: Vec::new(), urls: Vec::new(), remind: true, skill: String::new() };
+    let task = crate::tasks::check(task).ok()?;
+    Some(Routed { actions: Vec::new(), question: String::new(), files: Vec::new(), remember: String::new(), task: Some(task), confidence: 1.0, engine: "code" })
+}
+
 /// Whether the sentence asks to remember something or says something lasting about the user; only then is the
 /// model offered `remember`, for the same reasons as `task`.
 fn wants_remember(text: &str) -> bool {
@@ -131,7 +146,7 @@ pub fn system_prompt(facts: &[String], text: &str) -> String {
     }
     if wants_task(text) {
         prompt.push_str(
-            "task: the sentence asks for something to be done again and again on a schedule: a short name, the instruction to carry out \
+            "task: the sentence asks for something to be done later or on a schedule, including a reminder or a one-off such as \"in 30 minutes\" or \"tomorrow at 9\" (fill every and time with your best guess; the real time is worked out from the sentence): a short name, the instruction to carry out \
              each time (prompt), every (day, weekdays, weekends, a weekday such as monday, or month), day (of the month, for month) and \
              time (24-hour, HH:MM). The files it needs go in files. Leave the question empty. \
              For \"remind me to X by/at TIME\" set remind true: prompt is then the reminder's own words (\"Time to X\"), every is day \
@@ -518,6 +533,18 @@ mod tests {
         );
         assert_eq!(routed.confidence, 0.8);
         assert!(routed.question.is_empty());
+    }
+
+    #[test]
+    fn a_clear_one_off_reminder_needs_no_model() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 10, 19).unwrap().and_hms_opt(18, 0, 0).unwrap();
+        let routed = reminder("remind me tomorrow at 9am to send the report", now).unwrap();
+        let task = routed.task.unwrap();
+        assert_eq!((task.name.as_str(), task.prompt.as_str(), task.remind), ("Reminder: Send the report", "Send the report", true));
+        assert_eq!((task.when.every.as_str(), task.when.date.as_str(), task.when.time.as_str()), ("once", "2026-10-20", "09:00"));
+        assert_eq!((routed.engine, routed.confidence), ("code", 1.0));
+        assert!(reminder("remind me to sleep by 10pm", now).is_none(), "no day: that is the model's daily reminder");
+        assert!(reminder("tomorrow at 9am send the report", now).is_none());
     }
 
     #[test]

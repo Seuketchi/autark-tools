@@ -27,6 +27,44 @@ pub fn once(text: &str, now: NaiveDateTime) -> Option<NaiveDateTime> {
     (found > now && found <= now + Duration::days(MAX_DAYS)).then_some(found)
 }
 
+/// The reminder's own words: the sentence without "remind me", "please" and the time it names. "Remind me in 2
+/// minutes to stretch" is "Stretch"; "remind me tomorrow at 9am to send it" is "Send it". `None` if nothing is left.
+pub fn message(text: &str) -> Option<String> {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let key = |token: &str| token.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+    let keys: Vec<String> = tokens.iter().map(|token| key(token)).collect();
+    let is_clock = |word: &str| {
+        let digits = word.trim_end_matches("am").trim_end_matches("pm");
+        !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit() || c == ':') && digits.chars().next().is_some_and(|c| c.is_ascii_digit())
+    };
+    let is_unit = |word: &str| ["minute", "min", "hour", "hr", "day"].contains(&word.trim_end_matches('s'));
+    let is_weekday = |word: &str| ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].contains(&word);
+    let mut drop = vec![false; tokens.len()];
+    let mark = |drop: &mut Vec<bool>, from: usize, count: usize| drop[from..(from + count).min(tokens.len())].fill(true);
+    let at = |n: usize| keys.get(n).map(String::as_str).unwrap_or_default();
+    for n in 0..tokens.len() {
+        match at(n) {
+            "remind" if at(n + 1) == "me" => mark(&mut drop, n, 2),
+            "please" | "tomorrow" | "tonight" | "today" => mark(&mut drop, n, 1),
+            "next" | "on" if is_weekday(at(n + 1)) => mark(&mut drop, n, 2),
+            "in" if at(n + 1) == "half" && matches!(at(n + 2), "an" | "a") && is_unit(at(n + 3)) => mark(&mut drop, n, 4),
+            "in" if (at(n + 1).parse::<f64>().is_ok() || matches!(at(n + 1), "an" | "a")) && is_unit(at(n + 2)) => mark(&mut drop, n, 3),
+            "at" | "by" | "around" if is_clock(at(n + 1)) => mark(&mut drop, n, if matches!(at(n + 2), "am" | "pm") { 3 } else { 2 }),
+            word if is_clock(word) && (word.ends_with("am") || word.ends_with("pm") || matches!(at(n + 1), "am" | "pm")) => {
+                mark(&mut drop, n, if matches!(at(n + 1), "am" | "pm") { 2 } else { 1 })
+            }
+            _ => {}
+        }
+    }
+    let kept: Vec<&str> = tokens.iter().zip(&drop).filter(|(_, dropped)| !**dropped).map(|(token, _)| *token).collect();
+    let text = kept.join(" ");
+    let text = text.trim_matches(|c: char| c.is_whitespace() || matches!(c, ':' | ',' | '.' | '-' | ';'));
+    let text = text.strip_prefix("to ").or_else(|| text.strip_prefix("that ")).unwrap_or(text).trim();
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().collect::<String>() + chars.as_str())
+}
+
 trait Minutes {
     fn with_second_zero(self) -> Self;
 }
@@ -162,6 +200,17 @@ mod tests {
         assert_eq!(once("remind me on friday at 3pm to book it", now()), at(23, 15, 0));
         assert_eq!(once("remind me tomorrow at 12am", now()), at(20, 0, 0));
         assert_eq!(once("remind me tomorrow at 12pm", now()), at(20, 12, 0));
+    }
+
+    #[test]
+    fn the_reminders_words_are_what_is_left() {
+        assert_eq!(message("remind me in 2 minutes to stretch").as_deref(), Some("Stretch"));
+        assert_eq!(message("Remind me tomorrow at 9am to send it").as_deref(), Some("Send it"));
+        assert_eq!(message("remind me to call a friend in half an hour").as_deref(), Some("Call a friend"));
+        assert_eq!(message("please remind me on friday at 3:30 pm that the rent is due.").as_deref(), Some("The rent is due"));
+        assert_eq!(message("remind me in 2 minutes: Kith reminder test, stretch").as_deref(), Some("Kith reminder test, stretch"));
+        assert_eq!(message("remind me next monday at 10 to review the plan").as_deref(), Some("Review the plan"));
+        assert_eq!(message("remind me tonight at 8"), None, "nothing to be reminded of");
     }
 
     #[test]
