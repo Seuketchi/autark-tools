@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, chat, check, events, files, jev, log, memory, recall, route, senses, soul, suggest, tasks, web};
+use crate::{act, agent, chat, check, events, files, jev, log, memory, recall, route, senses, skills, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -282,6 +282,7 @@ impl Ai {
                 }
                 true
             };
+            let mut proposal: Option<skills::Skill> = None;
             let result = match &ask.verbatim {
                 Some(said) => {
                     write(said);
@@ -294,7 +295,7 @@ impl Ai {
                         let (notes, stopped) = agent::gather(
                             &ask.prompt,
                             web_open,
-                            agent::seeds(&ask.prompt, web_open),
+                            ask.skill.as_ref().map_or_else(|| agent::seeds(&ask.prompt, web_open), |skill| agent::skill_seeds(skill, web_open)),
                             |system, step, schema| {
                                 let start = Instant::now();
                                 let choice = ollama.json(system, step, schema);
@@ -305,6 +306,10 @@ impl Ai {
                             |note| write(&format!("{}\n", agent::shown(note))),
                         );
                         stopped_early = stopped;
+                        // Two steps that worked, for a question no skill covers yet, are offered as one.
+                        if ask.skill.is_none() && !stopped {
+                            proposal = skills::propose(&ask.prompt, &notes, &skills::all());
+                        }
                         if !notes.is_empty() {
                             write("\n");
                         }
@@ -330,6 +335,11 @@ impl Ai {
                 if let Some(What::Answer { writing, error: why, .. }) = chat.answer_mut(id) {
                     *writing = false;
                     why.clone_from(&error);
+                }
+                if let Some(skill) = proposal.take()
+                    && error.is_empty()
+                {
+                    chat.push(What::Skill { skill, state: Proposal::Proposed });
                 }
                 chat.save();
             }
@@ -460,6 +470,8 @@ struct Ask {
     verbatim: Option<String>,
     /// Gather what the question needs with the tool loop first (see `agent`); whether it may search the web.
     agent: Option<bool>,
+    /// A saved skill the question calls for, whose steps are the loop's first looks.
+    skill: Option<skills::Skill>,
 }
 
 const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
@@ -587,7 +599,8 @@ impl Ai {
         let found = if lookup_only { self.search_found(connection, &question).await } else { None };
         let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1));
         // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
-        let agent = (verbatim.is_none() && !lookup_only && agent::wants_agent(&question)).then(|| {
+        let skill = if verbatim.is_none() { skills::matching(&question, &skills::all()) } else { None };
+        let agent = (verbatim.is_none() && !lookup_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
             let config = self.config();
             config.web.search && !config.local_only
         });
@@ -598,7 +611,7 @@ impl Ai {
             }
         }
         let logged = json!({ "files": outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>() });
-        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim, agent }, logged);
+        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim, agent, skill }, logged);
         Ok((id, entry, outcome))
     }
 
@@ -645,6 +658,34 @@ impl Ai {
                 *state = if save { Proposal::Saved } else { Proposal::NotSaved };
                 if save {
                     *kept = text;
+                }
+            }
+        })
+        .await;
+        Ok(())
+    }
+
+    /// Answers a proposed skill: kept as a file in the skills folder under `name` (which you may have changed), or not.
+    async fn save_skill(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, name: String, save: bool) -> Result<(), Error> {
+        let mut skill = match lock(&self.chat).get_mut(entry) {
+            Some(What::Skill { skill, state: Proposal::Proposed }) => skill.clone(),
+            Some(What::Skill { .. }) => return Err(Error::Engine("that skill has been answered already".to_owned())),
+            _ => return Err(Error::Engine("there's no such skill".to_owned())),
+        };
+        if save {
+            skill.name = name.trim().to_owned();
+            blocking::unblock({
+                let skill = skill.clone();
+                move || skills::save(&skill)
+            })
+            .await
+            .map_err(Error::Engine)?;
+        }
+        self.change(&emitter, |chat| {
+            if let Some(What::Skill { skill: kept, state }) = chat.get_mut(entry) {
+                *state = if save { Proposal::Saved } else { Proposal::NotSaved };
+                if save {
+                    *kept = skill;
                 }
             }
         })
@@ -828,7 +869,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None }, json!({})))
+        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({})))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
@@ -840,7 +881,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None }, json!({ "files": read })), outcome))
+        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({ "files": read })), outcome))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.
