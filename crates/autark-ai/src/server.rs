@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, calendar, chat, check, events, files, jev, log, mail, memory, recall, route, senses, skills, soul, suggest, tasks, web};
+use crate::{act, agent, board, calendar, chat, check, events, files, jev, log, mail, memory, recall, route, senses, skills, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -126,6 +126,10 @@ impl Ai {
                     Some(Err(why)) => format!("Kith could not read the user's calendar just now: {why}. Tell the user that in one sentence. Do not make up events."),
                     None => senses::unavailable(senses::Subject::Calendar).to_owned(),
                 },
+                senses::Subject::Tasks => match self.board_found().await {
+                    Ok(board) => format!("The user's GitHub project tasks, read just now (answer only from this):\n{board}"),
+                    Err(why) => format!("Kith could not read the user's tasks just now: {why}. Tell the user that in one sentence. Do not make up tasks."),
+                },
                 senses::Subject::Mail => match self.mail_found(connection, question).await {
                     Ok(inbox) if mail::wants_body(question) => format!("From the user's inbox, read just now and left unread (answer only from this):\n{inbox}"),
                     Ok(inbox) => format!("The user's inbox, read just now (answer only from this; only who each message is from and its subject are known):\n{inbox}"),
@@ -135,7 +139,6 @@ impl Ai {
                     let question = question.to_owned();
                     format!("What Kith found in the user's notes and earlier conversations (answer only from this):\n{}", blocking::unblock(move || recall::search(&question)).await)
                 }
-                other => senses::unavailable(other).to_owned(),
             });
         }
         seen.join("\n\n")
@@ -150,6 +153,14 @@ impl Ai {
         let result = blocking::unblock(move || calendar::answer(&address, &asked)).await;
         log::record("calendar", "ical", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
         Some(result)
+    }
+
+    /// The user's GitHub project tasks, read with `gh`. Logged like any call, with how much came back and nothing of it.
+    async fn board_found(&self) -> Result<String, String> {
+        let start = Instant::now();
+        let result = blocking::unblock(board::answer).await;
+        log::record("tasks", "gh", json!(null), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
+        result
     }
 
     /// The inbox for a question about mail, read through the Mail service. Logged like any call, with how much came
@@ -648,10 +659,13 @@ impl Ai {
         // The same for mail: the list of who wrote and what about, from the inbox itself.
         let mail_only = senses::subjects(&question) == [senses::Subject::Mail] && !mail::wants_body(&question);
         let inbox = if mail_only { self.mail_found(connection, &question).await.ok() } else { None };
-        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox);
+        // And for the task board: the project items themselves.
+        let board_only = senses::subjects(&question) == [senses::Subject::Tasks];
+        let items = if board_only { self.board_found().await.ok() } else { None };
+        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox).or(items);
         // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
         let skill = if verbatim.is_none() { skills::matching(&question, &skills::all()) } else { None };
-        let agent = (verbatim.is_none() && !lookup_only && !calendar_only && !mail_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
+        let agent = (verbatim.is_none() && !lookup_only && !calendar_only && !mail_only && !board_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
             let config = self.config();
             config.web.search && !config.local_only
         });

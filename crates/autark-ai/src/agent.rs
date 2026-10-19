@@ -34,7 +34,7 @@ pub fn wants_agent(question: &str) -> bool {
 
 /// The tools open to the next step, in the order the model is told of them.
 fn open(web: bool, read_a_file: bool) -> Vec<&'static str> {
-    let mut tools = vec!["system", "memory", "recall", "calendar", "mail", "read_file"];
+    let mut tools = vec!["system", "memory", "recall", "calendar", "mail", "board", "read_file"];
     if web && !read_a_file {
         tools.push("web");
     }
@@ -47,6 +47,7 @@ fn describe(tool: &str) -> &'static str {
         "memory" => "memory: what the user told Kith to remember (input empty)",
         "calendar" => "calendar: the user's calendar events (input: the days, such as today, tomorrow or this week)",
         "mail" => "mail: the user's inbox: the newest messages, who from and the subject; or one message's text if the input asks what it says, such as \"what did Ada say\" (input: the question)",
+        "board" => "board: the user's GitHub project tasks: what is in progress and what is next (input empty)",
         "recall" => "recall: search the user's notes and what they said to Kith before (input: the words to find)",
         "read_file" => "read_file: a file in the user's home folder (input: its path, starting ~/)",
         "web" => "web: a web search for news, releases or facts (input: the search words)",
@@ -97,6 +98,7 @@ pub fn shown(note: &Note) -> String {
         "recall" => "• searched your notes and earlier chats".to_owned(),
         "calendar" => "• looked at your calendar".to_owned(),
         "mail" => "• looked at your inbox".to_owned(),
+        "board" => "• looked at your task board".to_owned(),
         "read_file" => format!("• read {}", note.input),
         "web" => format!("• searched the web for “{}”", note.input),
         other => format!("• {other}"),
@@ -105,7 +107,7 @@ pub fn shown(note: &Note) -> String {
 
 /// The loop's own name for a tool a skill or the model named, or `None` if it isn't one of its read-only tools.
 pub fn tool_name(name: &str) -> Option<&'static str> {
-    ["system", "memory", "recall", "calendar", "mail", "read_file", "web"].into_iter().find(|tool| *tool == name)
+    ["system", "memory", "recall", "calendar", "mail", "board", "read_file", "web"].into_iter().find(|tool| *tool == name)
 }
 
 /// A saved skill's steps as the looks to run first; the web only when it is open.
@@ -124,6 +126,7 @@ pub fn seeds(question: &str, web: bool) -> Vec<(&'static str, String)> {
             senses::Subject::Recall => Some(("recall", question.chars().take(200).collect())),
             senses::Subject::Calendar => Some(("calendar", question.chars().take(200).collect())),
             senses::Subject::Mail => Some(("mail", question.chars().take(200).collect())),
+            senses::Subject::Tasks => Some(("board", String::new())),
             _ => None,
         })
         .collect();
@@ -202,7 +205,7 @@ pub fn gather(
         }
         let result = run(tool, &note.input);
         // What came from the user's files or notes stays on the laptop: a search query could carry it away.
-        if matches!(tool, "read_file" | "recall" | "calendar" | "mail") && result.is_ok() {
+        if matches!(tool, "read_file" | "recall" | "calendar" | "mail" | "board") && result.is_ok() {
             read_a_file = true;
         }
         note.result = match result {
@@ -242,6 +245,7 @@ pub fn execute(tool: &str, input: &str, web_open: bool) -> Result<String, String
             let connection = zbus::Connection::session().await.map_err(|err| format!("the session bus: {err}"))?;
             crate::mail::answer(&connection, input).await
         }),
+        "board" => async_io::block_on(blocking::unblock(crate::board::answer)),
         "recall" if !input.is_empty() => Ok(crate::recall::search(input)),
         "recall" => Err("nothing to search for".to_owned()),
         "read_file" => {
@@ -324,8 +328,8 @@ mod tests {
         let (notes, _, ran) = play(&[("read_file", "~/notes/todo.md"), ("web", "what the file said")], true);
         assert_eq!(notes.len(), 1, "a search could carry the file's words off the laptop");
         let offered: Vec<&String> = ran.iter().filter(|line| line.starts_with("offered")).collect();
-        assert_eq!(offered[0], "offered system,memory,recall,calendar,mail,read_file,web,answer");
-        assert_eq!(offered[1], "offered system,memory,recall,calendar,mail,read_file,answer");
+        assert_eq!(offered[0], "offered system,memory,recall,calendar,mail,board,read_file,web,answer");
+        assert_eq!(offered[1], "offered system,memory,recall,calendar,mail,board,read_file,answer");
     }
 
     #[test]
@@ -356,6 +360,14 @@ mod tests {
         let q = "any unread email and the latest kernel news";
         assert_eq!(seeds(q, true).iter().map(|(tool, _)| *tool).collect::<Vec<_>>(), ["web", "mail"], "the web before the private reads that close it");
         assert!(tool_name("mail").is_some());
+    }
+
+    #[test]
+    fn after_the_task_board_is_read_the_web_is_closed_too() {
+        let (notes, _, _) = play(&[("board", ""), ("web", "my task titles")], true);
+        assert_eq!(notes.iter().map(|note| note.tool.as_str()).collect::<Vec<_>>(), ["board"]);
+        let q = "what is my task for today and the latest kernel news";
+        assert_eq!(seeds(q, true).iter().map(|(tool, _)| *tool).collect::<Vec<_>>(), ["web", "board"]);
     }
 
     #[test]
