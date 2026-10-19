@@ -244,6 +244,25 @@ struct RawAction {
 
 /// Checks the model's answer against the catalog, the candidate files and the facts already kept. With no
 /// actions, question or fact, the whole sentence is the question: you asked Kith, so Kith answers.
+/// Whether the sentence names the website: its address (`youtube.com`) or its name (`youtube`); an address with a
+/// path or query has to be written out whole. Asked to "look up" something, a small model invents plausible pages,
+/// so `open_url` keeps to the sites the user asked for.
+fn named_in(text: &str, url: &str) -> bool {
+    let text = text.to_lowercase();
+    let url = url.trim().to_lowercase();
+    let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+    let (host, path) = match rest.find(['/', '?', '#']) {
+        Some(at) => rest.split_at(at),
+        None => (rest, ""),
+    };
+    if !path.trim_matches('/').is_empty() {
+        return text.contains(rest) || text.contains(&url);
+    }
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    let name = host.split('.').next().unwrap_or_default();
+    text.contains(host) || (name.len() >= 3 && text.contains(name))
+}
+
 pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String]) -> Result<Routed, String> {
     let answer: Answer = serde_json::from_value(answer).map_err(|err| format!("the route doesn't fit the schema: {err}"))?;
     let confidence = answer.confidence.clamp(0.0, 1.0);
@@ -254,7 +273,13 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
             let sure = raw.confidence.unwrap_or(confidence).clamp(0.0, 1.0);
             action(raw).map(|action| Chosen { action, confidence: sure })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|chosen| match &chosen.action {
+            Action::OpenUrl { url } => named_in(text, url),
+            _ => true,
+        })
+        .collect::<Vec<_>>();
     let mut remember: String = answer.remember.trim().chars().take(200).collect();
     if facts.iter().any(|fact| fact.eq_ignore_ascii_case(&remember)) {
         remember.clear();
@@ -487,6 +512,20 @@ mod tests {
         let routed = parse(answer, "open youtube", &[], &[]).unwrap();
         assert_eq!(routed.actions, vec![Chosen { action: Action::OpenUrl { url: "youtube.com".to_owned() }, confidence: 0.9 }]);
         assert_eq!(serde_json::to_value(&routed).unwrap()["actions"][0], json!({ "action": "open_url", "url": "youtube.com", "confidence": 0.9 }));
+    }
+
+    #[test]
+    fn a_website_must_be_one_the_sentence_names() {
+        assert!(named_in("open youtube", "youtube.com"));
+        assert!(named_in("go to github.com", "https://github.com/"));
+        assert!(named_in("open https://example.org/a/b please", "https://example.org/a/b"));
+        assert!(!named_in("lookup the latest news on the Linux 7.3 release", "https://www.phoronix.com/news/Linux-7.3-Release-Notes.html"));
+        assert!(!named_in("open the browser", "https://google.com"));
+        assert!(!named_in("open youtube", "https://youtube.com/watch?v=abc"));
+        let invented = json!({ "confidence": 0.9, "question": "", "files": [], "actions": [ { "name": "open_url", "text": "https://www.phoronix.com/news/x.html", "confidence": 0.9 } ] });
+        let routed = parse(invented, "lookup the latest news on Linux 7.3", &[], &[]).unwrap();
+        assert!(routed.actions.is_empty());
+        assert_eq!(routed.question, "lookup the latest news on Linux 7.3");
     }
 
     #[test]
