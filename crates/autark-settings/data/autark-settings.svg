@@ -1,1 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="28" fill="#6B7B8C"/><text x="64" y="88" font-family="sans-serif" font-size="72" font-weight="600" text-anchor="middle" fill="#fff">S</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="settings-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C3C9D2"/><stop offset="1" stop-color="#6A717E"/></linearGradient>
+<linearGradient id="settings-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="settings-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="settings-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="settings-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#settings-c)"><rect width="64" height="64" fill="url(#settings-bg)"/><rect width="64" height="33.3" fill="url(#settings-gl)"/><rect y="60" width="64" height="4" fill="url(#settings-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#settings-ds)"><path d="M32 11.5v7M32 45.5v7M11.5 32h7M45.5 32h7M17.5 17.5l5 5M41.5 41.5l5 5M17.5 46.5l5-5M41.5 22.5l5-5" fill="none" stroke="#FFFFFF" stroke-width="6" opacity="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M32 19.5a12.5 12.5 0 1 0 0 25a12.5 12.5 0 1 0 0-25z" fill="#FFFFFF" opacity="0.97"/><path d="M32 27a5 5 0 1 0 0 10a5 5 0 1 0 0-10z" fill="#6A717E" opacity="1"/></g>
+</svg>

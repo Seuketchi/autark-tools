@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="keys-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B0B8C6"/><stop offset="1" stop-color="#4B5568"/></linearGradient>
+<linearGradient id="keys-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="keys-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="keys-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="keys-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#keys-c)"><rect width="64" height="64" fill="url(#keys-bg)"/><rect width="64" height="33.3" fill="url(#keys-gl)"/><rect y="60" width="64" height="4" fill="url(#keys-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#keys-ds)"><path d="M9 20a4 4 0 0 1 4-4h38a4 4 0 0 1 4 4v24a4 4 0 0 1-4 4H13a4 4 0 0 1-4-4z" fill="#FFFFFF" opacity="0.97"/><path d="M17 26h.01M25 26h.01M33 26h.01M41 26h.01M49 26h.01M21 33h.01M29 33h.01M37 33h.01M45 33h.01" fill="none" stroke="#4B5568" stroke-width="4.5" opacity="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M23 41h18" fill="none" stroke="#4B5568" stroke-width="4.5" opacity="1" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

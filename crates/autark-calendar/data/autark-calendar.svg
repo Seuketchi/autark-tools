@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="calendar-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5EDC94"/><stop offset="1" stop-color="#1C9A57"/></linearGradient>
+<linearGradient id="calendar-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="calendar-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="calendar-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="calendar-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#calendar-c)"><rect width="64" height="64" fill="url(#calendar-bg)"/><rect width="64" height="33.3" fill="url(#calendar-gl)"/><rect y="60" width="64" height="4" fill="url(#calendar-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#calendar-ds)"><path d="M15 19a5 5 0 0 1 5-5h24a5 5 0 0 1 5 5v25a5 5 0 0 1-5 5H20a5 5 0 0 1-5-5z" fill="#FFFFFF" opacity="0.97"/><path d="M15 19a5 5 0 0 1 5-5h24a5 5 0 0 1 5 5v5H15z" fill="#167A45" opacity="0.9"/><path d="M23.5 33h3M30.5 33h3M37.5 33h3M23.5 41h3M30.5 41h3" fill="none" stroke="#1C9A57" stroke-width="4" opacity="1" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>
