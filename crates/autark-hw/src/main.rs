@@ -104,6 +104,9 @@ fn main() -> std::process::ExitCode {
                 Some(profile) => println!("  Power profile          {} of {}", profile.current, profile.choices.join(", ")),
                 None => println!("  Power profile          not offered by the kernel"),
             }
+            for mode in &controls.modes {
+                println!("  {:<22} {} of {}", mode.label, mode.current, mode.choices.join(", "));
+            }
         }
         _ => eprintln!("{USAGE}"),
     }
