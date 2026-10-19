@@ -42,14 +42,12 @@ pub fn open(app: &gtk::Application, path: &Path) -> Option<gtk::ApplicationWindo
     view.add_css_class("code");
     let scroller = gtk::ScrolledWindow::builder().vexpand(true).child(&view).build();
 
-    let controls = gtk::WindowControls::new(gtk::PackType::Start);
-    controls.set_decoration_layout(Some("close,minimize,maximize:"));
     let title = gtk::Label::builder().xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::Start).build();
     title.add_css_class("path");
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     bar.add_css_class("toolbar");
-    bar.append(&controls);
     bar.append(&title);
+    bar.append(&autark_common::chrome::controls(true));
 
     let find = gtk::SearchEntry::builder().placeholder_text("Find").hexpand(true).build();
     let replace = gtk::Entry::builder().placeholder_text("Replace with").hexpand(true).build();

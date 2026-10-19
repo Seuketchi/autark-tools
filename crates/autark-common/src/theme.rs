@@ -13,7 +13,7 @@
 //! contrast = false
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -107,7 +107,12 @@ pub fn write_gtk_settings(theme: &Theme) -> std::io::Result<()> {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
     let font = if theme.font.is_empty() { "Geist" } else { &theme.font };
     let points = (GTK_FONT_POINTS * theme.text_scale()).round();
-    let keys = [("gtk-application-prefer-dark-theme", if theme.dark() { "1".to_owned() } else { "0".to_owned() }), ("gtk-font-name", format!("{font} {points}"))];
+    let keys = [
+        ("gtk-application-prefer-dark-theme", if theme.dark() { "1".to_owned() } else { "0".to_owned() }),
+        ("gtk-font-name", format!("{font} {points}")),
+        // Minimise, maximise and close at the right, as Autark's own apps have them.
+        ("gtk-decoration-layout", ":minimize,maximize,close".to_owned()),
+    ];
     for version in ["gtk-3.0", "gtk-4.0"] {
         let path = config.join(version).join("settings.ini");
         let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -117,7 +122,89 @@ pub fn write_gtk_settings(theme: &Theme) -> std::io::Result<()> {
             std::fs::write(&path, updated)?;
         }
     }
-    Ok(())
+    // libadwaita apps (the browser) learn the system is dark from GNOME's colour-scheme setting, which they only read with the portal
+    // off (ADW_DISABLE_PORTAL=1, set for the session and in the browser's launcher). Without it their pages stay light.
+    let _ = std::process::Command::new("gsettings").args(["set", "org.gnome.desktop.interface", "color-scheme", if theme.dark() { "prefer-dark" } else { "default" }]).output();
+    write_gtk_css(&config.join("gtk-4.0"), &theme.palette())
+}
+
+const GTK_CSS_MARK: &str = "/* Written by Autark (theme.rs)";
+
+/// `gtk-4.0/gtk.css`: Linen for libadwaita apps (the browser, and anything else built on it), as the named colours it
+/// reads and the same window buttons. It replaces only a file this wrote, found by its first line, so a `gtk.css` of
+/// your own is left alone. Autark's own apps aren't affected: they don't read these names, and their buttons carry
+/// `autark-controls`, which the button rules skip.
+fn write_gtk_css(folder: &Path, palette: &Palette) -> std::io::Result<()> {
+    let path = folder.join("gtk.css");
+    if let Ok(existing) = std::fs::read_to_string(&path)
+        && !existing.starts_with(GTK_CSS_MARK)
+    {
+        return Ok(());
+    }
+    let p = palette;
+    let text = format!(
+        "{GTK_CSS_MARK}: Linen for libadwaita apps. Edits here are overwritten when the theme changes; delete the first line to keep your own. */
+@define-color window_bg_color {surface};
+@define-color window_fg_color {text};
+@define-color view_bg_color {surface};
+@define-color view_fg_color {text};
+@define-color headerbar_bg_color {sidebar};
+@define-color headerbar_fg_color {text};
+@define-color headerbar_backdrop_color {sidebar};
+@define-color headerbar_border_color {border};
+@define-color sidebar_bg_color {sidebar};
+@define-color sidebar_fg_color {text};
+@define-color sidebar_backdrop_color {sidebar};
+@define-color card_bg_color {raised};
+@define-color card_fg_color {text};
+@define-color popover_bg_color {raised};
+@define-color popover_fg_color {text};
+@define-color dialog_bg_color {raised};
+@define-color dialog_fg_color {text};
+@define-color accent_bg_color {accent};
+@define-color accent_fg_color {on_accent};
+@define-color accent_color {accent_text};
+@define-color destructive_bg_color {danger};
+@define-color error_bg_color {danger};
+
+windowcontrols:not(.autark-controls) button {{
+  min-width: 28px;
+  min-height: 28px;
+  margin: 0 0 0 2px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  box-shadow: none;
+  background: none;
+  color: {text2};
+}}
+
+windowcontrols:not(.autark-controls) button:hover {{
+  background-color: alpha({text}, 0.08);
+  color: {text};
+}}
+
+windowcontrols:not(.autark-controls) button.close:hover {{
+  background-color: {danger};
+  color: #FFFFFF;
+}}
+",
+        surface = p.surface,
+        text = p.text,
+        text2 = p.text2,
+        sidebar = p.sidebar,
+        border = p.border,
+        raised = p.raised,
+        accent = p.accent,
+        on_accent = p.on_accent,
+        accent_text = p.accent_text,
+        danger = p.danger,
+    );
+    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == text) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(folder)?;
+    std::fs::write(&path, text)
 }
 
 /// `text` with `keys` set in its `[Settings]` section, which is added when there isn't one.
@@ -429,6 +516,7 @@ mod style {
         if look.theme.reduce_motion {
             text.push_str("* { transition-duration: 0s; animation: none; }\n");
         }
+        text.push_str(crate::chrome::CSS);
         text.push_str(&adjust(css, &look.theme));
         provider.load_from_string(&text);
     }

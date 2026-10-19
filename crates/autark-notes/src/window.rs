@@ -64,12 +64,8 @@ impl Notes {
     pub fn new(app: &gtk::Application, root: &Path) -> Rc<Self> {
         let window = gtk::ApplicationWindow::builder().application(app).title("Notes").default_width(1240).default_height(760).build();
         window.add_css_class("notes");
-        // The window controls sit in the sidebar, as in the design.
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
-        controls.set_halign(gtk::Align::Start);
         let vault_label = gtk::Label::builder().xalign(0.0).ellipsize(pango::EllipsizeMode::Start).build();
         vault_label.add_css_class("heading");
         let folders = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -86,7 +82,6 @@ impl Notes {
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
         sidebar.add_css_class("sidebar");
         sidebar.set_size_request(210, -1);
-        sidebar.append(&gtk::WindowHandle::builder().child(&controls).build());
         sidebar.append(&sidebar_scroller);
 
         let search = gtk::SearchEntry::builder().placeholder_text("Search all notes").hexpand(true).build();
@@ -128,6 +123,7 @@ impl Notes {
         views.append(&note_view);
         views.append(&graph_view);
         toolbar.append(&views);
+        toolbar.append(&autark_common::chrome::controls(true));
 
         let editor = Editor::new();
         let backlinks_title = gtk::Label::builder().xalign(0.0).build();

@@ -31,7 +31,7 @@ fn start(app: &gtk::Application) {
     theme::on_change(|look| {
         WINDOWS.with_borrow(|windows| {
             for window in windows {
-                window.set_child(Some(&content(&look.theme.wallpaper)));
+                window.set_child(Some(&content(&look.theme.wallpaper, look.dark)));
             }
         })
     });
@@ -59,7 +59,7 @@ fn background(app: &gtk::Application, monitor: &gdk::Monitor, name: &str) -> gtk
         window.set_anchor(edge, true);
     }
     window.add_css_class("wallpaper");
-    window.set_child(Some(&content(name)));
+    window.set_child(Some(&content(name, theme::look().dark)));
     let click = gtk::GestureClick::builder().button(gdk::BUTTON_SECONDARY).build();
     click.connect_pressed({
         let window = window.clone();
@@ -111,7 +111,7 @@ fn menu(window: &gtk::ApplicationWindow, x: f64, y: f64) {
 }
 
 /// The picture `name` gives, or the scene it names; Linen when it's neither or the picture won't load.
-fn content(name: &str) -> gtk::Widget {
+fn content(name: &str, dark: bool) -> gtk::Widget {
     if wallpaper::is_picture(name) {
         match gdk::Texture::from_filename(wallpaper::picture_path(name)) {
             Ok(texture) => {
@@ -122,7 +122,7 @@ fn content(name: &str) -> gtk::Widget {
             Err(error) => eprintln!("autark-wallpaper: {name}: {error}"),
         }
     }
-    let scene = *wallpaper::scene(name).unwrap_or(&wallpaper::SCENES[0]);
+    let scene = *wallpaper::scene_for(name, dark).unwrap_or(&wallpaper::SCENES[0]);
     let area = gtk::DrawingArea::new();
     area.set_draw_func(move |_, cr, width, height| wallpaper::draw(cr, &scene, f64::from(width), f64::from(height)));
     area.upcast()

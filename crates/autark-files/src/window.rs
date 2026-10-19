@@ -123,18 +123,13 @@ impl Window {
         let drop_me = me.clone();
         views.add_controller(views::drop_target(&hooks, move || drop_me.upgrade().and_then(|this| this.folder())));
 
-        // Sidebar, with the window controls at the top.
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
-        controls.set_halign(gtk::Align::Start);
-        controls.set_valign(gtk::Align::Center);
+        // Sidebar.
         let places = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let side = gtk::Box::new(gtk::Orientation::Vertical, 0);
         side.add_css_class("sidebar");
         side.set_size_request(216, -1);
         // Rows expand to fill it; that mustn't widen the sidebar itself.
         side.set_hexpand(false);
-        side.append(&gtk::WindowHandle::builder().child(&controls).build());
         side.append(&gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&places).build());
 
         // Toolbar.
@@ -159,6 +154,7 @@ impl Window {
         for widget in [back.upcast_ref::<gtk::Widget>(), crumbs.upcast_ref(), empty_trash.upcast_ref(), switch.upcast_ref(), search.upcast_ref()] {
             toolbar.append(widget);
         }
+        toolbar.append(&autark_common::chrome::controls(true));
 
         let info = Info::new(shared.thumbnails.clone());
         let rename_entry = gtk::Entry::new();

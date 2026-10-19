@@ -41,9 +41,7 @@ impl Calc {
         window.add_css_class("calc");
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize:"));
-        controls.set_halign(gtk::Align::Start);
+        let controls = autark_common::chrome::controls(false);
         let handle = gtk::WindowHandle::builder().child(&controls).build();
         handle.add_css_class("handle");
 

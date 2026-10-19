@@ -10,3 +10,7 @@ directory = "/sources/crates-8b"
 io-lifetimes = { path = "vendor-extra/io-lifetimes-2.0.4" }
 vte4 = { path = "vendor-extra/vte4-0.10.0" }
 vte4-sys = { path = "vendor-extra/vte4-sys-0.10.0" }
+# autark-init: Rust bindings for libcryptsetup (checksums match the crates.io index).
+libcryptsetup-rs = { path = "vendor-extra/libcryptsetup-rs-0.16.1" }
+libcryptsetup-rs-sys = { path = "vendor-extra/libcryptsetup-rs-sys-0.7.0" }
+per-thread-mutex = { path = "vendor-extra/per-thread-mutex-0.1.4" }

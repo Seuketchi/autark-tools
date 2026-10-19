@@ -114,8 +114,7 @@ impl Monitor {
         window.add_css_class("activity");
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
+        let controls = autark_common::chrome::controls(true);
         let title = gtk::Label::builder().label("Activity").xalign(0.0).build();
         title.add_css_class("title");
         let subtitle = gtk::Label::builder().xalign(0.0).build();
@@ -160,11 +159,11 @@ impl Monitor {
         }
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         header.add_css_class("header");
-        header.append(&controls);
         header.append(&titles);
         header.append(&tabs);
         header.append(&search);
         header.append(&force_quit);
+        header.append(&controls);
 
         let first_column = gtk::Label::builder().xalign(0.0).hexpand(true).build();
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);

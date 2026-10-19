@@ -22,6 +22,7 @@ pub struct Window {
     pub app_id: String,
     pub title: String,
     pub activated: bool,
+    pub minimized: bool,
 }
 
 /// A handle for focusing windows; dropping it doesn't stop the watching.
@@ -95,6 +96,19 @@ pub fn watch(on_change: impl Fn(&[Window]) + 'static) -> Result<Toplevels, Box<d
 }
 
 impl Toplevels {
+    /// Minimises the window, or restores it without focusing it.
+    pub fn set_minimized(&self, id: u32, minimized: bool) {
+        let state = self.state.borrow();
+        if let Some(handle) = state.handles.values().find(|handle| handle.id().protocol_id() == id) {
+            if minimized {
+                handle.set_minimized();
+            } else {
+                handle.unset_minimized();
+            }
+            let _ = self.connection.flush();
+        }
+    }
+
     /// Focuses the window, raising it and restoring it if minimised.
     pub fn activate(&self, id: u32) {
         let state = self.state.borrow();
@@ -175,12 +189,10 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             Event::AppId { app_id } => state.pending(&id).app_id = app_id,
             Event::Title { title } => state.pending(&id).title = title,
             Event::State { state: states } => {
-                state.pending(&id).activated = states
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|bytes| u32::from_ne_bytes(*bytes))
-                    .any(|value| value == zwlr_foreign_toplevel_handle_v1::State::Activated as u32);
+                let has = |wanted: zwlr_foreign_toplevel_handle_v1::State| states.as_chunks::<4>().0.iter().map(|bytes| u32::from_ne_bytes(*bytes)).any(|value| value == wanted as u32);
+                let pending = state.pending(&id);
+                pending.activated = has(zwlr_foreign_toplevel_handle_v1::State::Activated);
+                pending.minimized = has(zwlr_foreign_toplevel_handle_v1::State::Minimized);
             }
             Event::Done => {
                 if let Some(window) = state.pending.remove(&id) {

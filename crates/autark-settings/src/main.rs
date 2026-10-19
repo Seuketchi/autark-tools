@@ -9,6 +9,7 @@ mod icon;
 mod iwd;
 mod memory;
 mod panes;
+mod privileged;
 mod secrets;
 mod tasks;
 mod ui;

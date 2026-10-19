@@ -33,7 +33,7 @@ fn snapshot() -> Snapshot {
     let loaded = doctor::loaded_modules();
     let notes = kernel_log::read();
     let findings = doctor::diagnose(&Machine { devices: &devices, aliases: &aliases, loaded: &loaded, notes: &notes, firmware_root: Path::new("/lib/firmware") });
-    let loose = doctor::loose_notes(&findings, &notes).into_iter().cloned().collect();
+    let loose = doctor::loose_notes(&findings, &notes, &doctor::loaded_modules()).into_iter().cloned().collect();
     let lighting = doctor::lighting_devices(&findings).into_iter().map(|device| device.title()).collect();
     Snapshot { kernel, findings, loose, lighting }
 }
@@ -167,8 +167,6 @@ impl Hardware {
         let window = gtk::ApplicationWindow::builder().application(app).title("Hardware").default_width(760).default_height(780).build();
         window.add_css_class("hw");
         window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
-        let controls = gtk::WindowControls::new(gtk::PackType::Start);
-        controls.set_decoration_layout(Some("close,minimize,maximize:"));
         let title = gtk::Label::builder().label("Hardware").xalign(0.0).build();
         title.add_css_class("page-title");
         let subtitle = gtk::Label::builder().label("Scanning…").xalign(0.0).build();
@@ -182,9 +180,9 @@ impl Hardware {
         rescan.set_valign(gtk::Align::Center);
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         top.add_css_class("top");
-        top.append(&controls);
         top.append(&names);
         top.append(&rescan);
+        top.append(&autark_common::chrome::controls(true));
         let handle = gtk::WindowHandle::builder().child(&top).build();
 
         let (attention, laptop, live, radios, list) = (gtk::Box::new(gtk::Orientation::Vertical, 10), card(), card(), card(), gtk::Box::new(gtk::Orientation::Vertical, 0));
@@ -347,6 +345,28 @@ impl Hardware {
                 self.laptop.append(&line("Power profile", "How hard the machine works against how hot and loud it gets.", Some(choices.upcast_ref())));
             }
             None => self.laptop.append(&line("Power profile", "The kernel doesn’t offer one for this laptop.", None)),
+        }
+        for mode in &controls.modes {
+            let choices = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let mut group: Option<gtk::ToggleButton> = None;
+            for choice in &mode.choices {
+                let button = gtk::ToggleButton::with_label(choice);
+                button.add_css_class("choice");
+                button.set_active(*choice == mode.current);
+                button.set_group(group.as_ref());
+                group.get_or_insert(button.clone());
+                let (me, path, value, label) = (Rc::downgrade(self), mode.path.clone(), choice.clone(), mode.label);
+                button.connect_toggled(move |button| {
+                    if !button.is_active() {
+                        return;
+                    }
+                    if let (Some(me), Err(error)) = (me.upgrade(), apply_setting(&path, &value)) {
+                        me.say(&format!("Couldn’t change {}: {error}", label.to_lowercase()));
+                    }
+                });
+                choices.append(&button);
+            }
+            self.laptop.append(&line(mode.label, mode.note, Some(choices.upcast_ref())));
         }
         for battery in &controls.batteries {
             match &battery.limit {

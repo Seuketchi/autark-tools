@@ -78,6 +78,24 @@ pub fn setting(sys: &Path, path: &str, value: &str) -> Result<(PathBuf, String),
             };
             Ok((dir.join(attribute), written))
         }
+        // The MSI embedded controller's own modes (the msi-ec driver): how the fans run, how hard the laptop works, and the fans at full speed.
+        // Each value must be one the driver offers on this laptop. Fan mode's "advanced" is left out on purpose: it hands the fans to a
+        // fan curve nobody has set here, so the helper only offers the controller's own automatic and quiet settings.
+        ["devices", "platform", "msi-ec", attribute @ ("fan_mode" | "shift_mode" | "cooler_boost")] => {
+            let dir = sys.join("devices/platform/msi-ec");
+            if !dir.join(attribute).exists() {
+                return Err("this laptop's controller doesn't have that setting".to_owned());
+            }
+            let allowed: Vec<String> = match *attribute {
+                "fan_mode" => choices(&text(&dir.join("available_fan_modes")).unwrap_or_default()).into_iter().filter(|mode| matches!(mode.as_str(), "auto" | "silent")).collect(),
+                "shift_mode" => choices(&text(&dir.join("available_shift_modes")).unwrap_or_default()),
+                _ => vec!["on".to_owned(), "off".to_owned()],
+            };
+            if !allowed.iter().any(|choice| choice == value) {
+                return Err(format!("“{value}” isn't one of: {}", allowed.join(", ")));
+            }
+            Ok((dir.join(attribute), value.to_owned()))
+        }
         _ => Err("that setting isn't one this helper changes".to_owned()),
     }
 }
@@ -106,6 +124,11 @@ mod tests {
         put("class/power_supply/BAT1/charge_control_end_threshold", "100\n");
         put("class/power_supply/BAT1/charge_control_start_threshold", "0\n");
         put("class/power_supply/BAT1/charge_behaviour", "[auto] inhibit-charge force-discharge\n");
+        put("devices/platform/msi-ec/fan_mode", "auto\n");
+        put("devices/platform/msi-ec/available_fan_modes", "auto silent advanced\n");
+        put("devices/platform/msi-ec/shift_mode", "comfort\n");
+        put("devices/platform/msi-ec/available_shift_modes", "turbo eco comfort\n");
+        put("devices/platform/msi-ec/cooler_boost", "off\n");
         put("class/power_supply/ADP1/type", "Mains\n");
         put("class/power_supply/ADP1/charge_control_end_threshold", "100\n");
         root
@@ -119,6 +142,23 @@ mod tests {
         assert_eq!((file, value.as_str()), (root.join("class/power_supply/BAT1/charge_control_end_threshold"), "80"));
         assert_eq!(setting(&root, "/sys/class/power_supply/BAT1/charge_control_start_threshold", "75").unwrap().1, "75");
         assert_eq!(setting(&root, "/sys/class/power_supply/BAT1/charge_behaviour", "inhibit-charge").unwrap().1, "inhibit-charge");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_controllers_modes_are_allowed_with_the_values_the_driver_offers() {
+        let root = sys("msi");
+        let file = |attribute: &str| root.join("devices/platform/msi-ec").join(attribute);
+        assert_eq!(setting(&root, "/sys/devices/platform/msi-ec/fan_mode", "silent").unwrap(), (file("fan_mode"), "silent".to_owned()));
+        assert_eq!(setting(&root, "/sys/devices/platform/msi-ec/shift_mode", "turbo").unwrap(), (file("shift_mode"), "turbo".to_owned()));
+        assert_eq!(setting(&root, "/sys/devices/platform/msi-ec/cooler_boost", "on").unwrap().1, "on");
+        for (attribute, value) in [("fan_mode", "advanced"), ("fan_mode", "turbo"), ("fan_mode", ""), ("shift_mode", "silent"), ("cooler_boost", "1"), ("cooler_boost", "on; reboot")] {
+            assert!(setting(&root, &format!("/sys/devices/platform/msi-ec/{attribute}"), value).is_err(), "{attribute} = {value}");
+        }
+        // Other files in the same folder, and the same names elsewhere, stay out.
+        for path in ["/sys/devices/platform/msi-ec/webcam", "/sys/devices/platform/msi-ec/super_battery", "/sys/devices/platform/msi-ec/fn_key", "/sys/devices/platform/other/fan_mode"] {
+            assert!(setting(&root, path, "on").is_err(), "{path}");
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 

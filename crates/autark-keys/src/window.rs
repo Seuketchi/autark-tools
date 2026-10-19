@@ -48,14 +48,12 @@ pub fn build(app: &gtk::Application) -> gtk::ApplicationWindow {
     window.add_css_class("keys");
     window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
-    let controls = gtk::WindowControls::new(gtk::PackType::Start);
-    controls.set_decoration_layout(Some("close,minimize,maximize:"));
     let title = gtk::Label::builder().label("Keyboard shortcuts").xalign(0.0).hexpand(true).build();
     title.add_css_class("title");
     let top = gtk::Box::new(gtk::Orientation::Horizontal, 14);
     top.add_css_class("top");
-    top.append(&controls);
     top.append(&title);
+    top.append(&autark_common::chrome::controls(true));
     let handle = gtk::WindowHandle::builder().child(&top).build();
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 8);

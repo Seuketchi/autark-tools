@@ -20,6 +20,10 @@ pub const SCENES: [Scene; 4] = [
     Scene { id: "daylight", label: "Daylight", sky: "#DCE6F2", band: "#D3DFEC", sun: "#FFFFFF", hills: ["#C3D2E3", "#AFC2D8", "#9EB4CD", "#8EA6C2"] },
 ];
 
+/// Linen at night: the same hills in the dark theme's warm greys and a muted sage sun. Used when the wallpaper is Linen and the theme is dark;
+/// the other scenes are the ones you picked and stay as they are.
+pub const LINEN_DARK: Scene = Scene { id: "linen", label: "Linen", sky: "#1E1C18", band: "#221F1B", sun: "#4F7561", hills: ["#2B2823", "#322E28", "#2E4237", "#26362E"] };
+
 /// The scene the design is drawn at.
 pub const WIDTH: f64 = 1440.0;
 pub const HEIGHT: f64 = 900.0;
@@ -42,6 +46,14 @@ const RIDGES: [&[(f64, f64)]; 4] = [
 /// The scene `name` names, if it names one rather than a picture.
 pub fn scene(name: &str) -> Option<&'static Scene> {
     SCENES.iter().find(|scene| scene.id == name)
+}
+
+/// [`scene`], with Linen drawn in its dark colours when `dark`.
+pub fn scene_for(name: &str, dark: bool) -> Option<&'static Scene> {
+    match scene(name) {
+        Some(found) if found.id == "linen" && dark => Some(&LINEN_DARK),
+        other => other,
+    }
 }
 
 /// Whether `name` is a picture's path rather than a scene.

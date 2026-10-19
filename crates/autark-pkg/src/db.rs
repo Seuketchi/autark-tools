@@ -66,6 +66,29 @@ impl Db {
         Ok(Self { dir: config.db.clone(), _lock: lock })
     }
 
+    /// Opens the database to read it, with no write access needed: a shared lock when the lock file can be opened (so it waits for a
+    /// writer to finish), none when it can't (the database belongs to root, and `list` or a dry run changes nothing).
+    pub fn open_read(config: &Config) -> Result<Self> {
+        let lock = File::open(config.db.join(".lock")).ok();
+        if let Some(lock) = &lock {
+            if lock.try_lock_shared().is_err() {
+                println!("waiting for another autark-pkg to finish");
+                lock.lock_shared().ctx(&config.db.join(".lock"))?;
+            }
+        }
+        // The guard needs a file; an unlocked read-only handle on the folder's own listing is enough when there is no lock file.
+        let guard = match lock {
+            Some(lock) => lock,
+            None => File::open(&config.db).ctx(&config.db)?,
+        };
+        Ok(Self { dir: config.db.clone(), _lock: guard })
+    }
+
+    /// For a command that only reads when `dry_run`: [`Db::open_read`], else [`Db::open`].
+    pub fn open_for(config: &Config, dry_run: bool) -> Result<Self> {
+        if dry_run { Self::open_read(config) } else { Self::open(config) }
+    }
+
     pub fn names(&self) -> Result<Vec<String>> {
         let mut names = Vec::new();
         for entry in std::fs::read_dir(&self.dir).ctx(&self.dir)? {
@@ -196,5 +219,26 @@ mod tests {
             assert_eq!(format_item(&parse_item(line).unwrap()), line);
         }
         assert_eq!(parse_item("x /y"), None);
+    }
+
+    /// A database folder nobody can write to, as root's is for everyone else: `list` and dry runs must still read it.
+    #[test]
+    fn a_database_you_cannot_write_can_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("autark-pkg-db-{}", std::process::id()));
+        let config = Config::load(&root, None, Some(&root)).unwrap();
+        std::fs::create_dir_all(config.db.join("zlib")).unwrap();
+        std::fs::write(config.db.join("zlib/info.toml"), "name = \"zlib\"\n").unwrap();
+        std::fs::write(config.db.join(".lock"), "").unwrap();
+        std::fs::set_permissions(&config.db, std::fs::Permissions::from_mode(0o555)).unwrap();
+        std::fs::set_permissions(config.db.join(".lock"), std::fs::Permissions::from_mode(0o444)).unwrap();
+        let names = Db::open_read(&config).and_then(|db| db.names());
+        // Without the lock file too (a database made by an older autark-pkg).
+        std::fs::set_permissions(&config.db, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_file(config.db.join(".lock")).unwrap();
+        let without_lock = Db::open_read(&config).and_then(|db| db.names());
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(names.unwrap(), ["zlib"]);
+        assert_eq!(without_lock.unwrap(), ["zlib"]);
     }
 }
