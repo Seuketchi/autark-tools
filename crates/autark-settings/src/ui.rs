@@ -82,6 +82,17 @@ pub fn note(text: &str) -> gtk::Label {
 }
 
 /// A switch that calls `changed` when flipped by hand.
+/// A value shown at a row's end, right-aligned and selectable.
+pub fn value(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("value");
+    label.set_xalign(1.0);
+    label.set_selectable(true);
+    label.set_wrap(true);
+    label.set_justify(gtk::Justification::Right);
+    label
+}
+
 pub fn switch(on: bool, changed: impl Fn(bool) + 'static) -> gtk::Switch {
     let switch = gtk::Switch::new();
     switch.set_active(on);
