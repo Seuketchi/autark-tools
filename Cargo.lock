@@ -235,6 +235,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-contacts"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "autark-accounts",
+ "autark-common",
+ "autark-pim",
+ "blocking",
+ "chrono",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "zbus",
+]
+
+[[package]]
 name = "autark-displays"
 version = "0.0.0"
 dependencies = [
@@ -332,6 +348,22 @@ dependencies = [
  "serde",
  "zbus",
  "zeroize",
+]
+
+[[package]]
+name = "autark-mail"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "autark-accounts",
+ "autark-common",
+ "autark-pim",
+ "blocking",
+ "chrono",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "zbus",
 ]
 
 [[package]]
@@ -507,6 +539,7 @@ version = "0.0.0"
 dependencies = [
  "autark-common",
  "gtk4",
+ "serde",
  "vte4",
 ]
 

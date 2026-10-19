@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="archive-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D9A66B"/><stop offset="1" stop-color="#8A5A2B"/></linearGradient>
+<linearGradient id="archive-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="archive-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="archive-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="archive-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#archive-c)"><rect width="64" height="64" fill="url(#archive-bg)"/><rect width="64" height="33.3" fill="url(#archive-gl)"/><rect y="60" width="64" height="4" fill="url(#archive-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#archive-ds)"><path d="M15 28h34v18a4 4 0 0 1-4 4H19a4 4 0 0 1-4-4z" fill="#FFFFFF" opacity="0.97"/><path d="M12 17a3 3 0 0 1 3-3h34a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H15a3 3 0 0 1-3-3z" fill="#FFFFFF" opacity="0.6"/><path d="M27 37h10" fill="none" stroke="#8A5A2B" stroke-width="4" opacity="1" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

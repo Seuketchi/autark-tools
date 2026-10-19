@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="viewer-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4FE0C0"/><stop offset="1" stop-color="#14957F"/></linearGradient>
+<linearGradient id="viewer-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="viewer-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="viewer-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="viewer-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#viewer-c)"><rect width="64" height="64" fill="url(#viewer-bg)"/><rect width="64" height="33.3" fill="url(#viewer-gl)"/><rect y="60" width="64" height="4" fill="url(#viewer-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#viewer-ds)"><path d="M14 16h36a4 4 0 0 1 4 4v24a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V20a4 4 0 0 1 4-4z" fill="#FFFFFF" opacity="0.97"/><path d="M10 43l12-12l9 9l6-6l14 14H14a4 4 0 0 1-4-4z" fill="#14957F" opacity="0.9"/><path d="M42 22a4 4 0 1 0 0 8a4 4 0 1 0 0-8z" fill="#14957F" opacity="0.7"/></g>
+</svg>

@@ -32,6 +32,7 @@ members = [
     "crates/autark-settings",
     "crates/autark-shot",
     "crates/autark-stats",
+    "crates/autark-terminal",
     "crates/autark-viewer",
     "crates/autark-wallpaper",
 ]

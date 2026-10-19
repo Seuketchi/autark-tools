@@ -1,16 +1,48 @@
 window.terminal-window {
-  background-color: @surface;
-  color: @text;
+  background-color: @sidebar;
+  color: @heading;
   font-family: "Geist", "Inter", sans-serif;
   font-size: 13px;
 }
 
-window.terminal-window .titlebar {
-  min-height: 0;
+.terminal-titlebar {
+  min-height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid alpha(@text, 0.06);
+}
+
+.terminal-titlebar .window-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: @heading;
+}
+
+.terminal-titlebar windowcontrols button {
+  min-width: 12px;
+  min-height: 12px;
+  margin: 0 8px 0 0;
   padding: 0;
-  background: none;
-  border: none;
-  box-shadow: none;
+  border-radius: 50%;
+}
+
+.terminal-titlebar windowcontrols button image {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  -gtk-icon-size: 1px;
+}
+
+.terminal-titlebar windowcontrols button.close {
+  background-color: #E5684F;
+}
+
+.terminal-titlebar windowcontrols button.minimize {
+  background-color: #E8B04A;
+}
+
+.terminal-titlebar windowcontrols button.maximize {
+  background-color: #6FAF7A;
 }
 
 .tabs > header {
@@ -60,7 +92,7 @@ window.terminal-window .titlebar {
 }
 
 vte-terminal.autark-terminal {
-  padding: 8px 10px;
+  padding: 18px 22px;
 }
 
 .paste-warning {

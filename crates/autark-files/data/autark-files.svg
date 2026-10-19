@@ -1,1 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="28" fill="#4A7C6F"/><text x="64" y="88" font-family="sans-serif" font-size="72" font-weight="600" text-anchor="middle" fill="#fff">F</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="files-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6AB0FF"/><stop offset="1" stop-color="#2C6BE0"/></linearGradient>
+<linearGradient id="files-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="files-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="files-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="files-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#files-c)"><rect width="64" height="64" fill="url(#files-bg)"/><rect width="64" height="33.3" fill="url(#files-gl)"/><rect y="60" width="64" height="4" fill="url(#files-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#files-ds)"><path d="M14 20a4 4 0 0 1 4-4h9.5l4 4H46a4 4 0 0 1 4 4v4H14z" fill="#FFFFFF" opacity="0.55"/><path d="M12 27a4 4 0 0 1 4-4h32a4 4 0 0 1 4 4v15a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5z" fill="#FFFFFF" opacity="0.97"/></g>
+</svg>

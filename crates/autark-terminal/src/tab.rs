@@ -2,41 +2,64 @@
 
 use std::path::{Path, PathBuf};
 
-use autark_common::theme;
+use autark_common::theme::{self, Look};
 use gtk::prelude::*;
 use gtk::{gio, glib, pango};
-use vte::{Terminal, TerminalExt, TerminalExtManual};
 
-const FONT: &str = "Geist Mono 12";
+use crate::config::{self, Config, Cursor};
+use vte::{Terminal, TerminalExt, TerminalExtManual};
 
 /// A terminal running the user's shell in `folder` (the shell's own default when there's none). `exited` runs when the
 /// shell ends, so its tab can go.
 pub fn new(folder: Option<&Path>, exited: impl Fn(&Terminal) + 'static) -> Terminal {
     let terminal = Terminal::new();
-    terminal.set_font(Some(&pango::FontDescription::from_string(FONT)));
-    terminal.set_scrollback_lines(10_000);
     terminal.set_scroll_on_keystroke(true);
     terminal.set_scroll_on_output(false);
     terminal.set_mouse_autohide(true);
     terminal.set_audible_bell(false);
     terminal.set_allow_hyperlink(true);
-    terminal.set_cursor_blink_mode(vte::CursorBlinkMode::System);
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
     terminal.add_css_class("autark-terminal");
 
-    let look = theme::look();
-    crate::colors::apply(&terminal, &look.palette, look.dark);
-    let weak = terminal.downgrade();
-    theme::on_change(move |look| {
-        if let Some(terminal) = weak.upgrade() {
-            crate::colors::apply(&terminal, &look.palette, look.dark);
+    restyle(&terminal, &theme::look(), &config::current());
+    // The desktop's look and terminal.toml each repaint it; a closed tab's listeners let go.
+    theme::on_change({
+        let weak = terminal.downgrade();
+        move |look| {
+            if let Some(terminal) = weak.upgrade() {
+                restyle(&terminal, look, &config::current());
+            }
+        }
+    });
+    config::on_change({
+        let weak = terminal.downgrade();
+        move |config| match weak.upgrade() {
+            Some(terminal) => {
+                restyle(&terminal, &theme::look(), config);
+                true
+            }
+            None => false,
         }
     });
 
     terminal.connect_child_exited(move |terminal, _status| exited(terminal));
     spawn_shell(&terminal, folder);
     terminal
+}
+
+/// Font, cursor, scrollback and colours, from the config and the desktop's look.
+fn restyle(terminal: &Terminal, look: &Look, config: &Config) {
+    terminal.set_font(Some(&pango::FontDescription::from_string(&format!("{} {}px", config.font, config.font_size))));
+    terminal.set_cell_height_scale(config.line_height);
+    terminal.set_scrollback_lines(config.scrollback.into());
+    terminal.set_cursor_shape(match config.cursor {
+        Cursor::Block => vte::CursorShape::Block,
+        Cursor::Bar => vte::CursorShape::Ibeam,
+        Cursor::Underline => vte::CursorShape::Underline,
+    });
+    terminal.set_cursor_blink_mode(if config.cursor_blink { vte::CursorBlinkMode::On } else { vte::CursorBlinkMode::Off });
+    crate::colors::apply(terminal, look, config);
 }
 
 fn spawn_shell(terminal: &Terminal, folder: Option<&Path>) {
@@ -46,6 +69,15 @@ fn spawn_shell(terminal: &Terminal, folder: Option<&Path>) {
         std::env::vars().filter(|(key, _)| !matches!(key.as_str(), "TERM" | "COLORTERM")).map(|(key, value)| format!("{key}={value}")).collect();
     env.push("TERM=xterm-256color".to_owned());
     env.push("COLORTERM=truecolor".to_owned());
+    // The design's title is "user@host: folder". Bash only says that with a prompt hook, so add one to any the user has.
+    let title = r#"printf '\033]0;%s@%s: %s\007' "$USER" "${HOSTNAME%%.*}" "${PWD/#$HOME/$__autark_home}""#;
+    let title = format!("__autark_home='~';{title}");
+    let hook = match std::env::var("PROMPT_COMMAND") {
+        Ok(existing) if !existing.is_empty() => format!("{title};{existing}"),
+        _ => title,
+    };
+    env.retain(|entry| !entry.starts_with("PROMPT_COMMAND="));
+    env.push(format!("PROMPT_COMMAND={hook}"));
     let env: Vec<&str> = env.iter().map(String::as_str).collect();
     let folder = folder.and_then(Path::to_str);
     terminal.spawn_async(

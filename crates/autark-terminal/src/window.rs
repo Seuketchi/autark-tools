@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
-use vte::{Terminal, TerminalExt, TerminalExtManual};
+use vte::{Terminal, TerminalExt};
 
 use crate::{check, tab};
 
@@ -54,6 +54,19 @@ impl Window {
 
         let window = gtk::ApplicationWindow::builder().application(app).default_width(900).default_height(560).title("Terminal").child(&column).build();
         window.add_css_class("terminal-window");
+
+        // The design's title bar: round close, minimise and maximise on the left, the title centred.
+        let controls = gtk::WindowControls::new(gtk::PackType::Start);
+        controls.set_decoration_layout(Some("close,minimize,maximize:"));
+        controls.set_valign(gtk::Align::Center);
+        let title = gtk::Label::builder().ellipsize(gtk::pango::EllipsizeMode::End).build();
+        title.add_css_class("window-title");
+        window.bind_property("title", &title, "label").sync_create().build();
+        let bar = gtk::CenterBox::new();
+        bar.add_css_class("terminal-titlebar");
+        bar.set_start_widget(Some(&controls));
+        bar.set_center_widget(Some(&title));
+        window.set_titlebar(Some(&gtk::WindowHandle::builder().child(&bar).build()));
 
         let this = Rc::new(Self { window, notebook, search_bar, search, warning, warning_text, held: RefCell::default(), zoom: Cell::new(1.0) });
 
@@ -252,7 +265,7 @@ impl Window {
         let controller = gtk::ShortcutController::new();
         // Capture, so VTE doesn't take the keys first.
         controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let mut add = |keys: &str, action: Box<dyn Fn() + 'static>| {
+        let add = |keys: &str, action: Box<dyn Fn() + 'static>| {
             if let Some(trigger) = gtk::ShortcutTrigger::parse_string(keys) {
                 let action = gtk::CallbackAction::new(move |_, _| {
                     action();
