@@ -186,4 +186,4 @@ fade_minutes = 30
 
 ## License
 
-Private until the first working release, then public under MIT or Apache-2.0, at your option. The license files get added at that release.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
