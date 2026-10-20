@@ -96,6 +96,24 @@ pub fn setting(sys: &Path, path: &str, value: &str) -> Result<(PathBuf, String),
             }
             Ok((dir.join(attribute), value.to_owned()))
         }
+        // A touchpad's off switch: the kernel's "inhibited" stops a device reporting. Touchpads only, found by name, so this can never
+        // switch off the keyboard or the only pointer a person has; the caller's name must be a plain `inputN`.
+        ["class", "input", name, "inhibited"] => {
+            if !name.strip_prefix("input").is_some_and(|number| !number.is_empty() && number.len() <= 6 && number.chars().all(|c| c.is_ascii_digit())) {
+                return Err("that isn't an input device's name".to_owned());
+            }
+            let dir = sys.join("class/input").join(name);
+            if !text(&dir.join("name")).is_some_and(|device| device.to_ascii_lowercase().contains("touchpad")) {
+                return Err("only a touchpad can be switched off this way".to_owned());
+            }
+            if !dir.join("inhibited").exists() {
+                return Err("this touchpad can't be switched off".to_owned());
+            }
+            if !matches!(value, "0" | "1") {
+                return Err("a touchpad is on (0) or off (1)".to_owned());
+            }
+            Ok((dir.join("inhibited"), value.to_owned()))
+        }
         _ => Err("that setting isn't one this helper changes".to_owned()),
     }
 }
@@ -131,6 +149,11 @@ mod tests {
         put("devices/platform/msi-ec/cooler_boost", "off\n");
         put("class/power_supply/ADP1/type", "Mains\n");
         put("class/power_supply/ADP1/charge_control_end_threshold", "100\n");
+        put("class/input/input11/name", "ELAN0307:00 04F3:3282 Touchpad\n");
+        put("class/input/input11/inhibited", "0\n");
+        put("class/input/input3/name", "AT Translated Set 2 keyboard\n");
+        put("class/input/input3/inhibited", "0\n");
+        put("class/input/input7/name", "Some Touchpad without the switch\n");
         root
     }
 
@@ -196,6 +219,37 @@ mod tests {
             "sys/firmware/acpi/platform_profile",
         ] {
             assert!(setting(&root, path, "80").is_err(), "{path}");
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_touchpad_can_be_switched_off_and_on() {
+        let root = sys("touchpad");
+        let file = root.join("class/input/input11/inhibited");
+        assert_eq!(setting(&root, "/sys/class/input/input11/inhibited", "1").unwrap(), (file.clone(), "1".to_owned()));
+        assert_eq!(setting(&root, "/sys/class/input/input11/inhibited", " 0\n").unwrap(), (file, "0".to_owned()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_a_touchpad_and_only_on_or_off() {
+        let root = sys("touchpad-limits");
+        for (path, value) in [
+            ("/sys/class/input/input3/inhibited", "1"),            // the keyboard
+            ("/sys/class/input/input7/inhibited", "1"),            // a "touchpad" with no switch
+            ("/sys/class/input/input12/inhibited", "1"),           // no such device
+            ("/sys/class/input/event11/inhibited", "1"),           // not an inputN name
+            ("/sys/class/input/input/inhibited", "1"),
+            ("/sys/class/input/input11x/inhibited", "1"),
+            ("/sys/class/input/input11/../input3/inhibited", "1"),
+            ("/sys/class/input/input11/name", "1"),                // another file of the same device
+            ("/sys/class/input/input11/inhibited", "2"),
+            ("/sys/class/input/input11/inhibited", "on"),
+            ("/sys/class/input/input11/inhibited", ""),
+            ("/sys/class/input/input11/inhibited", "1; reboot"),
+        ] {
+            assert!(setting(&root, path, value).is_err(), "{path} = {value}");
         }
         fs::remove_dir_all(&root).unwrap();
     }
