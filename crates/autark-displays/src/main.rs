@@ -6,6 +6,7 @@
 mod heads;
 mod layout;
 mod lid;
+mod project;
 mod server;
 
 use std::pin::pin;
@@ -13,17 +14,19 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::future::{Either, select};
 
-use layout::{Head, Output, Saved};
+use layout::{Head, Saved};
 use server::Displays;
 
 const USAGE: &str = "usage: autark-displays daemon
        autark-displays list
-       autark-displays set <connector or id> [--on|--off] [--mode 2560x1600@60] [--scale 1.5] [--position X,Y] [--transform normal|90|180|270|flipped…]";
+       autark-displays set <connector or id> [--on|--off] [--mode 2560x1600@60] [--scale 1.5] [--position X,Y] [--transform normal|90|180|270|flipped…]
+       autark-displays project     the projection key: laptop screen only → both side by side → the other screen only → …";
 
 #[zbus::proxy(interface = "org.autark.Displays1", default_service = "org.autark.Displays1", default_path = "/org/autark/Displays1")]
 trait Control {
     fn list(&self) -> zbus::Result<String>;
     fn apply(&self, outputs: &str) -> zbus::Result<()>;
+    fn project(&self) -> zbus::Result<String>;
 }
 
 fn main() {
@@ -32,6 +35,7 @@ fn main() {
         Some("daemon") => async_io::block_on(daemon()),
         Some("list") => async_io::block_on(list()),
         Some("set") => async_io::block_on(set(&args[1..])),
+        Some("project") => async_io::block_on(project()),
         Some("-h" | "--help") => {
             println!("{USAGE}");
             return;
@@ -48,6 +52,10 @@ fn bus_error(error: zbus::Error) -> String {
     match error {
         zbus::Error::MethodError(name, ..) if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => "the displays daemon isn't running".into(),
         zbus::Error::MethodError(_, Some(message), _) => message,
+        zbus::Error::FDO(error) => match *error {
+            zbus::fdo::Error::Failed(message) => message,
+            error => error.to_string(),
+        },
         error => error.to_string(),
     }
 }
@@ -107,6 +115,14 @@ async fn set(args: &[String]) -> Result<(), String> {
     proxy.apply(&json).await.map_err(bus_error)
 }
 
+/// Goes to the next way of using the screens and prints which it is.
+async fn project() -> Result<(), String> {
+    let connection = zbus::Connection::session().await.map_err(|error| error.to_string())?;
+    let proxy = ControlProxy::new(&connection).await.map_err(bus_error)?;
+    println!("{}", proxy.project().await.map_err(bus_error)?);
+    Ok(())
+}
+
 fn save(saved: &Saved) {
     if let Err(error) = saved.save() {
         eprintln!("displays: saving {}: {error}", layout::path().display());
@@ -116,7 +132,7 @@ fn save(saved: &Saved) {
 enum Event {
     Wayland(Result<(), String>),
     Lid(bool),
-    Request((Vec<Output>, server::Reply)),
+    Request((server::Request, server::Reply)),
 }
 
 async fn daemon() -> Result<(), String> {
@@ -196,19 +212,27 @@ async fn daemon() -> Result<(), String> {
                     react = closed != lid_closed;
                     lid_closed = closed;
                 }
-                Event::Request((wanted, reply)) => {
+                Event::Request((request, reply)) => {
                     let heads = outputs.heads();
-                    let result = match layout::settings(&heads, &wanted, true) {
-                        Ok(settings) => match outputs.apply(&settings).await {
-                            Ok(true) => {
-                                // Remembered as asked for, not as next reported: Wayfire may reset it first.
-                                if saved.remember(&layout::applied(&heads, &settings), lid_closed) {
-                                    save(&saved);
+                    // What to set, and what to tell the caller once it is.
+                    let wanted = match request {
+                        server::Request::Apply(wanted) => Ok((wanted, String::new())),
+                        server::Request::Project => project::next(&heads, &saved).map(|(way, wanted)| (wanted, way.title(heads.iter().filter(|head| !head.internal()).count()).to_owned())),
+                    };
+                    let result = match wanted {
+                        Ok((wanted, said)) => match layout::settings(&heads, &wanted, true) {
+                            Ok(settings) => match outputs.apply(&settings).await {
+                                Ok(true) => {
+                                    // Remembered as asked for, not as next reported: Wayfire may reset it first.
+                                    if saved.remember(&layout::applied(&heads, &settings), lid_closed) {
+                                        save(&saved);
+                                    }
+                                    tries = 0;
+                                    Ok(said)
                                 }
-                                tries = 0;
-                                Ok(())
-                            }
-                            Ok(false) => Err("the monitors changed meanwhile; try again".into()),
+                                Ok(false) => Err("the monitors changed meanwhile; try again".into()),
+                                Err(error) => Err(error),
+                            },
                             Err(error) => Err(error),
                         },
                         Err(error) => Err(error),

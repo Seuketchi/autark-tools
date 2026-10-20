@@ -1,5 +1,5 @@
-//! `autark-osd volume up|down|mute`, `autark-osd mic mute`, `autark-osd brightness up|down`: what the volume, mute, microphone and
-//! brightness keys run. It makes the change and shows the result as a pop-up, so a press is visible: a transient notification (never kept in
+//! `autark-osd volume up|down|mute`, `autark-osd mic mute`, `autark-osd brightness up|down`, `autark-osd screens`: what the volume, mute,
+//! microphone, brightness and projection keys run. It makes the change and shows the result as a pop-up, so a press is visible: a transient notification (never kept in
 //! the notification centre) that replaces the last one of its kind, with a bar, through `org.freedesktop.Notifications`.
 
 use std::collections::HashMap;
@@ -101,6 +101,21 @@ fn brightness(action: &str) -> Result<Pop, String> {
     Ok(Pop { kind: "brightness", icon: "display-brightness-symbolic", title: format!("Brightness {percent}%"), body: bar(percent), percent: percent as i32 })
 }
 
+/// The projection key: `autark-displays project` goes to the next way of using the screens and says which. A refusal (no other screen is
+/// connected) is shown too, so the key never looks dead.
+fn screens() -> Result<Pop, String> {
+    let here = std::env::current_exe().ok().and_then(|path| path.parent().map(|dir| dir.join("autark-displays")));
+    let program = here.filter(|path| path.exists()).map_or_else(|| "autark-displays".into(), |path| path.into_os_string());
+    let output = Command::new(program).arg("project").stdin(Stdio::null()).output().map_err(|error| format!("autark-displays: {error}"))?;
+    let (title, body) = if output.status.success() {
+        (String::from_utf8_lossy(&output.stdout).trim().to_owned(), String::new())
+    } else {
+        let said = String::from_utf8_lossy(&output.stderr);
+        ("Screens".to_owned(), said.trim().trim_start_matches("displays: ").to_owned())
+    };
+    Ok(Pop { kind: "screens", icon: "video-display-symbolic", title, body, percent: -1 })
+}
+
 /// Where the id of this kind's last pop-up is kept, so the next replaces it instead of stacking.
 fn id_file(kind: &str) -> std::path::PathBuf {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
@@ -140,7 +155,8 @@ fn run() -> Result<(), String> {
         Some("volume") => volume(action)?,
         Some("mic") => microphone(action)?,
         Some("brightness") => brightness(action)?,
-        _ => return Err("usage: autark-osd volume up|down|mute | mic mute | brightness up|down".to_owned()),
+        Some("screens") => screens()?,
+        _ => return Err("usage: autark-osd volume up|down|mute | mic mute | brightness up|down | screens".to_owned()),
     };
     // The change is made; a missing pop-up shouldn't make the key look broken, so it's only said.
     if let Err(error) = show(&pop) {
