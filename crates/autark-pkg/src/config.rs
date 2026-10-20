@@ -35,6 +35,9 @@ pub struct Settings {
     pub arch_importer: PathBuf,
     /// What the importer downloaded, so a source is fetched once.
     pub arch_cache: PathBuf,
+    /// A repository of prebuilt, signed packages (a folder served over HTTP or HTTPS), tried before building.
+    /// Empty: none.
+    pub repo: String,
 }
 
 impl Default for Settings {
@@ -53,6 +56,7 @@ impl Default for Settings {
             imported: "/var/lib/autark/imported".into(),
             arch_importer: "/usr/src/autark/scripts/arch-import.py".into(),
             arch_cache: "/var/cache/autark/arch-import".into(),
+            repo: String::new(),
         }
     }
 }
@@ -75,6 +79,8 @@ pub struct Config {
     pub imported: Option<PathBuf>,
     pub arch_importer: PathBuf,
     pub arch_cache: PathBuf,
+    /// The repository's address, without a trailing slash.
+    pub repo: Option<String>,
     /// The paths as the target system sees them, which a tracked build's scan leaves out.
     pub own: Vec<PathBuf>,
 }
@@ -107,6 +113,7 @@ impl Config {
             imported: recipes.is_none().then(|| under(root, &settings.imported)),
             arch_importer: under(root, &settings.arch_importer),
             arch_cache: under(root, &settings.arch_cache),
+            repo: Some(settings.repo.trim().trim_end_matches('/').to_owned()).filter(|repo| !repo.is_empty()),
             own,
         })
     }

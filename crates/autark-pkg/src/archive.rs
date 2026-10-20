@@ -99,7 +99,12 @@ fn sign(config: &Config, archive: &Path, info: &PkgInfo) -> Result<()> {
     if !config.secret_key.exists() {
         return fail(format!("no signing key at {}; create one with `autark-pkg keygen`", config.secret_key.display()));
     }
-    let secret = minisign::SecretKey::from_file(&config.secret_key, Some(String::new())).ctx(&config.secret_key)?;
+    sign_with(archive, &config.secret_key, String::new(), info)
+}
+
+/// Signs `archive` with the secret key in `key`, which `password` unlocks (empty for the build key).
+pub fn sign_with(archive: &Path, key: &Path, password: String, info: &PkgInfo) -> Result<()> {
+    let secret = minisign::SecretKey::from_file(key, Some(password)).ctx(format!("{} (wrong password?)", key.display()))?;
     let public = minisign::PublicKey::from_secret_key(&secret).ctx("public key")?;
     let file = File::open(archive).ctx(archive)?;
     let signature = minisign::sign(Some(&public), &secret, BufReader::new(file), Some(&info.trusted_comment()), Some("signed by autark-pkg")).ctx("signing")?;
@@ -264,6 +269,27 @@ pub fn keygen(config: &Config) -> Result<PathBuf> {
     std::fs::write(&path, public.into_string()).ctx(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).ctx(&path)?;
     Ok(path)
+}
+
+/// Makes the release key pair in `dir`: `autark-release.key`, protected by `password` and meant to live on offline
+/// media, and `autark-release.pub`, which goes into the keys folder of every system that should trust releases.
+pub fn release_keygen(dir: &Path, password: &str) -> Result<(PathBuf, PathBuf)> {
+    if password.is_empty() {
+        return fail("the release key needs a password");
+    }
+    let secret_path = dir.join("autark-release.key");
+    let public_path = dir.join("autark-release.pub");
+    if secret_path.exists() || public_path.exists() {
+        return fail(format!("{} or {} already exists; move them away first", secret_path.display(), public_path.display()));
+    }
+    std::fs::create_dir_all(dir).ctx(dir)?;
+    let pair = minisign::KeyPair::generate_encrypted_keypair(Some(password.to_owned())).ctx("key generation")?;
+    let secret = pair.sk.to_box(Some("Autark release signing key")).ctx("secret key")?;
+    let public = pair.pk.to_box().ctx("public key")?;
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode_0600().open(&secret_path).ctx(&secret_path)?;
+    file.write_all(secret.into_string().as_bytes()).ctx(&secret_path)?;
+    std::fs::write(&public_path, public.into_string()).ctx(&public_path)?;
+    Ok((secret_path, public_path))
 }
 
 trait Private {
