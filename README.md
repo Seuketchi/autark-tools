@@ -149,7 +149,19 @@ keep = 2                              # builds kept per package, for rollback
 imported = "/var/lib/autark/imported" # recipes imported from Arch Linux, apart from the hand-written ones
 arch_importer = "/usr/src/autark/scripts/arch-import.py"
 arch_cache = "/var/cache/autark/arch-import"
+repo = ""                             # prebuilt packages: a folder served over HTTP(S); empty means build everything
 ```
+
+**Prebuilt packages.** With `repo` set, `install` and `upgrade` look in the repository for `<name>-<version>-<release>.tar.zst` and its `.minisig` before building. Nothing is trusted because it was downloaded: the signature must verify against a key in the `keys` folder, and the archive must be the package and version asked for (`--no-repo` skips the repository). A system trusts releases by having the release key's `.pub` in `keys`. A repository that can't be reached, or doesn't have the package, means the package is built as before.
+
+The release key is made once, kept offline, and never on the build machine:
+
+```
+autark-pkg release-keygen /path/to/usb/release        # asks for a password; writes autark-release.key and .pub
+autark-pkg publish out/ --key /path/to/usb/release/autark-release.key [names…]
+```
+
+`publish` takes the newest cached build of each package (or of `names`), checks each against the keys it trusts, copies it to `out/`, signs the copy with the release key, and writes `index` (name, version, sha256, size, file) with `index.minisig`. Upload the folder's files to the repository. `--password-file` reads the key's password from a file instead of asking.
 
 A package with no recipe is imported from Arch Linux: `autark-pkg install htop` asks, then runs `scripts/arch-import.py` as the
 `autark-build` user, which reads Arch's PKGBUILD, downloads and checks its sources, and writes a recipe (and ones for the runtime

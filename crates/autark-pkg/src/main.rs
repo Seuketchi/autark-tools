@@ -10,6 +10,7 @@ mod error;
 mod fetch;
 mod ops;
 mod recipe;
+mod repo;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,6 +36,8 @@ const USAGE: &str = "usage: autark-pkg [options] <command> [names…]
   arch <names>         import recipes from Arch Linux (and the runtime dependencies they need), without installing
   refresh [names]      import the current Arch recipes again (all imported ones by default); upgrade then sees new versions
   keygen               make the signing key pair
+  release-keygen <dir> make the offline release key pair (password-protected) in <dir>
+  publish <dir> [names]  copy the newest builds to <dir>, signed with --key, with an index (all packages by default)
   verify <archive>     check an archive's signature
 
 options:
@@ -45,6 +48,9 @@ options:
   --force              let a package take over files another one owns
   -y, --yes            import missing packages from Arch Linux without asking
   --no-arch            never import: a package with no recipe is an error
+  --no-repo            don't look for prebuilt packages in the `repo` setting
+  --key <file>         the release secret key, for publish
+  --password-file <f>  read the release key's password from a file instead of asking
 
 A package with no recipe is imported from Arch Linux by `install` and `build` (asking first); the recipes it makes are
 kept apart, in the `imported` setting, and the hand-written ones win a name both have.";
@@ -54,6 +60,9 @@ struct Options {
     force: bool,
     yes: bool,
     no_arch: bool,
+    no_repo: bool,
+    key: Option<PathBuf>,
+    password_file: Option<PathBuf>,
 }
 
 fn main() {
@@ -66,7 +75,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let (mut root, mut config_file, mut recipes_dir) = (PathBuf::from("/"), None, None);
-    let mut options = Options { dry_run: false, force: false, yes: false, no_arch: false };
+    let mut options = Options { dry_run: false, force: false, yes: false, no_arch: false, no_repo: false, key: None, password_file: None };
     let mut words = Vec::new();
     while let Some(arg) = args.next() {
         let mut value = |flag: &str| args.next().ok_or_else(|| error::Error(format!("{flag} needs a value")));
@@ -78,6 +87,9 @@ fn run() -> Result<()> {
             "--force" => options.force = true,
             "-y" | "--yes" => options.yes = true,
             "--no-arch" => options.no_arch = true,
+            "--no-repo" => options.no_repo = true,
+            "--key" => options.key = Some(PathBuf::from(value("--key")?)),
+            "--password-file" => options.password_file = Some(PathBuf::from(value("--password-file")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -184,6 +196,26 @@ fn run() -> Result<()> {
             let path = archive::keygen(&config)?;
             println!("secret key: {} (root only)\npublic key: {}", config.secret_key.display(), path.display());
             println!("check an archive with: minisign -V -p {} -m <archive>", path.display());
+            Ok(())
+        }
+        "release-keygen" => {
+            need("a folder")?;
+            let password = repo::password("Password for the release key", options.password_file.as_deref())?;
+            if options.password_file.is_none() && repo::password("Again", None)? != password {
+                return fail("the two passwords differ");
+            }
+            let (secret, public) = archive::release_keygen(Path::new(&names[0]), &password)?;
+            println!("secret key: {} (keep it offline, with its password)\npublic key: {} (put it in the keys folder of systems that should trust releases)", secret.display(), public.display());
+            Ok(())
+        }
+        "publish" => {
+            need("a folder")?;
+            let Some(key) = &options.key else {
+                return fail("publish needs --key <the release secret key>");
+            };
+            let password = repo::password("Release key password", options.password_file.as_deref())?;
+            let count = repo::publish(&config, Path::new(&names[0]), key, &password, &names[1..])?;
+            println!("published {count} package(s) to {}: upload the folder's files to the repository", names[0]);
             Ok(())
         }
         "verify" => {
@@ -323,9 +355,13 @@ fn install(config: &Config, names: &[String], options: &Options) -> Result<()> {
 /// Installs the recipe's version: from the cache if that build is kept, otherwise built first.
 fn put(config: &Config, db: &Db, recipe: &Recipe, options: &Options) -> Result<()> {
     let cached = config.cache.join(archive::file_name(&recipe.name, &recipe.full_version()));
+    let from_repo = if cached.exists() || options.no_repo { None } else { repo::prebuilt(config, &recipe.name, &recipe.full_version())? };
     let (archive, extract) = if cached.exists() && archive::signature_path(&cached).exists() {
         println!("== {} {}: from the kept build", recipe.name, recipe.full_version());
         (cached, true)
+    } else if let Some(downloaded) = from_repo {
+        println!("== {} {}: prebuilt, from the repository", recipe.name, recipe.full_version());
+        (downloaded, true)
     } else {
         let sources = fetch::sources(config, recipe)?;
         let built = build::build(config, recipe, &sources, &db.owners()?)?;
