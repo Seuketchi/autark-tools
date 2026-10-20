@@ -124,6 +124,7 @@ enabled = false   # nothing but Check's rules answers until this is true
 [ollama]
 url = "http://localhost:11434"
 model = ""        # no default: choose after measuring on your laptop
+answer_model = "" # writes Kith's answers (a bigger, slower model can pay off here); empty means `model`
 timeout_seconds = 120
 
 [features]        # each on once AI is enabled
