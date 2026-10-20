@@ -20,6 +20,7 @@ mod cryptsetup;
 mod debug;
 mod devices;
 mod splash;
+mod tpm;
 mod unlock;
 
 use std::convert::Infallible;
@@ -101,6 +102,13 @@ fn boot() -> Result<Infallible, String> {
         }
     }
     debug::log(&format!("starting: splash {}, {} encrypted volume(s)", if cmdline.splash { "requested" } else { "off" }, cmdline.luks.len()));
+    // Before the TPM is asked for anything: the extend systemd's initramfs does first, which a key sealed from a running Autark expects.
+    if cmdline.luks.iter().any(|volume| volume.options.tpm2) {
+        match tpm::extend_os_separator() {
+            Ok(()) => debug::log("TPM: PCRs 0-7 extended with the OS separator"),
+            Err(why) => debug::log(&format!("TPM: no OS separator extend ({why}); the TPM will probably refuse, the passphrase still works")),
+        }
+    }
     // A splash that can't draw is the text prompt, not a failure.
     let mut console = match cmdline.splash.then(SplashConsole::start) {
         Some(Ok(splash)) => Screen::Splash(splash),
