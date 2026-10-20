@@ -67,7 +67,7 @@ tight sandbox with only `CAP_SYS_MODULE`). It does two things, each checked agai
 - `LoadModule`: loads a module only if it drives hardware that is actually here and isn't loaded yet.
 
 Polkit lets whoever is at the machine do both; anyone else must be an administrator.
-Install it with `su -c 'sh /home/tan/autark-tools/hardware/install-helper.sh'` (needs the binaries built). Until then
+Install it with `su -c 'sh hardware/install-helper.sh'` (needs the binaries built). Until then
 the Hardware window still works and says "the hardware helper isn't installed" if you try something your own user
 can't do.
 

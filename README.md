@@ -48,9 +48,9 @@ The Rust tools behind [Autark](https://github.com/Seuketchi/autark): the desktop
 - **`autark-pkg`:** Autark only.
 - **Configuration:** paths and settings come from config files, never hard-coded to Autark.
 
-## Develop on Ubuntu today
+## Build
 
-The shell crates can be written and tested on Ubuntu before Autark exists:
+The workspace builds with a current stable Rust and crates.io (`cargo build --release`; `cargo check` while developing). On Autark the system libraries are already there; on Debian or Ubuntu the shell crates can be built and tested too:
 
 ```
 sudo apt install libgtk-4-dev libgtk4-layer-shell-dev libgtk4-session-lock-dev libpam0g-dev libpipewire-0.3-dev libclang-dev wayfire grim
@@ -58,6 +58,8 @@ cargo check
 ```
 
 Run Wayfire in a nested window, then start a crate inside it with `cargo run -p autark-bar`. Without a window, `WLR_BACKENDS=headless wayfire` runs it off-screen and `grim` takes a screenshot.
+
+To build without the network, run `cargo vendor` once on a connected machine and point cargo at the folder it prints (`[source.crates-io] replace-with = "vendored"` in your own `~/.cargo/config.toml`). The repository doesn't carry a cargo config of its own.
 
 ## Configuration
 
@@ -187,3 +189,5 @@ fade_minutes = 30
 ## License
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
+
+`crates/autark-shot` links two system libraries through C and FFI code: libvpx (BSD 3-Clause, with a patent grant) for VP8 encoding, through `csrc/vpx_shim.c`, and libopus (BSD 3-Clause). They are used as installed on the system, not bundled.

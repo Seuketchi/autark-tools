@@ -3,7 +3,7 @@
 # autark-hw tool that talks to it. Run it as root once. Until it has been, the Hardware window works but can't load a
 # driver or change a power profile or charge limit that this user can't change on their own.
 #
-#   su -c 'sh /home/tan/autark-tools/hardware/install-helper.sh'
+#   su -c 'sh hardware/install-helper.sh'   (from the repository's root)
 #
 # BIN is where the built binaries are (default: the project's target/release). Nothing here is removed or changed except
 # the files it names; uninstall.sh-style removal is `rm` of exactly the paths printed.

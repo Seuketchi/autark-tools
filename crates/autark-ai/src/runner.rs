@@ -190,6 +190,6 @@ mod tests {
 
     #[test]
     fn paths_become_uris() {
-        assert_eq!(uri(std::path::Path::new("/home/tan/My Notes/log #2.md")), "file:///home/tan/My%20Notes/log%20%232.md");
+        assert_eq!(uri(std::path::Path::new("/home/user/My Notes/log #2.md")), "file:///home/user/My%20Notes/log%20%232.md");
     }
 }
