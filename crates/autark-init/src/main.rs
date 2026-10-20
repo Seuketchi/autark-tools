@@ -17,6 +17,7 @@ mod boot;
 mod cmdline;
 mod console;
 mod cryptsetup;
+mod debug;
 mod devices;
 mod splash;
 mod unlock;
@@ -94,9 +95,19 @@ fn boot() -> Result<Infallible, String> {
     boot::attach_console();
     let line = std::fs::read_to_string("/proc/cmdline").map_err(|error| format!("/proc/cmdline: {error}"))?;
     let cmdline = cmdline::parse(&line);
+    if let Some(device) = &cmdline.log_device {
+        if let Err(error) = debug::start_file(device) {
+            eprintln!("autark-init: no boot log on {device}: {error}");
+        }
+    }
+    debug::log(&format!("starting: splash {}, {} encrypted volume(s)", if cmdline.splash { "requested" } else { "off" }, cmdline.luks.len()));
     // A splash that can't draw is the text prompt, not a failure.
-    let mut console = match cmdline.splash.then(SplashConsole::start).flatten() {
-        Some(splash) => Screen::Splash(splash),
+    let mut console = match cmdline.splash.then(SplashConsole::start) {
+        Some(Ok(splash)) => Screen::Splash(splash),
+        Some(Err(why)) => {
+            debug::log(&format!("no splash, using the text prompt: {why}"));
+            Screen::Text(Terminal)
+        }
         None => Screen::Text(Terminal),
     };
     if cmdline.luks.is_empty() {
@@ -114,9 +125,12 @@ fn boot() -> Result<Infallible, String> {
             Ok(How::Passphrase) => console.say(&format!("{} unlocked.", volume.name)),
             Err(failure) => return Err(describe(&failure, &volume.name)),
         }
+        debug::log(&format!("{} is unlocked", volume.name));
         console.unlocked();
     }
     boot::mount_root(&cmdline)?;
+    debug::log("root is mounted; handing over to the system");
+    debug::stop_file();
     let init = boot::pick_init(cmdline.init.as_deref(), |path| std::path::Path::new(boot::SYSROOT).join(path.trim_start_matches('/')).exists()).ok_or("there's no init (systemd) on the root file system")?;
     boot::switch_root(&init)
 }
