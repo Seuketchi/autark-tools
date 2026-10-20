@@ -18,6 +18,8 @@ pub struct Cmdline {
     pub debug: bool,
     /// `autark.splash=1`: the loading screen instead of the text prompt (off unless asked for, until it has been tried on the laptop).
     pub splash: bool,
+    /// `autark.log=/dev/nvme0n1p6`: a FAT partition to keep a boot log on (debug.rs), for a boot that can't be watched.
+    pub log_device: Option<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -117,6 +119,7 @@ pub fn parse(line: &str) -> Cmdline {
             "ro" => parsed.read_only = true,
             "rw" => parsed.read_only = false,
             "rd.debug" | "autark.debug" => parsed.debug = true,
+            "autark.log" if !value.is_empty() => parsed.log_device = Some(value.to_owned()),
             "autark.splash" => parsed.splash = matches!(value, "1" | "yes" | "true" | "on"),
             _ => {}
         }
@@ -215,6 +218,13 @@ mod tests {
     #[test]
     fn a_broken_timeout_falls_back() {
         assert_eq!(parse("rd.timeout=soon").timeout, 30);
+    }
+
+    #[test]
+    fn a_log_device_is_taken_only_when_named() {
+        assert_eq!(parse("root=/dev/x autark.log=/dev/nvme0n1p6").log_device.as_deref(), Some("/dev/nvme0n1p6"));
+        assert_eq!(parse("autark.log=").log_device, None);
+        assert_eq!(parse("root=/dev/x").log_device, None);
     }
 
     #[test]

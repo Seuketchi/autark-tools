@@ -5,6 +5,10 @@
 #[allow(dead_code)]
 mod console;
 
+#[path = "../debug.rs"]
+#[allow(dead_code)]
+mod debug;
+
 #[path = "../splash/mod.rs"]
 #[allow(dead_code)]
 mod splash;

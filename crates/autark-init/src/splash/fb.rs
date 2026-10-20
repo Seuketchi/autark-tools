@@ -84,14 +84,14 @@ pub struct Framebuffer {
 unsafe impl Send for Framebuffer {}
 
 impl Framebuffer {
-    pub fn open() -> Option<Framebuffer> {
-        let file: OwnedFd = OpenOptions::new().read(true).write(true).open("/dev/fb0").ok()?.into();
+    pub fn open() -> Result<Framebuffer, String> {
+        let file: OwnedFd = OpenOptions::new().read(true).write(true).open("/dev/fb0").map_err(|error| format!("/dev/fb0: {error}"))?.into();
         // SAFETY: FBIOGET_VSCREENINFO (the bare number 0x4600, not an `_IOR` one) fills a `struct fb_var_screeninfo`, which `VarScreenInfo` matches.
-        let info: VarScreenInfo = unsafe { ioctl(&file, Getter::<FBIOGET_VSCREENINFO, VarScreenInfo>::new()) }.ok()?;
+        let info: VarScreenInfo = unsafe { ioctl(&file, Getter::<FBIOGET_VSCREENINFO, VarScreenInfo>::new()) }.map_err(|error| format!("reading the screen's size: {error}"))?;
         if info.bits_per_pixel != 32 || info.xres == 0 || info.yres == 0 {
-            return None;
+            return Err(format!("a {}x{} screen with {} bits per pixel (only 32 is handled)", info.xres, info.yres, info.bits_per_pixel));
         }
-        let stride: usize = std::fs::read_to_string("/sys/class/graphics/fb0/stride").ok()?.trim().parse().ok()?;
+        let stride: usize = std::fs::read_to_string("/sys/class/graphics/fb0/stride").map_err(|error| format!("/sys/class/graphics/fb0/stride: {error}"))?.trim().parse().map_err(|_| "the screen's stride isn't a number".to_owned())?;
         let layout = Layout {
             width: info.xres as usize,
             height: info.yres as usize,
@@ -100,12 +100,12 @@ impl Framebuffer {
             shifts: (info.red.offset, info.green.offset, info.blue.offset),
         };
         if stride < layout.width * 4 {
-            return None;
+            return Err(format!("a stride of {stride} bytes is too small for {} pixels", layout.width));
         }
         let length = layout.bytes();
         // SAFETY: a shared read-write mapping of the device, unmapped in Drop; nothing else holds a reference into it.
-        let base = unsafe { mmap(std::ptr::null_mut(), length, ProtFlags::READ | ProtFlags::WRITE, MapFlags::SHARED, &file, 0) }.ok()?;
-        Some(Framebuffer { layout, base: base.cast(), length, _file: file })
+        let base = unsafe { mmap(std::ptr::null_mut(), length, ProtFlags::READ | ProtFlags::WRITE, MapFlags::SHARED, &file, 0) }.map_err(|error| format!("mapping {length} bytes of the screen: {error}"))?;
+        Ok(Framebuffer { layout, base: base.cast(), length, _file: file })
     }
 
     pub fn present(&mut self, canvas: &Canvas) {

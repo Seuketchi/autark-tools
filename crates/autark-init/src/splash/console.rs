@@ -13,6 +13,7 @@ use super::entry::{Entry, Key};
 use super::fb::Framebuffer;
 use super::scene::{Fonts, Mode, Scene, draw};
 use crate::console::Console;
+use crate::debug;
 
 /// How long "loading" goes before the progress bar shows.
 const BAR_AFTER: Duration = Duration::from_secs(3);
@@ -53,9 +54,12 @@ fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
 }
 
 impl SplashConsole {
-    /// `None` when there is no usable framebuffer or font: the caller falls back to the text prompt.
-    pub fn start() -> Option<SplashConsole> {
-        Self::with_screen(Framebuffer::open()?)
+    /// An error says why there is no usable framebuffer or font: the caller falls back to the text prompt.
+    pub fn start() -> Result<SplashConsole, String> {
+        let screen = Framebuffer::open()?;
+        let layout = screen.layout;
+        debug::log(&format!("splash: the screen is {}x{}, stride {}, y offset {}, red/green/blue at bits {:?}", layout.width, layout.height, layout.stride, layout.y_offset, layout.shifts));
+        Self::with_screen(screen).ok_or_else(|| "the splash's fonts didn't load".to_owned())
     }
 
     pub fn with_screen(mut screen: impl Screen + 'static) -> Option<SplashConsole> {
@@ -69,6 +73,7 @@ impl SplashConsole {
                     let (width, height) = screen.size();
                     let mut canvas = Canvas::new(width, height);
                     let started = Instant::now();
+                    let mut first_frame = false;
                     loop {
                         let (scene, stop) = {
                             let state = lock(&shared);
@@ -85,6 +90,10 @@ impl SplashConsole {
                         }
                         draw(&mut canvas, &fonts, &scene, started.elapsed().as_millis() as u64);
                         screen.present(&canvas);
+                        if !first_frame {
+                            first_frame = true;
+                            debug::log("splash: the first frame is on the screen");
+                        }
                         std::thread::sleep(FRAME);
                     }
                 })
@@ -128,7 +137,9 @@ impl SplashConsole {
             state.asking = Some(0);
             state.checking = false;
         }
+        debug::log(&format!("asking: {}", lock(&self.shared).message));
         let entry = read(self)?;
+        debug::log("an answer was entered");
         let mut state = lock(&self.shared);
         state.checking = true;
         state.message.clear();
@@ -156,13 +167,20 @@ impl SplashConsole {
     /// Reads keys until Enter, showing a dot for each; `None` when the input ends first.
     fn read_from(&mut self, input: &mut impl Read) -> Option<Entry> {
         let mut entry = Entry::default();
+        let mut first_key = true;
         loop {
             let mut byte = [0u8; 1];
             match input.read(&mut byte) {
-                Ok(1) => match entry.feed(byte[0]) {
-                    Key::Done => return Some(entry),
-                    Key::Edited => lock(&self.shared).asking = Some(entry.characters()),
-                },
+                Ok(1) => {
+                    if first_key {
+                        first_key = false;
+                        debug::log("a key reached the splash");
+                    }
+                    match entry.feed(byte[0]) {
+                        Key::Done => return Some(entry),
+                        Key::Edited => lock(&self.shared).asking = Some(entry.characters()),
+                    }
+                }
                 _ => return None,
             }
         }
