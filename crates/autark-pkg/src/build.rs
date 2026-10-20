@@ -21,7 +21,7 @@ const DRIVER: &str = r#"set -euo pipefail
 umask 022
 cd "$srcdir"
 [ ! -e "$RECIPES/lib.sh" ] || source "$RECIPES/lib.sh"
-source "$RECIPES/$PACKAGE.sh"
+source "${RECIPE_FILE:-$RECIPES/$PACKAGE.sh}"
 case "${1:-}" in
   *.tar.*|*.tgz|*.tbz2)
     # The first entry's top folder, which OpenSSH lists without a slash. sed reads all of tar's output: head
@@ -90,6 +90,7 @@ pub fn build(config: &Config, recipe: &Recipe, sources: &[PathBuf], owners: &Has
         .env("LC_ALL", "C.UTF-8")
         .env("srcdir", &src)
         .env("RECIPES", &config.recipes)
+        .env("RECIPE_FILE", recipe.file.as_deref().unwrap_or(Path::new("")))
         .env("PACKAGE", &recipe.name)
         .env("LOGS", &work)
         .env("ROOT", &config.root)
@@ -133,6 +134,9 @@ pub fn build(config: &Config, recipe: &Recipe, sources: &[PathBuf], owners: &Has
             if !paths.iter().any(|path| !std::fs::symlink_metadata(crate::config::under(&dest, Path::new(path))).is_ok_and(|meta| meta.is_dir())) {
                 return fail(format!("{}: build() installed nothing into $DESTDIR", recipe.name));
             }
+            if let Some(path) = inside_itself(&paths, &dest) {
+                return fail(format!("{}: the build installed under its own staging folder ({path}): $DESTDIR was applied twice, for example a Makefile that takes DESTDIR and prefix=$DESTDIR/usr", recipe.name));
+            }
             archive::pack(config, &dest, &paths, &info, true, &out)?;
             false
         }
@@ -155,6 +159,13 @@ fn is_archive(path: &Path) -> bool {
     name.contains(".tar.") || name.ends_with(".tgz") || name.ends_with(".tbz2")
 }
 
+/// A path in the staged tree that starts with the staging folder's own path: files that went to `$DESTDIR$DESTDIR/...`.
+fn inside_itself<'a>(paths: &'a [String], dest: &Path) -> Option<&'a str> {
+    let nested = dest.to_string_lossy();
+    let nested = nested.trim_matches('/');
+    paths.iter().map(String::as_str).find(|path| !nested.is_empty() && path.trim_start_matches('/').starts_with(nested))
+}
+
 pub fn is_root() -> bool {
     std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
 }
@@ -162,7 +173,7 @@ pub fn is_root() -> bool {
 /// Becomes the build user in the child before bash starts, as `setpriv --reuid --regid --clear-groups --no-new-privs`
 /// did (Autark's util-linux is built without setpriv): no supplementary groups, real, effective and saved ids all the
 /// user's, and no setuid program can raise them again.
-fn drop_to(uid: u32, gid: u32) -> std::io::Result<()> {
+pub fn drop_to(uid: u32, gid: u32) -> std::io::Result<()> {
     let check = |rc: libc::c_int| if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
     // Groups and gid first: once the uid is dropped neither can change.
     // SAFETY: plain system calls with valid arguments.
@@ -175,7 +186,7 @@ fn drop_to(uid: u32, gid: u32) -> std::io::Result<()> {
 }
 
 /// The uid and gid of a user in this system's passwd.
-fn user(name: &str) -> Option<(u32, u32)> {
+pub fn user(name: &str) -> Option<(u32, u32)> {
     let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
     passwd.lines().find_map(|line| {
         let fields: Vec<&str> = line.split(':').collect();
@@ -272,5 +283,19 @@ fn outcome(log: &Path, text: &str) {
     let written = std::fs::OpenOptions::new().append(true).open(log).and_then(|mut file| writeln!(file, "== autark-pkg: {text}"));
     if let Err(err) = written {
         eprintln!("autark-pkg: {}: {err}", log.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_staged_under_the_staging_folder_itself_are_found() {
+        let dest = Path::new("/var/tmp/autark-pkg/hexedit-1.6-3/dest");
+        let fine = ["/usr/".to_owned(), "/usr/bin/hexedit".to_owned()];
+        let doubled = ["/var/".to_owned(), "/var/tmp/autark-pkg/hexedit-1.6-3/dest/usr/bin/hexedit".to_owned()];
+        assert_eq!(inside_itself(&fine, dest), None);
+        assert_eq!(inside_itself(&doubled, dest), Some("/var/tmp/autark-pkg/hexedit-1.6-3/dest/usr/bin/hexedit"));
     }
 }

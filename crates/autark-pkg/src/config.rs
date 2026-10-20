@@ -29,6 +29,12 @@ pub struct Settings {
     /// The unprivileged user staged builds run as.
     pub build_user: String,
     pub keep: usize,
+    /// Recipes imported from Arch Linux, apart from the hand-written ones. Written by the build user.
+    pub imported: PathBuf,
+    /// The script that imports them (the autark repo's `scripts/arch-import.py`).
+    pub arch_importer: PathBuf,
+    /// What the importer downloaded, so a source is fetched once.
+    pub arch_cache: PathBuf,
 }
 
 impl Default for Settings {
@@ -44,6 +50,9 @@ impl Default for Settings {
             secret_key: "/etc/autark/pkg-secret.key".into(),
             build_user: "autark-build".into(),
             keep: 2,
+            imported: "/var/lib/autark/imported".into(),
+            arch_importer: "/usr/src/autark/scripts/arch-import.py".into(),
+            arch_cache: "/var/cache/autark/arch-import".into(),
         }
     }
 }
@@ -62,6 +71,10 @@ pub struct Config {
     pub secret_key: PathBuf,
     pub build_user: String,
     pub keep: usize,
+    /// Where imported recipes are kept; none when `--recipes` names the only folder to use.
+    pub imported: Option<PathBuf>,
+    pub arch_importer: PathBuf,
+    pub arch_cache: PathBuf,
     /// The paths as the target system sees them, which a tracked build's scan leaves out.
     pub own: Vec<PathBuf>,
 }
@@ -78,7 +91,7 @@ impl Config {
                 Err(_) => Settings::default(),
             },
         };
-        let own = vec![settings.sources.clone(), settings.builds.clone(), settings.cache.clone(), settings.db.clone(), settings.logs.clone(), settings.recipes.clone()];
+        let own = vec![settings.sources.clone(), settings.builds.clone(), settings.cache.clone(), settings.db.clone(), settings.logs.clone(), settings.recipes.clone(), settings.imported.clone(), settings.arch_cache.clone()];
         Ok(Self {
             root: root.to_path_buf(),
             recipes: recipes.map_or_else(|| under(root, &settings.recipes), Path::to_path_buf),
@@ -91,6 +104,9 @@ impl Config {
             secret_key: under(root, &settings.secret_key),
             build_user: settings.build_user,
             keep: settings.keep.max(1),
+            imported: recipes.is_none().then(|| under(root, &settings.imported)),
+            arch_importer: under(root, &settings.arch_importer),
+            arch_cache: under(root, &settings.arch_cache),
             own,
         })
     }
