@@ -294,15 +294,23 @@ pub fn plan(saved: &Saved, heads: &[Head], lid_closed: bool) -> Result<Vec<Setti
     let mut right = 0;
     let mut outputs: Vec<Output> = outside.collect();
     for head in inside {
-        let known = saved.last_known(&head.id());
-        let mode = known.and_then(|output| output.mode.as_deref()).and_then(Mode::parse).filter(|mode| head.modes.iter().any(|offered| offered.matches(mode)));
-        let Some(mode) = mode.or_else(|| head.enabled.then(|| head.mode.clone()).flatten()).or_else(|| head.preferred()) else { continue };
-        let scale = known.map_or(if head.scale > 0.0 { head.scale } else { 1.0 }, |output| output.scale);
-        let transform = known.map_or_else(|| head.transform.clone(), |output| output.transform.clone());
-        outputs.push(Output { id: head.id(), enabled: true, mode: Some(mode.text()), position: (right, 0), scale, transform: transform.clone() });
-        right += head.logical_width(&mode, scale, &transform);
+        let Some((output, width)) = placed(saved, head, right) else { continue };
+        outputs.push(output);
+        right += width;
     }
     settings(heads, &outputs, false)
+}
+
+/// A head that is to be on, as it was last set on (else as it is, else as its monitor prefers), with its left edge at `right`; and the
+/// width it takes on the desktop. `None` when the monitor has no modes at all.
+pub fn placed(saved: &Saved, head: &Head, right: i32) -> Option<(Output, i32)> {
+    let known = saved.last_known(&head.id());
+    let mode = known.and_then(|output| output.mode.as_deref()).and_then(Mode::parse).filter(|mode| head.modes.iter().any(|offered| offered.matches(mode)));
+    let mode = mode.or_else(|| head.enabled.then(|| head.mode.clone()).flatten()).or_else(|| head.preferred())?;
+    let scale = known.map_or(if head.scale > 0.0 { head.scale } else { 1.0 }, |output| output.scale);
+    let transform = known.map_or_else(|| head.transform.clone(), |output| output.transform.clone());
+    let width = head.logical_width(&mode, scale, &transform);
+    Some((Output { id: head.id(), enabled: true, mode: Some(mode.text()), position: (right, 0), scale, transform }, width))
 }
 
 /// The heads as they'll be once `settings` are applied.
