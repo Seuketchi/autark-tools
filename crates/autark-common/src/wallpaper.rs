@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn names_are_scenes_or_pictures() {
         assert_eq!(scene("dusk").map(|scene| scene.label), Some("Dusk"));
-        assert!(scene("/home/tan/sea.jpg").is_none());
+        assert!(scene("/home/user/sea.jpg").is_none());
         assert!(is_picture("~/Pictures/sea.jpg") && !is_picture("linen"));
         assert!(picture_path("~/sea.jpg").ends_with("sea.jpg"));
     }

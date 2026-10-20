@@ -1551,6 +1551,8 @@ dependencies = [
 [[package]]
 name = "io-lifetimes"
 version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06432fb54d3be7964ecd3649233cddf80db2832f47fec34c01f65b3d9d774983"
 
 [[package]]
 name = "itertools"
@@ -1635,6 +1637,8 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 [[package]]
 name = "libcryptsetup-rs"
 version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d35d55399665da6c50ed2962e0942a3a6bcada0efdb709ec71d204ec950e48a"
 dependencies = [
  "bitflags 2.13.2",
  "either",
@@ -1651,6 +1655,8 @@ dependencies = [
 [[package]]
 name = "libcryptsetup-rs-sys"
 version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c86d52c28c902102488f8ddfb7f23abc01e7a58004b998f9c6d74c5f5aed1c0"
 dependencies = [
  "bindgen 0.72.1",
  "cc",
@@ -1881,6 +1887,8 @@ dependencies = [
 [[package]]
 name = "per-thread-mutex"
 version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b20d1aaa7fcf3cd5a7b4506c38594d25e122ad45dec6da7f85bac52f3a3e562c"
 dependencies = [
  "libc",
  "log",
@@ -2631,6 +2639,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vte4"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c61732974d4915c5112a82506cdc86e19a83d786497c2c8bcd80d065825c695d"
 dependencies = [
  "cairo-rs",
  "gdk4",
@@ -2646,6 +2656,8 @@ dependencies = [
 [[package]]
 name = "vte4-sys"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd99766524f740945b1b3fc516dc2ee76311be2efa8d7a1238f35f04330b9afd"
 dependencies = [
  "cairo-sys-rs",
  "gdk4-sys",
