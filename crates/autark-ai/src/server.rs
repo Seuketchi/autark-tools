@@ -98,6 +98,13 @@ impl Ai {
         self.config.read().map(|config| config.clone()).unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
 
+    /// The instructions for a generated answer: the rules, what Kith can do when `question` asks, how it sounds, then the soul.
+    fn ask_system(&self, question: &str, conversation: bool) -> String {
+        let talking = if conversation { " You're talking with the user in a running conversation." } else { "" };
+        let can = if asks_abilities(question) { abilities(&self.config()) } else { String::new() };
+        format!("{ASK_SYSTEM}{talking}{can}{ASK_VOICE}{}", soul::voice())
+    }
+
     fn ollama(&self) -> Arc<Ollama> {
         self.ollama.read().map(|ollama| ollama.clone()).unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
@@ -530,11 +537,53 @@ struct Ask {
     skill: Option<skills::Skill>,
 }
 
-const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer briefly and plainly. \
-                          You can only see the context given with the question and what you remember about the user. \
-                          You cannot see the user's calendar, mail, tasks, files, screen or system status, and you cannot look \
-                          anything up on the internet, unless it is in the context. When asked for something you can't see or \
-                          don't know, say so in one sentence and what you would need. Never invent events, names, numbers, links or news.";
+const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer the question that was asked, in one or two plain sentences, unless the user asks for a list or more detail: then give it, \
+                          one item to a line, each starting with \"- \". \
+                          You know only what is given with the question and what you remember about the user. When something asked for isn't \
+                          given, say so in one sentence and what you would need. Never invent events, names, numbers, links or news, and never \
+                          claim an ability you haven't been told you have.";
+
+/// How Kith sounds, kept apart from the soul so a small model gets the same few rules whatever the soul says. It
+/// never names "Done.": the panel marks an action done itself, and a small model repeats whatever it is told not to say.
+const ASK_VOICE: &str = "\nDon't say \"sir\" or \"ma'am\" unless your soul below asks for it, and never end with a question or an offer: reply to a greeting with a greeting. \
+                         If the user asks what you meant, explain your last reply in other words and give the reason; don't repeat it or change the subject.";
+
+/// Whether a question is about what Kith can do. The list of abilities goes in only then: a small model that has it
+/// in front of it offers those things, or reports a battery level, to a plain "hi".
+fn asks_abilities(question: &str) -> bool {
+    let question = question.to_lowercase();
+    ["can you", "could you", "able to", "what do you do", "what can", "capab", "abilit", "feature", "how about", "do you have", "help me"].iter().any(|ask| question.contains(ask))
+}
+
+/// Whether a question is plainly "what can you do". That has one answer, so code gives it (`can_do`) instead of a model
+/// that took 30 s to describe it wrongly.
+fn asks_what_it_can_do(question: &str) -> bool {
+    let question = question.to_lowercase();
+    ["what can you do", "what do you do", "what are you able", "what are you capable", "your capabilities", "what can kith do"].iter().any(|ask| question.contains(ask))
+}
+
+/// What Kith says it can do, as far as the settings allow.
+fn can_do(config: &Config) -> String {
+    let web = if config.web.search && !config.local_only { "I can also search the web." } else { "Web search is switched off." };
+    format!(
+        "I can propose actions for you to tick: volume, brightness, mute, Wi-Fi, Focus, night light, lock, sleep, and opening an app or a link. \
+         I can look at this laptop's disk, battery, memory and apps, and read your calendar, mail, tasks, notes and files in your home folder \
+         (calendar and mail once their accounts are connected). I remember a fact once you approve it, and run tasks on a schedule. {web}"
+    )
+}
+
+/// What Kith can do, as far as the settings allow, so the model neither denies an ability it has nor makes one up.
+fn abilities(config: &Config) -> String {
+    let web = if config.web.search && !config.local_only { "Search the web." } else { "Cannot search the web: it is switched off." };
+    format!(
+        "\nWhat Kith can do:\n\
+         - Propose actions for the user to tick: volume, brightness, mute, Wi-Fi, Focus, night light, lock, sleep, open an app or a link.\n\
+         - Look at this laptop: disk, battery, memory and what apps are using.\n\
+         - Read the user's calendar, mail, tasks and notes, and files in their home folder.\n\
+         - Remember a fact once the user approves it, and run tasks on a schedule.\n\
+         - {web}"
+    )
+}
 
 /// An error as the conversation shows it.
 fn said(error: &Error) -> String {
@@ -640,7 +689,7 @@ impl Ai {
         let conversation = lock(&self.chat).transcript();
         let entry = self.change(&emitter, |chat| chat.push(What::Answer { answer: 0, text: String::new(), files: outcome.clone(), writing: true, error: String::new() })).await;
         let facts = memory::facts();
-        let mut system = format!("{ASK_SYSTEM} You're talking with the user in a running conversation.{}", soul::voice());
+        let mut system = self.ask_system(&question, true);
         if !facts.is_empty() {
             let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
             system.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
@@ -662,7 +711,7 @@ impl Ai {
         // And for the task board: the project items themselves.
         let board_only = senses::subjects(&question) == [senses::Subject::Tasks];
         let items = if board_only { self.board_found().await.ok() } else { None };
-        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox).or(items);
+        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox).or(items).or_else(|| asks_what_it_can_do(&question).then(|| can_do(&self.config())));
         // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
         let skill = if verbatim.is_none() { skills::matching(&question, &skills::all()) } else { None };
         let agent = (verbatim.is_none() && !lookup_only && !calendar_only && !mail_only && !board_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
@@ -934,7 +983,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok(self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({})))
+        Ok(self.answer(emitter, Ask { system: self.ask_system(&prompt, false), verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())), prompt, context, entry: None, agent: None, skill: None }, json!({})))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
@@ -946,7 +995,7 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok((self.answer(emitter, Ask { system: format!("{ASK_SYSTEM}{}", soul::voice()), prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({ "files": read })), outcome))
+        Ok((self.answer(emitter, Ask { system: self.ask_system(&prompt, false), verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())), prompt, context, entry: None, agent: None, skill: None }, json!({ "files": read })), outcome))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.
@@ -997,4 +1046,43 @@ impl Ai {
     /// The conversation changed: read it again with `History`.
     #[zbus(signal)]
     async fn history_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_abilities_are_listed_only_for_a_question_about_them() {
+        for asked in ["what can you do", "How about web search?", "can you open the browser", "wwhat can you do"] {
+            assert!(asks_abilities(asked), "{asked}");
+        }
+        for asked in ["hi", "thanks", "how much disk is left", "we are connected to the internet?", "what do you mean"] {
+            assert!(!asks_abilities(asked), "{asked}");
+        }
+    }
+
+    #[test]
+    fn what_can_you_do_is_answered_by_code() {
+        for asked in ["what can you do?", "wwhat can you do", "What are your capabilities", "what do you do"] {
+            assert!(asks_what_it_can_do(asked), "{asked}");
+        }
+        for asked in ["can you open the browser", "how about web search?", "hi", "what do you mean"] {
+            assert!(!asks_what_it_can_do(asked), "{asked}");
+        }
+        let mut config = Config::default();
+        assert!(can_do(&config).ends_with("Web search is switched off."));
+        config.web.search = true;
+        assert!(can_do(&config).ends_with("I can also search the web."));
+    }
+
+    #[test]
+    fn the_abilities_follow_the_web_switch() {
+        let mut config = Config::default();
+        assert!(abilities(&config).contains("Cannot search the web"));
+        config.web.search = true;
+        assert!(abilities(&config).ends_with("- Search the web."));
+        config.local_only = true;
+        assert!(abilities(&config).contains("Cannot search the web"));
+    }
 }

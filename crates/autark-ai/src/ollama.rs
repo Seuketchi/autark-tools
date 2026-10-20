@@ -11,6 +11,8 @@ pub struct Ollama {
     agent: ureq::Agent,
     url: String,
     model: String,
+    /// What `stream` writes with; `model` when none is set.
+    answer_model: String,
 }
 
 impl Ollama {
@@ -20,21 +22,22 @@ impl Ollama {
             .http_status_as_error(false)
             .build()
             .into();
-        Self { agent, url: config.url.trim_end_matches('/').to_owned(), model: config.model.clone() }
+        Self { agent, url: config.url.trim_end_matches('/').to_owned(), model: config.model.clone(), answer_model: Some(config.answer_model.trim()).filter(|model| !model.is_empty()).unwrap_or(&config.model).to_owned() }
     }
 
     /// One answer that matches `schema`, at temperature 0 so the same input decides the same way. At most 400 tokens: a
     /// small model can run on inside a JSON string, and the caller would wait out the whole timeout.
     pub fn json(&self, system: &str, user: &str, schema: &Value) -> Result<Value, String> {
-        let body = self.request(system, user, json!({ "stream": false, "format": schema, "options": { "temperature": 0, "num_predict": 400 } }))?;
+        let body = self.request(&self.model, system, user, json!({ "stream": false, "format": schema, "options": { "temperature": 0, "num_predict": 400 } }))?;
         let reply: Value = serde_json::from_reader(body).map_err(|err| format!("Ollama's reply: {err}"))?;
         let content = reply["message"]["content"].as_str().ok_or("Ollama's reply has no message")?;
         serde_json::from_str(content).map_err(|err| format!("the model's answer isn't the asked-for JSON: {err}"))
     }
 
-    /// Generated text, handed to `on_piece` as it arrives, until it returns false.
+    /// Generated text, handed to `on_piece` as it arrives, until it returns false. A low temperature: a small model
+    /// at the default one drifts into inventing things.
     pub fn stream(&self, system: &str, user: &str, mut on_piece: impl FnMut(&str) -> bool) -> Result<(), String> {
-        let body = self.request(system, user, json!({ "stream": true }))?;
+        let body = self.request(&self.answer_model, system, user, json!({ "stream": true, "options": { "temperature": 0.3 } }))?;
         for line in BufReader::new(body).lines() {
             let line = line.map_err(|err| format!("reading from Ollama: {err}"))?;
             if line.is_empty() {
@@ -68,12 +71,12 @@ impl Ollama {
         Ok(names)
     }
 
-    fn request(&self, system: &str, user: &str, extra: Value) -> Result<impl std::io::Read, String> {
-        if self.model.is_empty() {
+    fn request(&self, model: &str, system: &str, user: &str, extra: Value) -> Result<impl std::io::Read, String> {
+        if model.is_empty() {
             return Err("no Ollama model chosen: set `model` under [ollama] in ai.toml".to_owned());
         }
         let mut body = json!({
-            "model": self.model,
+            "model": model,
             "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }],
             // Loading the model from disk takes tens of seconds; keep it in memory between the calls of a work session.
             "keep_alive": "30m",
@@ -95,5 +98,27 @@ impl Ollama {
             return Err(format!("Ollama: {}", error.unwrap_or_else(|| status.to_string())));
         }
         Ok(body.into_reader())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with(model: &str, answer_model: &str) -> Ollama {
+        Ollama::new(&config::Ollama { model: model.to_owned(), answer_model: answer_model.to_owned(), ..config::Ollama::default() })
+    }
+
+    #[test]
+    fn answers_are_written_by_the_answer_model_when_one_is_set() {
+        let ollama = with("gemma3:4b", "gemma3:12b");
+        assert_eq!((ollama.model.as_str(), ollama.answer_model.as_str()), ("gemma3:4b", "gemma3:12b"));
+    }
+
+    #[test]
+    fn without_one_the_model_writes_them_too() {
+        for unset in ["", "  "] {
+            assert_eq!(with("gemma3:4b", unset).answer_model, "gemma3:4b");
+        }
     }
 }

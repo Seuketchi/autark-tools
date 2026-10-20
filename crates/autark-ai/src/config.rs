@@ -24,12 +24,15 @@ pub struct Ollama {
     pub url: String,
     /// No default: pick one after measuring it on your laptop.
     pub model: String,
+    /// The model that writes Kith's answers, when a bigger and slower one is worth it there: routing, the lookup loop,
+    /// ratings and tasks keep to `model`. Empty means `model` writes them too.
+    pub answer_model: String,
     pub timeout_seconds: u64,
 }
 
 impl Default for Ollama {
     fn default() -> Self {
-        Self { url: "http://localhost:11434".to_owned(), model: String::new(), timeout_seconds: 120 }
+        Self { url: "http://localhost:11434".to_owned(), model: String::new(), answer_model: String::new(), timeout_seconds: 120 }
     }
 }
 
