@@ -64,6 +64,12 @@ impl SplashConsole {
 
     pub fn with_screen(mut screen: impl Screen + 'static) -> Option<SplashConsole> {
         let fonts = Fonts::load()?;
+        // The kernel keeps the firmware's logo on screen until something is printed ("fbcon: Deferring console take-over"), and a
+        // frame drawn before that is not shown. Clearing the console makes it take over at once. Cursor off, so none blinks over the picture.
+        let mut out = std::io::stdout();
+        let _ = out.write_all(b"\x1b[2J\x1b[H\x1b[?25l");
+        let _ = out.flush();
+        debug::log("splash: asked the console to take over the screen");
         let shared = Arc::new(Mutex::new(Shared { message: String::new(), asking: None, checking: false, loading_since: None, stop: false }));
         let painter = {
             let shared = Arc::clone(&shared);
@@ -99,10 +105,6 @@ impl SplashConsole {
                 })
                 .ok()?
         };
-        // No blinking cursor over the picture.
-        let mut out = std::io::stdout();
-        let _ = out.write_all(b"\x1b[?25l");
-        let _ = out.flush();
         Some(SplashConsole { shared, painter: Some(painter) })
     }
 
