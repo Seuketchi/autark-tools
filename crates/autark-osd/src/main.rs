@@ -1,5 +1,5 @@
-//! `autark-osd volume up|down|mute`, `autark-osd mic mute`, `autark-osd brightness up|down`, `autark-osd screens`, `autark-osd touchpad`:
-//! what the volume, mute, microphone, brightness, projection and touchpad keys run. It makes the change and shows the result as a pop-up, so a press is visible: a transient notification (never kept in
+//! `autark-osd volume up|down|mute`, `autark-osd mic mute`, `autark-osd brightness up|down`, `autark-osd screens`, `autark-osd touchpad`,
+//! `autark-osd bluetooth`: what the volume, mute, microphone, brightness, projection, touchpad and Bluetooth keys run. It makes the change and shows the result as a pop-up, so a press is visible: a transient notification (never kept in
 //! the notification centre) that replaces the last one of its kind, with a bar, through `org.freedesktop.Notifications`.
 
 use std::collections::HashMap;
@@ -176,6 +176,58 @@ fn touchpad(action: &str) -> Result<Pop, String> {
     })
 }
 
+/// What the Bluetooth key shows: on or off, or why it couldn't be changed.
+fn bluetooth_pop(on: bool, problem: Option<&str>) -> Pop {
+    let icon = if on { "bluetooth-active-symbolic" } else { "bluetooth-disabled-symbolic" };
+    match problem {
+        Some(problem) => Pop { kind: "bluetooth", icon, title: "Bluetooth".to_owned(), body: format!("couldn't change it: {problem}"), percent: -1 },
+        None => Pop { kind: "bluetooth", icon, title: if on { "Bluetooth on".to_owned() } else { "Bluetooth off".to_owned() }, body: String::new(), percent: -1 },
+    }
+}
+
+/// The first Bluetooth adapter BlueZ knows, as `/org/bluez/hciN`, with whether it is powered.
+fn bluetooth_adapter(connection: &zbus::Connection) -> Result<(String, bool), String> {
+    async_io::block_on(async {
+        for number in 0..4 {
+            let path = format!("/org/bluez/hci{number}");
+            let reply = connection.call_method(Some("org.bluez"), path.as_str(), Some("org.freedesktop.DBus.Properties"), "Get", &("org.bluez.Adapter1", "Powered")).await;
+            match reply {
+                Ok(reply) => {
+                    let value: zbus::zvariant::OwnedValue = reply.body().deserialize().map_err(|error| error.to_string())?;
+                    return Ok((path, bool::try_from(value).map_err(|error| error.to_string())?));
+                }
+                Err(zbus::Error::MethodError(name, ..)) if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => return Err("Bluetooth isn't running".to_owned()),
+                Err(_) => continue,
+            }
+        }
+        Err("this laptop has no Bluetooth adapter".to_owned())
+    })
+}
+
+/// The Bluetooth key: powers the adapter off, or on again (`toggle`, `on` or `off`), through BlueZ (no root: whoever is at the machine may).
+/// What the pop-up says is what BlueZ reports afterwards.
+fn bluetooth(action: &str) -> Result<Pop, String> {
+    let connection = async_io::block_on(zbus::Connection::system()).map_err(|error| format!("the system bus: {error}"))?;
+    let (path, on_now) = match bluetooth_adapter(&connection) {
+        Ok(found) => found,
+        Err(problem) => return Ok(bluetooth_pop(false, Some(&problem))),
+    };
+    let want_on = match action {
+        "" | "toggle" => !on_now,
+        "on" => true,
+        "off" => false,
+        _ => return Err("usage: autark-osd bluetooth [toggle|on|off]".to_owned()),
+    };
+    let set = async_io::block_on(connection.call_method(Some("org.bluez"), path.as_str(), Some("org.freedesktop.DBus.Properties"), "Set", &("org.bluez.Adapter1", "Powered", Value::from(want_on))));
+    let problem = set.err().map(|error| match error {
+        zbus::Error::MethodError(_, Some(message), _) => message,
+        zbus::Error::FDO(error) => error.to_string(),
+        error => error.to_string(),
+    });
+    let on = bluetooth_adapter(&connection).map_or(on_now, |(_, on)| on);
+    Ok(bluetooth_pop(on, problem.as_deref()))
+}
+
 /// The projection key: `autark-displays project` goes to the next way of using the screens and says which. A refusal (no other screen is
 /// connected) is shown too, so the key never looks dead.
 fn screens() -> Result<Pop, String> {
@@ -232,7 +284,8 @@ fn run() -> Result<(), String> {
         Some("brightness") => brightness(action)?,
         Some("screens") => screens()?,
         Some("touchpad") => touchpad(action)?,
-        _ => return Err("usage: autark-osd volume up|down|mute | mic mute | brightness up|down | screens | touchpad [toggle|on|off]".to_owned()),
+        Some("bluetooth") => bluetooth(action)?,
+        _ => return Err("usage: autark-osd volume up|down|mute | mic mute | brightness up|down | screens | touchpad|bluetooth [toggle|on|off]".to_owned()),
     };
     // The change is made; a missing pop-up shouldn't make the key look broken, so it's only said.
     if let Err(error) = show(&pop) {
@@ -283,6 +336,15 @@ mod tests {
         assert_eq!(touchpads(&root), vec![("input11".to_owned(), true), ("input12".to_owned(), false)]);
         assert!(touchpads(&root.join("nowhere")).is_empty());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_bluetooth_pop_up_says_what_happened() {
+        assert_eq!(bluetooth_pop(true, None).title, "Bluetooth on");
+        assert_eq!(bluetooth_pop(false, None).title, "Bluetooth off");
+        assert_eq!(bluetooth_pop(false, None).icon, "bluetooth-disabled-symbolic");
+        let failed = bluetooth_pop(false, Some("Blocked through rfkill"));
+        assert_eq!((failed.title.as_str(), failed.body.as_str()), ("Bluetooth", "couldn't change it: Blocked through rfkill"));
     }
 
     #[test]

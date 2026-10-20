@@ -1,6 +1,6 @@
 [package]
 name = "autark-osd"
-description = "Volume, mute, microphone, brightness, projection and touchpad keys: does the change and shows it as a pop-up through the notification daemon."
+description = "Volume, mute, microphone, brightness, projection, touchpad and Bluetooth keys: does the change and shows it as a pop-up through the notification daemon."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
