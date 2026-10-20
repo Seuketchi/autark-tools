@@ -124,6 +124,8 @@ const KNOWN: &[(&str, &str, Is)] = &[
     ("Sound and display", "Mute", Runs("set-mute @DEFAULT_AUDIO_SINK@")),
     ("Sound and display", "Mute the microphone", Runs("set-mute @DEFAULT_AUDIO_SOURCE@")),
     ("Sound and display", "Project to another screen", Runs("autark-osd screens")),
+    ("Sound and display", "Touchpad on or off", Runs("autark-osd touchpad")),
+    ("Sound and display", "Bluetooth on or off", Runs("autark-osd bluetooth")),
     ("Sound and display", "Brighter", Runs("light -A")),
     ("Sound and display", "Dimmer", Runs("light -U")),
     ("System", "Lock the screen", Runs("autark-lock")),
