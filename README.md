@@ -144,7 +144,16 @@ cache = "/var/cache/autark/pkgs"      # signed archives
 db = "/var/lib/autark/pkg"            # what's installed
 build_user = "autark-build"
 keep = 2                              # builds kept per package, for rollback
+imported = "/var/lib/autark/imported" # recipes imported from Arch Linux, apart from the hand-written ones
+arch_importer = "/usr/src/autark/scripts/arch-import.py"
+arch_cache = "/var/cache/autark/arch-import"
 ```
+
+A package with no recipe is imported from Arch Linux: `autark-pkg install htop` asks, then runs `scripts/arch-import.py` as the
+`autark-build` user, which reads Arch's PKGBUILD, downloads and checks its sources, and writes a recipe (and ones for the runtime
+dependencies no recipe has) into `imported`; the build then goes on as for any recipe. `-y` skips the question, `--no-arch` turns
+it off, `arch <names>` imports without installing, and `refresh [names]` imports the current Arch recipes again, so `upgrade` sees
+new versions. A hand-written recipe wins a name both have, and only `staged` recipes are read from `imported`.
 
 A sandbox profile, `/etc/autark/sandbox/<app>.toml` (root-owned, so an app can't loosen its own):
 

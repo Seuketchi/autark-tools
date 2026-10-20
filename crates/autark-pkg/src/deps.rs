@@ -76,6 +76,8 @@ mod tests {
                     depends: depends.iter().map(|d| (*d).to_owned()).collect(),
                     imports: Vec::new(),
                     mode: Mode::Staged,
+                    file: None,
+                    imported: false,
                 };
                 ((*name).to_owned(), recipe)
             })

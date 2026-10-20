@@ -1,5 +1,6 @@
 //! Autark's package manager: signed packages from recipes, with install, remove, upgrade, search and rollback.
 
+mod arch;
 mod archive;
 mod build;
 mod config;
@@ -31,6 +32,8 @@ const USAGE: &str = "usage: autark-pkg [options] <command> [names…]
   rollback <name>      go back to the other kept build, and hold it there until installed again
   build <names>        build and sign staged recipes without installing
   import               take over the file lists the phase scripts recorded (/var/lib/autark/files)
+  arch <names>         import recipes from Arch Linux (and the runtime dependencies they need), without installing
+  refresh [names]      import the current Arch recipes again (all imported ones by default); upgrade then sees new versions
   keygen               make the signing key pair
   verify <archive>     check an archive's signature
 
@@ -39,11 +42,18 @@ options:
   --config <file>      settings (default <root>/etc/autark/pkg.toml)
   --recipes <dir>      recipes folder, overriding the settings
   -n, --dry-run        say what would happen, change nothing
-  --force              let a package take over files another one owns";
+  --force              let a package take over files another one owns
+  -y, --yes            import missing packages from Arch Linux without asking
+  --no-arch            never import: a package with no recipe is an error
+
+A package with no recipe is imported from Arch Linux by `install` and `build` (asking first); the recipes it makes are
+kept apart, in the `imported` setting, and the hand-written ones win a name both have.";
 
 struct Options {
     dry_run: bool,
     force: bool,
+    yes: bool,
+    no_arch: bool,
 }
 
 fn main() {
@@ -56,7 +66,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let (mut root, mut config_file, mut recipes_dir) = (PathBuf::from("/"), None, None);
-    let mut options = Options { dry_run: false, force: false };
+    let mut options = Options { dry_run: false, force: false, yes: false, no_arch: false };
     let mut words = Vec::new();
     while let Some(arg) = args.next() {
         let mut value = |flag: &str| args.next().ok_or_else(|| error::Error(format!("{flag} needs a value")));
@@ -66,6 +76,8 @@ fn run() -> Result<()> {
             "--recipes" => recipes_dir = Some(PathBuf::from(value("--recipes")?)),
             "-n" | "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
+            "-y" | "--yes" => options.yes = true,
+            "--no-arch" => options.no_arch = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -82,7 +94,7 @@ fn run() -> Result<()> {
     };
     let root = std::fs::canonicalize(&root).ctx(&root)?;
     let config = Config::load(&root, config_file.as_deref(), recipes_dir.as_deref())?;
-    let changes = matches!(command.as_str(), "install" | "remove" | "upgrade" | "rollback" | "build" | "import" | "keygen");
+    let changes = matches!(command.as_str(), "install" | "remove" | "upgrade" | "rollback" | "build" | "import" | "keygen" | "arch" | "refresh");
     if changes && !options.dry_run && config.is_live() && !build::is_root() {
         return fail(format!("{command} changes the system: run it as root"));
     }
@@ -135,7 +147,7 @@ fn run() -> Result<()> {
         }
         "build" => {
             need("names")?;
-            let recipes = recipe::load_all(&config.recipes)?;
+            let recipes = recipes_for(&config, names, &options)?;
             for name in names {
                 let Some(recipe) = recipes.get(name) else {
                     return fail(format!("no recipe named {name}"));
@@ -153,6 +165,21 @@ fn run() -> Result<()> {
             Ok(())
         }
         "import" => import(&config, &options),
+        "arch" => {
+            need("names")?;
+            arch::import(&config, names)
+        }
+        "refresh" => {
+            let mut wanted = names.to_vec();
+            if wanted.is_empty() {
+                wanted = arch::imported_names(&load_recipes(&config)?);
+            }
+            if wanted.is_empty() {
+                println!("nothing imported yet");
+                return Ok(());
+            }
+            arch::import(&config, &wanted)
+        }
         "keygen" => {
             let path = archive::keygen(&config)?;
             println!("secret key: {} (root only)\npublic key: {}", config.secret_key.display(), path.display());
@@ -171,8 +198,37 @@ fn run() -> Result<()> {
     }
 }
 
+/// The hand-written recipes, and below them the ones imported from Arch Linux.
+fn load_recipes(config: &Config) -> Result<BTreeMap<String, Recipe>> {
+    let mut all = recipe::load_all(&config.recipes)?;
+    if let Some(dir) = &config.imported {
+        for (name, recipe) in recipe::load_imported(dir) {
+            all.entry(name).or_insert(recipe);
+        }
+    }
+    Ok(all)
+}
+
+/// The recipes with every wanted name present: a name nobody has a recipe for is imported from Arch Linux first
+/// (after asking), unless --no-arch. A dry run only says that it would.
+fn recipes_for(config: &Config, wanted: &[String], options: &Options) -> Result<BTreeMap<String, Recipe>> {
+    let mut recipes = load_recipes(config)?;
+    let missing: Vec<String> = wanted.iter().filter(|name| !recipes.contains_key(*name)).cloned().collect();
+    if missing.is_empty() || options.no_arch || config.imported.is_none() {
+        return Ok(recipes);
+    }
+    if options.dry_run {
+        println!("not in Autark's recipes: {} (would be imported from Arch Linux)", missing.join(", "));
+        return Ok(recipes);
+    }
+    arch::confirm(&missing, options.yes)?;
+    arch::import(config, &missing)?;
+    recipes = load_recipes(config)?;
+    Ok(recipes)
+}
+
 fn search(config: &Config, words: &[String]) -> Result<()> {
-    let recipes = recipe::load_all(&config.recipes)?;
+    let recipes = load_recipes(config)?;
     let installed = Db::open_read(config)?.all()?;
     let words: Vec<String> = words.iter().map(|word| word.to_lowercase()).collect();
     for recipe in recipes.values() {
@@ -191,7 +247,7 @@ fn search(config: &Config, words: &[String]) -> Result<()> {
 }
 
 fn info(config: &Config, name: &str) -> Result<()> {
-    let recipes = recipe::load_all(&config.recipes)?;
+    let recipes = load_recipes(config)?;
     let db = Db::open_read(config)?;
     let installed = db.get(name)?;
     let recipe = recipes.get(name);
@@ -200,7 +256,7 @@ fn info(config: &Config, name: &str) -> Result<()> {
     }
     println!("{name}");
     if let Some(recipe) = recipe {
-        println!("  recipe:      {} ({})", recipe.full_version(), recipe.mode.name());
+        println!("  recipe:      {} ({}{})", recipe.full_version(), recipe.mode.name(), if recipe.imported { ", imported from Arch Linux" } else { "" });
         if !recipe.description.is_empty() {
             println!("  description: {}", recipe.description);
         }
@@ -233,7 +289,10 @@ fn list(config: &Config) -> Result<()> {
 }
 
 fn install(config: &Config, names: &[String], options: &Options) -> Result<()> {
-    let recipes = recipe::load_all(&config.recipes)?;
+    let recipes = recipes_for(config, names, options)?;
+    if options.dry_run && names.iter().any(|name| !recipes.contains_key(name)) && !options.no_arch {
+        return Ok(()); // recipes_for has said which would be imported; the rest of the plan needs them
+    }
     let db = Db::open_for(config, options.dry_run)?;
     let installed = db.all()?;
     let present: BTreeSet<String> = installed.keys().cloned().collect();
@@ -297,7 +356,7 @@ fn remove(config: &Config, names: &[String], options: &Options) -> Result<()> {
 }
 
 fn upgrade(config: &Config, names: &[String], options: &Options) -> Result<()> {
-    let recipes = recipe::load_all(&config.recipes)?;
+    let recipes = load_recipes(config)?;
     let db = Db::open_for(config, options.dry_run)?;
     let installed = db.all()?;
     let candidates: Vec<&Installed> = if names.is_empty() {
@@ -393,7 +452,7 @@ fn prune(config: &Config, name: &str, keep_this: Option<&Path>) -> Result<()> {
 /// Turns the phase scripts' file lists into installed packages: each list goes to the recipe that names it
 /// (by name or in `imports`), at the recipe's version. Lists no recipe claims are steps, not packages.
 fn import(config: &Config, options: &Options) -> Result<()> {
-    let recipes = recipe::load_all(&config.recipes)?;
+    let recipes = load_recipes(config)?;
     let dir = config.path("/var/lib/autark/files");
     let mut lists: Vec<(std::time::SystemTime, String, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(&dir).ctx(&dir)? {

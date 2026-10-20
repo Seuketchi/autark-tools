@@ -33,6 +33,15 @@ fn one(config: &Config, recipe: &Recipe, source: &Source) -> Result<PathBuf> {
 
 fn download(url: &str, path: &Path) -> Result<()> {
     let partial = path.with_extension("part");
+    if url.starts_with("ftp://") {
+        // ureq speaks http and https only. curl is run for ftp, restricted to it, and the checksum still decides.
+        let status = std::process::Command::new("curl").args(["--fail", "--silent", "--show-error", "--location", "--proto", "=ftp", "--output"]).arg(&partial).arg(url).status().ctx("curl")?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&partial);
+            return fail(format!("{url}: curl failed ({status})"));
+        }
+        return std::fs::rename(&partial, path).ctx(path);
+    }
     let response = ureq::get(url).call().ctx(url)?;
     let mut reader = response.into_body().into_reader();
     let mut file = std::fs::File::create(&partial).ctx(&partial)?;

@@ -14,7 +14,7 @@
 //! ```
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Context, Result, fail};
 
@@ -62,6 +62,10 @@ pub struct Recipe {
     pub depends: Vec<String>,
     pub imports: Vec<String>,
     pub mode: Mode,
+    /// The file it was read from, which the build sources.
+    pub file: Option<PathBuf>,
+    /// Whether it came from Arch Linux (`autark-pkg arch`), not from the autark repo.
+    pub imported: bool,
 }
 
 impl Recipe {
@@ -110,7 +114,7 @@ impl Recipe {
         }
         let description = single("description").map(|text| expand(&text)).unwrap_or_default();
         let (depends, imports) = (list("depends"), list("imports"));
-        Ok(Self { name: name.clone(), version: version.clone(), release, description, sources, depends, imports, mode })
+        Ok(Self { name: name.clone(), version: version.clone(), release, description, sources, depends, imports, mode, file: None, imported: false })
     }
 }
 
@@ -132,7 +136,9 @@ fn header(text: &str) -> Result<BTreeMap<String, Vec<String>>> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if line.contains("()") {
+        // The first function ends the header. An empty list (`depends=()`) is an assignment, not a function.
+        let assignment = line.split_once('=').is_some_and(|(key, _)| !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_'));
+        if line.contains("()") && !assignment {
             break;
         }
         let Some((key, value)) = line.split_once('=') else {
@@ -201,10 +207,42 @@ pub fn load_all(dir: &Path) -> Result<BTreeMap<String, Recipe>> {
         if !file_name.ends_with(".sh") || file_name == "lib.sh" {
             continue;
         }
-        let recipe = Recipe::parse(&std::fs::read_to_string(&path).ctx(&path)?, file_name)?;
+        let mut recipe = Recipe::parse(&std::fs::read_to_string(&path).ctx(&path)?, file_name)?;
+        recipe.file = Some(path);
         out.insert(recipe.name.clone(), recipe);
     }
     Ok(out)
+}
+
+/// The recipes `autark-pkg arch` imported. That folder is written by the build user, so what is read from it is held
+/// to less: a recipe that doesn't parse is left out with a warning, not an error that stops everything, and one that
+/// isn't `staged` (which would run as root) is refused.
+pub fn load_imported(dir: &Path) -> BTreeMap<String, Recipe> {
+    let mut out = BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !file_name.ends_with(".sh") {
+            continue;
+        }
+        let parsed = std::fs::read_to_string(&path).map_err(|error| crate::error::Error(error.to_string())).and_then(|text| Recipe::parse(&text, file_name));
+        match parsed {
+            Ok(mut recipe) if recipe.mode == Mode::Staged => {
+                recipe.file = Some(path);
+                recipe.imported = true;
+                recipe.imports.clear();
+                out.insert(recipe.name.clone(), recipe);
+            }
+            Ok(recipe) => eprintln!("autark-pkg: skipped imported {}: it is {}, and only staged recipes are taken from there", recipe.name, recipe.mode.name()),
+            Err(error) => eprintln!("autark-pkg: skipped imported recipe: {error}"),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -228,11 +266,41 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_list_does_not_end_the_header() {
+        let text = "name=zlib\nversion=1\nsource=()\nchecksums=()\ndepends=()\nmode=tracked\n\nbuild() {\n:\n}\n";
+        assert_eq!(Recipe::parse(text, "zlib.sh").unwrap().mode, Mode::Tracked);
+    }
+
+    #[test]
     fn refuses_broken_recipes() {
         assert!(Recipe::parse(ZLIB, "other.sh").is_err());
         assert!(Recipe::parse(&ZLIB.replace(" -)", ")"), "zlib.sh").is_err());
         assert!(Recipe::parse(&ZLIB.replace("md5:a1e6", "md5:zz"), "zlib.sh").is_err());
         assert!(Recipe::parse(&ZLIB.replace("build()", "make()"), "zlib.sh").is_err());
         assert!(Recipe::parse(&ZLIB.replace("mode=tracked", "mode=fast"), "zlib.sh").is_err());
+    }
+}
+
+#[cfg(test)]
+mod imported_tests {
+    use super::*;
+
+    fn recipe_text(name: &str, mode: &str) -> String {
+        format!("name={name}\nversion=1\nsource=()\nchecksums=()\ndepends=()\nmode={mode}\n\nbuild() {{\n:\n}}\n")
+    }
+
+    #[test]
+    fn imported_recipes_are_staged_only_and_a_broken_one_does_not_stop_the_rest() {
+        let dir = std::env::temp_dir().join(format!("autark-pkg-imported-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("good.sh"), recipe_text("good", "staged")).unwrap();
+        std::fs::write(dir.join("rooty.sh"), recipe_text("rooty", "tracked")).unwrap();
+        std::fs::write(dir.join("broken.sh"), "this is not a recipe\n").unwrap();
+        std::fs::write(dir.join("mismatch.sh"), recipe_text("other", "staged")).unwrap();
+        let loaded = load_imported(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(loaded.keys().collect::<Vec<_>>(), ["good"]);
+        assert!(loaded["good"].imported);
+        assert!(loaded["good"].file.as_ref().is_some_and(|file| file.ends_with("good.sh")));
     }
 }
