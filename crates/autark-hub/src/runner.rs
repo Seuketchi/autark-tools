@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 
 pub const HELPER: &str = "/usr/libexec/autark/autark-hub-helper";
 const REMEMBER: Duration = Duration::from_secs(300);
-const SETUP: &str = "sudo isn't set up to run the Hub's helper yet. Once, in a root shell: su -c 'sh ~/autark-tools/crates/autark-hub/data/install-helper.sh'";
+const SETUP: &str = "sudo isn't set up to run the Hub's helper yet. Once, in a root shell, from the autark-tools folder: su -c 'sh crates/autark-hub/data/install-helper.sh'";
 
 thread_local! {
     static PASSWORD: RefCell<Option<(Zeroizing<String>, Instant)>> = const { RefCell::new(None) };
