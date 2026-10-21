@@ -4,6 +4,7 @@
 /crates/autark-pkg/                     @Seuketchi
 /crates/autark-init/                    @Seuketchi
 /crates/autark-hw-helper/               @Seuketchi
+/crates/autark-hub/                     @Seuketchi
 /crates/autark-settings/src/bin/        @Seuketchi
 /crates/autark-settings/src/privileged.rs @Seuketchi
 /crates/autark-sandbox/                 @Seuketchi

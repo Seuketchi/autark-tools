@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="hub-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5EDC94"/><stop offset="1" stop-color="#1C9A57"/></linearGradient>
+<linearGradient id="hub-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="hub-sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/></linearGradient>
+<filter id="hub-ds" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#000" flood-opacity=".28"/></filter>
+<clipPath id="hub-c"><rect width="64" height="64" rx="16.6"/></clipPath>
+</defs>
+<g clip-path="url(#hub-c)"><rect width="64" height="64" fill="url(#hub-bg)"/><rect width="64" height="33.3" fill="url(#hub-gl)"/><rect y="60" width="64" height="4" fill="url(#hub-sh)"/><rect width="64" height="1.2" fill="#fff" fill-opacity=".45"/></g>
+<rect x=".5" y=".5" width="63" height="63" rx="16.1" fill="none" stroke="#fff" stroke-opacity=".14"/>
+<g filter="url(#hub-ds)"><path d="M32 13l17 9.5v19L32 51 15 41.5v-19z" fill="#FFFFFF" fill-opacity=".2" stroke="#FFFFFF" stroke-width="3.6" stroke-linejoin="round" opacity=".95"/><path d="M15 22.5l17 9.5 17-9.5M32 32v19" fill="none" stroke="#FFFFFF" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" opacity=".95"/></g>
+</svg>

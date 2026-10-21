@@ -1,0 +1,243 @@
+window.hub {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+window.hub .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: @text;
+  min-height: 0;
+  padding: 0;
+}
+
+/* Navigation */
+
+.sidebar {
+  background-color: alpha(@sidebar, 0.55);
+  border-right: 1px solid alpha(@text, 0.06);
+  padding: 14px 10px;
+}
+
+searchentry.search {
+  min-height: 32px;
+  margin: 0 4px 10px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background-color: alpha(@text, 0.07);
+  box-shadow: none;
+  outline: none;
+  color: @text;
+}
+
+searchentry.search image {
+  color: @text3;
+}
+
+button.nav {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+
+button.nav:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+button.nav.current {
+  background-color: @accent;
+  color: @on_accent;
+  font-weight: 600;
+}
+
+.badge {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background-color: @danger;
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.option {
+  padding: 10px 6px 4px;
+}
+
+switch {
+  border: none;
+}
+
+switch:checked {
+  background-color: @accent;
+}
+
+/* The list */
+
+.middle {
+  border-right: 1px solid alpha(@text, 0.06);
+}
+
+.list-head {
+  padding: 22px 20px 12px;
+}
+
+.pane-title {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+list.packages {
+  background: none;
+}
+
+row.package {
+  padding: 8px 20px;
+  border-bottom: 1px solid alpha(@text, 0.05);
+}
+
+row.package:hover {
+  background-color: alpha(@text, 0.04);
+}
+
+row.package:selected {
+  background-color: alpha(@accent, 0.14);
+  color: @text;
+}
+
+.package-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.state {
+  font-size: 11px;
+  color: @text2;
+}
+
+.state-update {
+  font-size: 11px;
+  font-weight: 600;
+  color: @accent_text;
+}
+
+.note {
+  font-size: 12px;
+  color: @text2;
+}
+
+/* The chosen package */
+
+.detail {
+  padding: 44px 40px 28px;
+}
+
+.detail-title {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.detail-text {
+  margin-top: 6px;
+  font-size: 15px;
+}
+
+.source {
+  padding: 3px 10px;
+  border-radius: 8px;
+  background-color: alpha(@accent, 0.12);
+  font-size: 12px;
+}
+
+.source.warn {
+  background-color: alpha(@danger, 0.12);
+  color: @danger;
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 13px;
+  color: @text2;
+}
+
+.status.error {
+  color: @danger;
+}
+
+.log-box {
+  margin-top: 6px;
+  border-radius: 10px;
+  background-color: alpha(@text, 0.05);
+  border: 1px solid alpha(@text, 0.07);
+}
+
+textview.log {
+  background: none;
+  color: @text2;
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+textview.log text {
+  background: none;
+}
+
+button.primary,
+button.plain {
+  min-height: 32px;
+  padding: 0 16px;
+  border-radius: 8px;
+}
+
+button.primary {
+  background-color: @accent;
+  color: @on_accent;
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background-color: alpha(@accent, 0.88);
+}
+
+button.plain {
+  background-color: alpha(@text, 0.07);
+}
+
+button.plain:hover {
+  background-color: alpha(@text, 0.12);
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+/* The password dialog */
+
+window.dialog {
+  background-color: @surface;
+}
+
+.dialog-body {
+  padding: 20px;
+}
+
+entry.field,
+passwordentry.field {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid alpha(@text, 0.14);
+  background-color: @surface;
+}
