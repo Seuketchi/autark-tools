@@ -21,7 +21,7 @@ They live apart from the distro so other Linux systems can use them too.
 | --- | --- |
 | 🖥️ **Desktop shell** | A top bar, a dock with magnification, a Spotlight-style launcher with clipboard history, a notification centre with widgets, a lock screen (password or fingerprint), a wallpaper layer, night light and display layouts. GTK4 and Rust, for any wlroots compositor. |
 | 🗂️ **Apps** | Files, Notes (Markdown vaults with links and a graph), Calendar, Contacts, Mail pieces, Viewer, Player, Calculator, Archives, Clock, Task manager, Screenshots, Settings and a hardware page. |
-| 🤖 **Kith** | An assistant that runs on [Ollama](https://ollama.com) on your laptop. Off until you turn it on; it reads only files you name and logs every call. A small fast model, Jev, handles quick decisions. |
+| 🤖 **Kith** | An assistant that runs on [Ollama](https://ollama.com) on your laptop. Off until you turn it on; it reads only files you name and logs every call. Jev, an optional cloud engine for fast typed decisions, is off unless you switch it on per feature. |
 | 📦 **autark-pkg** | Builds package recipes into signed archives, installs, upgrades, removes and rolls back, and imports a recipe from Arch Linux when none exists. Autark only. |
 | 🔓 **autark-init** | An initramfs init that unlocks a LUKS2 disk with TPM plus PIN, then hands over to systemd. |
 | 🧱 **autark-sandbox** | Runs a vendor binary under a per-app Landlock profile. |
