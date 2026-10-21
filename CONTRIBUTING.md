@@ -12,7 +12,7 @@ cargo clippy --workspace --locked --all-targets
 cargo test --workspace --locked --no-fail-fast
 ```
 
-The workspace needs GTK 4 with gtk4-layer-shell 1.2 or newer, VTE, PipeWire, libcryptsetup, PAM, GStreamer and clang.
+The workspace needs GTK 4 with gtk4-layer-shell 1.2 or newer, VTE, PipeWire, libcryptsetup, PAM, GStreamer, libvpx, Opus and clang.
 CI builds it on Arch Linux; see `.github/workflows/ci.yml` for the exact package list.
 
 ## What review looks at
