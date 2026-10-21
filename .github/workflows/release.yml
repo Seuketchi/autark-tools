@@ -1,0 +1,58 @@
+name: Release
+
+# Builds the programs and attaches them, with checksums, to a DRAFT release. Nothing is signed or published here:
+# you check the draft, sign what you want offline, and press publish yourself.
+#   git tag v0.1.0 && git push origin v0.1.0
+# "Run workflow" on the Actions tab does the build and keeps the tarball as a build artifact, without a release.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: System libraries and Rust
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git clang pkgconf rustup zstd \
+            gtk4 gtk4-layer-shell vte4 pipewire cryptsetup pam gstreamer gst-plugins-base wayland libvpx opus
+          rustup default stable
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release --workspace --locked
+      - name: Pack
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/ci/package-release.sh "${GITHUB_REF_NAME//\//-}" release dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autark-tools
+          path: dist/
+          if-no-files-found: error
+
+  draft:
+    name: draft release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: autark-tools
+          path: dist
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$TAG" \
+            --notes "Convenience builds of the Autark programs for other wlroots desktops, built on Arch Linux. Not the packages Autark installs, and not signed: check SHA256SUMS. Autark's own signed packages come from the release key (see docs/specs/releasing.md in the autark repository)."

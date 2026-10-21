@@ -118,15 +118,15 @@ fn start(parent: Option<gtk::Window>, reason: String, args: Vec<String>, passwor
 
 /// On its own thread: the password goes in on sudo's first line of input, and both of its outputs are read to the end.
 fn sudo(args: &[String], password: &Zeroizing<String>, sender: &async_channel::Sender<Message>) {
-    sudo_with("sudo", args, password, sender);
+    let mut command = Command::new("sudo");
+    command.args(["-S", "-k", "-p", "", HELPER]).args(args);
+    run_command(command, password, sender);
 }
 
-/// `sudo`, or a stand-in for it when testing.
-fn sudo_with(program: &str, args: &[String], password: &Zeroizing<String>, sender: &async_channel::Sender<Message>) {
+/// Runs `command` (sudo and the helper, or a stand-in for them when testing) and sends its output and how it ended.
+fn run_command(mut command: Command, password: &Zeroizing<String>, sender: &async_channel::Sender<Message>) {
     let result = (|| {
-        let mut child = Command::new(program)
-            .args(["-S", "-k", "-p", "", HELPER])
-            .args(args)
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -245,17 +245,20 @@ fn ask_password(parent: Option<&gtk::Window>, reason: &str, answered: impl Fn(Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Runs `sudo_with` against a shell script standing in for sudo, and returns what it sent: the lines, and how it ended.
+    /// Runs a shell script standing in for sudo, and returns what the runner sent: the lines, and how it ended. The script
+    /// is run through `sh`, not executed itself, so a test thread forking at the wrong moment cannot make it "text file busy".
     fn run_fake(script: &str) -> (Vec<String>, Result<(), Failure>) {
-        let dir = std::env::temp_dir().join(format!("autark-hub-runner-{}-{}", std::process::id(), script.len()));
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!("autark-hub-runner-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("sudo");
-        std::fs::write(&path, format!("#!/bin/sh\nread password\n{script}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = dir.join("sudo.sh");
+        std::fs::write(&path, format!("read password\n{script}\n")).unwrap();
         let (sender, receiver) = async_channel::unbounded();
-        sudo_with(path.to_str().unwrap(), &["install".to_owned(), "zlib".to_owned()], &Zeroizing::new("secret".to_owned()), &sender);
+        let mut command = Command::new("sh");
+        command.arg(&path).args(["install", "zlib"]);
+        run_command(command, &Zeroizing::new("secret".to_owned()), &sender);
         let _ = std::fs::remove_dir_all(&dir);
         let (mut lines, mut end) = (Vec::new(), None);
         while let Ok(message) = receiver.try_recv() {
