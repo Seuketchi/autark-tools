@@ -133,7 +133,12 @@ pub fn load(id: &str) -> Result<Task, String> {
 
 /// Checks a task as it would be created: a name, an instruction, a schedule of a known shape, and inputs Kith
 /// may read. Returns it tidied.
-pub fn check(mut task: Task) -> Result<Task, String> {
+pub fn check(task: Task) -> Result<Task, String> {
+    check_at(task, chrono::Local::now().naive_local())
+}
+
+/// `check`, with "now" given: a one-off task must be later than it.
+pub fn check_at(mut task: Task, now: chrono::NaiveDateTime) -> Result<Task, String> {
     task.name = task.name.trim().chars().take(60).collect();
     task.prompt = task.prompt.trim().to_owned();
     if task.name.is_empty() {
@@ -146,7 +151,7 @@ pub fn check(mut task: Task) -> Result<Task, String> {
         return Err("a task's name can't hold a new line or %".to_owned());
     }
     task.when.calendar()?;
-    if task.when.every.trim().eq_ignore_ascii_case("once") && !task.when.upcoming(chrono::Local::now().naive_local()) {
+    if task.when.every.trim().eq_ignore_ascii_case("once") && !task.when.upcoming(now) {
         return Err("that time has passed".to_owned());
     }
     if task.remind {

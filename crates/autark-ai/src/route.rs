@@ -113,7 +113,7 @@ pub fn reminder(text: &str, now: chrono::NaiveDateTime) -> Option<Routed> {
     let name: String = format!("Reminder: {message}").chars().take(60).collect();
     let when = crate::tasks::When { every: "once".to_owned(), date: at.date().to_string(), day: 0, time: at.format("%H:%M").to_string() };
     let task = crate::tasks::Task { name, prompt: message, when, reads: Vec::new(), urls: Vec::new(), remind: true, skill: String::new() };
-    let task = crate::tasks::check(task).ok()?;
+    let task = crate::tasks::check_at(task, now).ok()?;
     Some(Routed { actions: Vec::new(), question: String::new(), files: Vec::new(), remember: String::new(), task: Some(task), confidence: 1.0, engine: "code" })
 }
 
