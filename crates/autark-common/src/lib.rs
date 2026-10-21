@@ -12,10 +12,13 @@ pub mod config;
 pub mod desktop;
 pub mod files;
 pub mod ini;
+pub mod layout;
 pub mod looks;
 pub mod shortcuts;
+pub mod sounds;
 pub mod stats;
 pub mod theme;
+pub mod wav;
 #[cfg(feature = "style")]
 pub mod slider;
 #[cfg(feature = "style")]

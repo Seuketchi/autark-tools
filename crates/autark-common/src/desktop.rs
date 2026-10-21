@@ -71,6 +71,28 @@ fn read(path: &std::path::Path) -> Option<Entry> {
     Some(entry)
 }
 
+/// Every app that can be opened from a menu, as `(file name without .desktop, display name)`, by display name. Where two
+/// folders have a file of the same name, the first folder's wins, as it overrides the others.
+pub fn installed() -> Vec<(String, String)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut apps = Vec::new();
+    for dir in application_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for file in entries.flatten() {
+            let id = file.file_name().to_string_lossy().into_owned();
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let Some(entry) = read(&file.path()) else { continue };
+            if let (Some(name), Some(_), false) = (entry.name, entry.exec, entry.hidden) {
+                apps.push((id.trim_end_matches(".desktop").to_owned(), name));
+            }
+        }
+    }
+    apps.sort_by_key(|(id, name)| (name.to_lowercase(), id.clone()));
+    apps
+}
+
 /// An app found by name, and the command that starts it.
 #[derive(Debug, PartialEq)]
 pub struct App {

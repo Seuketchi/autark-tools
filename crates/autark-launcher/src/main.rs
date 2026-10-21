@@ -10,6 +10,7 @@ mod ai;
 mod apps;
 mod assistant;
 mod clipboard;
+mod config;
 mod face;
 mod kith;
 mod search;

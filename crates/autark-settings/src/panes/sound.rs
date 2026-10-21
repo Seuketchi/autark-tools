@@ -94,6 +94,25 @@ pub fn build() -> gtk::Widget {
     });
     effects.update_property(&[gtk::accessible::Property::Label("Play sound effects")]);
     group.append(&ui::row("Play sound effects", Some("Alerts and the screenshot shutter"), &effects));
+    // Sets are folders of alert.wav and shutter.wav in ~/.config/autark/sounds/; "default" is the one made in code.
+    let sets = autark_common::sounds::list();
+    let names: Vec<(&str, &str)> = sets.iter().map(|name| (name.as_str(), name.as_str())).collect();
+    let current = config::get_str(&config::read("sound"), "set").unwrap_or_else(|| autark_common::sounds::BUILT_IN.to_owned());
+    let picker = ui::choice(&names, &current, {
+        let status = status.clone();
+        move |set| {
+            let written = config::edit("sound", |document| config::set_in(document, "set", set));
+            status.set_visible(written.is_err());
+            if let Err(error) = written {
+                status.set_label(&error);
+            }
+        }
+    });
+    let preview = ui::button("Play", |_| autark_common::audio::play(autark_common::audio::Effect::Alert));
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    line.append(&picker);
+    line.append(&preview);
+    group.append(&ui::row("Sound set", Some("Folders of alert.wav and shutter.wav in ~/.config/autark/sounds/"), &line));
     column.append(&group);
     column.append(&ui::section("Output", None, &sound.outputs));
 

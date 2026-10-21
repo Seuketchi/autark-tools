@@ -433,30 +433,54 @@ pub enum Effect {
     Shutter,
 }
 
+impl Effect {
+    /// The file name, without `.wav`, this effect has in a sound set.
+    fn file_name(self) -> &'static str {
+        match self {
+            Effect::Alert => "alert",
+            Effect::Shutter => "shutter",
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(default)]
 struct Sound {
     effects: bool,
+    /// The sound set: a folder name from `sounds::list`, or the built-in one.
+    set: String,
 }
 
 impl Default for Sound {
     fn default() -> Self {
-        Self { effects: true }
+        Self { effects: true, set: crate::sounds::BUILT_IN.to_owned() }
     }
+}
+
+/// `effect` as the set `set` has it, or the built-in sound when the set has no file for it or it can't be read.
+fn effect_samples(effect: Effect, set: &str) -> Vec<f32> {
+    if let Some(path) = crate::sounds::file_in(&crate::sounds::dirs(), set, effect.file_name()) {
+        match std::fs::read(&path).map_err(|error| error.to_string()).and_then(|bytes| crate::wav::decode(&bytes, RATE)) {
+            Ok(samples) => return samples,
+            Err(error) => eprintln!("audio: {}: {error}; using the built-in sound", path.display()),
+        }
+    }
+    samples(effect, RATE)
 }
 
 /// The rate the effects are made at.
 const RATE: u32 = 48_000;
 
-/// Plays `effect` unless `sound.toml` turns effects off. It returns at once.
+/// Plays `effect` unless `sound.toml` turns effects off, in the sound set it names. It returns at once.
 pub fn play(effect: Effect) {
-    if !crate::config::load::<Sound>("sound").effects {
+    let settings = crate::config::load::<Sound>("sound");
+    if !settings.effects {
         return;
     }
     std::thread::spawn(move || {
         // The first buffers can go before the stream is linked, so it starts with 50 ms of quiet.
         let mut padded = vec![0.0; RATE as usize / 20];
-        padded.extend(samples(effect, RATE));
+        padded.extend(effect_samples(effect, &settings.set));
         if let Err(error) = sound(padded) {
             eprintln!("audio: effect: {error}");
         }

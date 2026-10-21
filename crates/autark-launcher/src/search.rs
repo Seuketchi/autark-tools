@@ -8,6 +8,7 @@ use gtk::gio;
 use gtk::prelude::*;
 
 use crate::actions::{self, Action};
+use crate::config::Launcher;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Group {
@@ -56,10 +57,9 @@ pub struct Hit {
     pub target: Target,
 }
 
-const MAX_APPS: usize = 6;
-const MAX_FILES: usize = 4;
-
 pub struct Index {
+    /// `launcher.toml` as of the last `refresh`, which is each time the launcher opens.
+    settings: Launcher,
     apps: Vec<gio::AppInfo>,
     /// Opens per app ID, kept in `$XDG_STATE_HOME/autark/launcher-history`.
     history: HashMap<String, u32>,
@@ -75,12 +75,13 @@ impl Index {
                 Some((id.to_owned(), count.parse().ok()?))
             })
             .collect();
-        Self { apps: Vec::new(), history }
+        Self { settings: Launcher::load(), apps: Vec::new(), history }
     }
 
     /// Re-reads installed apps; cheap enough to do each time the launcher opens.
     pub fn refresh(&mut self) {
         self.apps = gio::AppInfo::all().into_iter().filter(|app| app.should_show()).collect();
+        self.settings = Launcher::load();
     }
 
     /// Every app that shows in menus, by name.
@@ -112,8 +113,10 @@ impl Index {
         let mut hits = self.apps(&query);
         // One letter matches too much outside app names.
         if query.chars().count() >= 2 {
-            hits.extend(files(&query));
-            hits.extend(actions(&query));
+            hits.extend(files(&query, self.settings.max_files));
+            if self.settings.actions {
+                hits.extend(actions(&query));
+            }
         }
         if kith && !typed.is_empty() {
             hits.push(Hit {
@@ -157,7 +160,7 @@ impl Index {
         scored.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)).then_with(|| a.2.display_name().cmp(&b.2.display_name())));
         scored
             .into_iter()
-            .take(MAX_APPS)
+            .take(self.settings.max_apps)
             .map(|(_, _, app)| Hit {
                 group: Group::Applications,
                 title: app.display_name().to_string(),
@@ -173,13 +176,13 @@ impl Index {
 }
 
 /// Recently used files whose name contains the query.
-fn files(query: &str) -> Vec<Hit> {
+fn files(query: &str, most: usize) -> Vec<Hit> {
     let home = std::env::var("HOME").unwrap_or_default();
     gtk::RecentManager::default()
         .items()
         .into_iter()
         .filter(|item| item.exists() && item.display_name().to_lowercase().contains(query))
-        .take(MAX_FILES)
+        .take(most)
         .map(|item| {
             let uri = item.uri().to_string();
             let folder = gio::File::for_uri(&uri)

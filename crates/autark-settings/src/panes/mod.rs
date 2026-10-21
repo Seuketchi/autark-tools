@@ -19,6 +19,7 @@ mod night;
 mod password;
 mod power;
 mod privacy;
+mod shell;
 mod sound;
 mod storage;
 mod terminal;
@@ -146,6 +147,11 @@ pub const INDEX: &[(&str, &str)] = &[
     ("Administrator", "users"),
     ("Security watch", "updates"),
     ("Kernel", "updates"),
+    ("Menu bar items", "dock"),
+    ("Clock format", "dock"),
+    ("Dock apps", "dock"),
+    ("Launcher results", "dock"),
+    ("Sound set", "sound"),
     ("Window animations", "windows"),
     ("Window placement", "windows"),
     ("Title bar height", "windows"),
