@@ -1,0 +1,9 @@
+# Daylight: Pale blue hills under a white sun.
+name = "Daylight"
+author = "Tristan Jadman"
+licence = "MIT OR Apache-2.0"
+description = "Pale blue hills under a white sun."
+sky = "#DCE6F2"
+band = "#D3DFEC"
+sun = "#FFFFFF"
+hills = ["#C3D2E3", "#AFC2D8", "#9EB4CD", "#8EA6C2"]

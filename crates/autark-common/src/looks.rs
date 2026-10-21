@@ -87,8 +87,7 @@ impl Preset {
 
 /// Your looks, then the system's: the folders a look can be in besides the ones built in.
 pub fn dirs() -> Vec<PathBuf> {
-    let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-    config.map(|dir| dir.join("autark/looks")).into_iter().chain([PathBuf::from("/usr/share/autark/looks")]).collect()
+    crate::catalog::dirs("looks")
 }
 
 /// Every look, with Linen first and the rest by id. A look in an earlier place replaces one with the same id in a later one
@@ -98,26 +97,7 @@ pub fn list() -> Vec<(String, Preset)> {
 }
 
 pub fn list_in(dirs: &[PathBuf]) -> Vec<(String, Preset)> {
-    let mut found: BTreeMap<String, Preset> = BTreeMap::new();
-    for (id, text) in BUILTIN {
-        if let Ok(preset) = Preset::parse(text) {
-            found.insert((*id).to_owned(), preset);
-        }
-    }
-    // The system's folder then yours, so the later one wins; `dirs` is yours first.
-    for dir in dirs.iter().rev() {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
-        for path in entries.flatten().map(|entry| entry.path()) {
-            let (Some(id), true) = (path.file_stem().and_then(|stem| stem.to_str()), path.extension().is_some_and(|ext| ext == "toml")) else { continue };
-            match std::fs::read_to_string(&path).map_err(|error| error.to_string()).and_then(|text| Preset::parse(&text)) {
-                Ok(preset) => {
-                    found.insert(id.to_owned(), preset);
-                }
-                Err(error) => eprintln!("{}: {error}", path.display()),
-            }
-        }
-    }
-    let mut all: Vec<(String, Preset)> = found.into_iter().collect();
+    let mut all: Vec<(String, Preset)> = crate::catalog::collect(BUILTIN, dirs, Preset::parse).into_iter().collect();
     all.sort_by_key(|(id, _)| (id != "linen", id.clone()));
     all
 }
@@ -187,7 +167,7 @@ pub fn validate(preset: &Preset, shipped: bool) -> Vec<String> {
             problems.push("it needs a description".to_owned());
         }
         if let Some(wallpaper) = &preset.wallpaper
-            && crate::wallpaper::scene(wallpaper).is_none()
+            && crate::wallpaper::find_in(wallpaper, &[]).is_none()
         {
             problems.push(format!("wallpaper {wallpaper:?} is not one of the scenes"));
         }

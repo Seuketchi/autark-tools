@@ -1,0 +1,9 @@
+# Ridge: Dark ridges under a blue sun.
+name = "Ridge"
+author = "Tristan Jadman"
+licence = "MIT OR Apache-2.0"
+description = "Dark ridges under a blue sun."
+sky = "#16181E"
+band = "#191B22"
+sun = "#4C8DF7"
+hills = ["#2F3440", "#262A34", "#20232B", "#1A1C22"]

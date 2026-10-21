@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use autark_common::looks::{self, Preset};
 use autark_common::theme::{self, ACCENTS, Look, Mode, Palette, Theme};
-use autark_common::wallpaper::{self, SCENES};
+use autark_common::wallpaper;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
@@ -33,7 +33,7 @@ struct Appearance {
     /// Each card or dot with the value it stands for, to mark the chosen one.
     themes: Vec<(&'static str, gtk::Button)>,
     accents: Vec<(&'static str, gtk::Button)>,
-    walls: Vec<(&'static str, gtk::Button)>,
+    walls: Vec<(String, gtk::Button)>,
     accent_label: gtk::Label,
     /// The picture card's face, which shows the chosen picture.
     picture: gtk::Picture,
@@ -86,13 +86,15 @@ pub fn build() -> gtk::Widget {
                 (id, button)
             })
             .collect();
-        let mut walls: Vec<(&str, gtk::Button)> = SCENES
-            .iter()
-            .map(|scene| {
+        let mut walls: Vec<(String, gtk::Button)> = wallpaper::list()
+            .into_iter()
+            .map(|(id, scene)| {
                 let face = gtk::DrawingArea::builder().content_width(WALL.0).content_height(WALL.1).build();
-                face.set_draw_func(move |_, cr, width, height| wallpaper::draw(cr, scene, f64::from(width), f64::from(height)));
+                let shades = scene.light.clone();
+                face.set_draw_func(move |_, cr, width, height| wallpaper::draw(cr, &shades, f64::from(width), f64::from(height)));
                 let pane = pane.clone();
-                (scene.id, card(&face, scene.label, move || set(&pane, "wallpaper", scene.id)))
+                let chosen = id.clone();
+                (id, card(&face, &scene.name, move || set(&pane, "wallpaper", &chosen)))
             })
             .collect();
         let face = gtk::Overlay::builder().width_request(WALL.0).height_request(WALL.1).child(&picture).build();
@@ -100,7 +102,7 @@ pub fn build() -> gtk::Widget {
         plus.add_css_class("choose");
         face.add_overlay(&plus);
         let pane_for_picture = pane.clone();
-        walls.push((PICTURE, card(&face, "Picture…", move || choose_picture(&pane_for_picture))));
+        walls.push((PICTURE.to_owned(), card(&face, "Picture…", move || choose_picture(&pane_for_picture))));
         let custom_face = gtk::DrawingArea::builder().content_width(28).content_height(28).build();
         custom_face.set_draw_func(draw_custom_accent);
         theme::redraw_on_change(&custom_face);
@@ -112,13 +114,6 @@ pub fn build() -> gtk::Widget {
         Appearance { looks_box, looks: RefCell::default(), look_label: ui::note(""), custom, themes, accents, walls, accent_label, picture, status: status.clone(), syncing: Default::default(), switches: RefCell::default(), choices: RefCell::default() }
     });
 
-    let row = |cards: &[(&str, gtk::Button)], spacing: i32| {
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, spacing);
-        for (_, button) in cards {
-            line.append(button);
-        }
-        line
-    };
     let save = ui::button("Save as a look…", {
         let pane = Rc::downgrade(&pane);
         move |button| ask_name(button, pane.clone())
@@ -139,7 +134,11 @@ pub fn build() -> gtk::Widget {
     pane.accent_label.set_margin_start(6);
     dots.append(&pane.accent_label);
     column.append(&labelled("Accent colour", &dots));
-    column.append(&labelled("Wallpaper", &row(&pane.walls, 12)));
+    let wall_box = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).column_spacing(12).row_spacing(12).min_children_per_line(1).max_children_per_line(8).homogeneous(false).halign(gtk::Align::Start).build();
+    for (_, button) in &pane.walls {
+        wall_box.append(button);
+    }
+    column.append(&labelled("Wallpaper", &wall_box));
 
     let group = ui::group();
     let document = config::read("theme");
@@ -245,6 +244,15 @@ fn card(face: &impl IsA<gtk::Widget>, label: &str, picked: impl Fn() + 'static) 
     let button = gtk::Button::builder().child(&inner).css_classes(["card"]).build();
     button.connect_clicked(move |_| picked());
     button
+}
+
+/// The cards side by side.
+fn row(cards: &[(impl AsRef<str>, gtk::Button)], spacing: i32) -> gtk::Box {
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, spacing);
+    for (_, button) in cards {
+        line.append(button);
+    }
+    line
 }
 
 fn mark(buttons: &[(impl AsRef<str>, gtk::Button)], chosen: &str) {
