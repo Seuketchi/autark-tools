@@ -38,6 +38,11 @@ pub fn get(option: &str) -> Option<String> {
 /// for speed and its failure isn't one.
 pub fn set(options: &[(&str, String)]) -> Result<(), String> {
     write(options)?;
+    set_live(options)
+}
+
+/// Sets options in Wayfire only, not in the file.
+pub fn set_live(options: &[(&str, String)]) -> Result<(), String> {
     let live: serde_json::Map<String, Value> = options.iter().map(|(option, value)| (option.to_string(), Value::String(value.clone()))).collect();
     let _ = call("wayfire/set-config-options", Value::Object(live));
     Ok(())
