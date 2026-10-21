@@ -1,0 +1,11 @@
+# Everything needs the maintainer's review; the code that runs as root or handles keys and passwords is named so it
+# stays protected if the line above is ever loosened.
+*                                       @Seuketchi
+/crates/autark-pkg/                     @Seuketchi
+/crates/autark-init/                    @Seuketchi
+/crates/autark-hw-helper/               @Seuketchi
+/crates/autark-settings/src/bin/        @Seuketchi
+/crates/autark-settings/src/privileged.rs @Seuketchi
+/crates/autark-sandbox/                 @Seuketchi
+/crates/autark-lock/                    @Seuketchi
+/.github/                               @Seuketchi
