@@ -71,6 +71,7 @@ The distribution builds the system and installs it; these programs are what you 
 | `autark-monitor` | Task manager: apps and processes with CPU, memory, disk, network and energy impact; force quit |
 | `autark-viewer` | Viewer: pictures with zoom toward the pointer, pan, rotate, and the rest of the folder one key away |
 | `autark-player` | Player: video and audio through GStreamer, frames drawn by GTK, with controls that fade while a video plays |
+| `autark-hub` | Software: find, install, update, remove and roll back packages from a window; `autark-pkg` does the work, through a root helper that only knows those four verbs |
 | `autark-calc` | Calculator: type a sum or press keys, with the answer shown as you go |
 | `autark-archive` | Archives: look inside a zip or tar, take things out, pack files up through `bsdtar`; extraction never overwrites anything |
 | `autark-keys` | Keyboard shortcuts: every key combination Wayfire answers, read from its own config so it is never out of date |
@@ -94,7 +95,7 @@ Each tool is described in detail in [`docs/reference.md`](docs/reference.md): wh
 
 - **Desktop crates:** any wlroots compositor (Wayfire, sway, Hyprland, labwc, river) with systemd and D-Bus. GNOME and KDE aren't targeted.
 - **`autark-init`:** any systemd distro with LUKS2 and a TPM.
-- **`autark-pkg`:** Autark only.
+- **`autark-pkg` and `autark-hub`:** Autark only (the Hub is a window on `autark-pkg`).
 - **Configuration:** paths and settings come from config files, never hard-coded to Autark.
 
 ## 🚀 Install and build

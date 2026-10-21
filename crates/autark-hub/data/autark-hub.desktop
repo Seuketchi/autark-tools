@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Software
+GenericName=Software
+Comment=Find, install and update software
+Exec=autark-hub
+Icon=autark-hub
+StartupWMClass=org.autark.Hub
+Terminal=false
+Categories=System;PackageManager;
+Keywords=software;install;update;packages;apps;hub;

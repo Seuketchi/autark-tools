@@ -298,6 +298,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-hub"
+version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "autark-common",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
 name = "autark-hw"
 version = "0.0.0"
 dependencies = [
