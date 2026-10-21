@@ -3,6 +3,7 @@
 mod arch;
 mod archive;
 mod build;
+mod catalog;
 mod config;
 mod db;
 mod deps;
@@ -25,6 +26,7 @@ const USAGE: &str = "usage: autark-pkg [options] <command> [names…]
   search <words>       recipes whose name or description has every word
   info <name>          a recipe and what's installed of it
   list                 installed packages
+  catalog              every known package as JSON (recipe, installed, upgrade due, kept builds), for programs
   files <name>         what an installed package owns
   owns <path>          which package owns a file
   install <names>      build (unless a build is cached) and install, dependencies first
@@ -120,6 +122,7 @@ fn run() -> Result<()> {
             names.iter().try_for_each(|name| info(&config, name))
         }
         "list" => list(&config),
+        "catalog" => catalog::print(&config),
         "files" => {
             need("a name")?;
             let db = Db::open_read(&config)?;
