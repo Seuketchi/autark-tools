@@ -11,7 +11,9 @@ pub mod changes;
 pub mod config;
 pub mod desktop;
 pub mod files;
+pub mod ini;
 pub mod looks;
+pub mod shortcuts;
 pub mod stats;
 pub mod theme;
 #[cfg(feature = "style")]

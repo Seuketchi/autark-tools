@@ -6,6 +6,8 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 
+use autark_common::shortcuts;
+
 use crate::ui;
 use crate::wayfire::{self, Ini};
 
@@ -81,6 +83,11 @@ pub fn build() -> gtk::Widget {
     keyboard.show_layouts();
     column.append(&ui::section("Shortcuts", Some(&ui::note("Kept in wayfire.ini")), &keyboard.shortcuts));
     keyboard.show_shortcuts();
+    let all = ui::button("All shortcuts…", |_| {
+        let _ = std::process::Command::new("autark-keys").spawn();
+    });
+    all.set_halign(gtk::Align::Start);
+    column.append(&all);
     column.append(&keyboard.status);
     page.upcast()
 }
@@ -161,105 +168,13 @@ fn layout_name(known: &[(String, String, String)], layout: &str, variant: &str) 
         .unwrap_or_else(|| if variant.is_empty() { layout.to_owned() } else { format!("{layout} ({variant})") })
 }
 
-/// A binding as keycaps: "<shift> <super> KEY_3" is Shift, Super, 3.
-fn keycaps(binding: &str) -> Vec<String> {
-    binding
-        .split_whitespace()
-        .map(|part| match part.trim_matches(|c| c == '<' || c == '>') {
-            "super" | "logo" => "Super".to_owned(),
-            "shift" => "Shift".to_owned(),
-            "ctrl" => "Ctrl".to_owned(),
-            "alt" => "Alt".to_owned(),
-            key => key_label(key.strip_prefix("KEY_").unwrap_or(key)),
-        })
-        .collect()
-}
-
-fn key_label(key: &str) -> String {
-    match key {
-        "SPACE" => "Space".into(),
-        "ESC" => "Esc".into(),
-        "ENTER" => "Enter".into(),
-        "TAB" => "Tab".into(),
-        "BACKSPACE" => "Backspace".into(),
-        "DELETE" => "Delete".into(),
-        "SYSRQ" => "Print".into(),
-        "MINUS" => "-".into(),
-        "EQUAL" => "=".into(),
-        "COMMA" => ",".into(),
-        "DOT" => ".".into(),
-        "SLASH" => "/".into(),
-        "SEMICOLON" => ";".into(),
-        "APOSTROPHE" => "'".into(),
-        "GRAVE" => "`".into(),
-        "BACKSLASH" => "\\".into(),
-        "LEFTBRACE" => "[".into(),
-        "RIGHTBRACE" => "]".into(),
-        "UP" => "↑".into(),
-        "DOWN" => "↓".into(),
-        "LEFT" => "←".into(),
-        "RIGHT" => "→".into(),
-        key if key.len() == 1 || key.starts_with('F') && key[1..].parse::<u8>().is_ok() => key.to_owned(),
-        key => {
-            let mut chars = key.chars();
-            chars.next().map(|first| first.to_string() + &chars.as_str().to_lowercase()).unwrap_or_default()
-        }
-    }
-}
-
-/// The Linux key name for an evdev code, for the keys a shortcut can use.
-fn evdev_name(code: u32) -> Option<&'static str> {
-    const ROW: [&str; 12] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "MINUS", "EQUAL"];
-    const TOP: [&str; 12] = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "LEFTBRACE", "RIGHTBRACE"];
-    const HOME: [&str; 12] = ["A", "S", "D", "F", "G", "H", "J", "K", "L", "SEMICOLON", "APOSTROPHE", "GRAVE"];
-    const BOTTOM: [&str; 10] = ["Z", "X", "C", "V", "B", "N", "M", "COMMA", "DOT", "SLASH"];
-    const FUNCTION: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"];
-    Some(match code {
-        1 => "ESC",
-        2..=13 => ROW[(code - 2) as usize],
-        14 => "BACKSPACE",
-        15 => "TAB",
-        16..=27 => TOP[(code - 16) as usize],
-        28 => "ENTER",
-        30..=41 => HOME[(code - 30) as usize],
-        43 => "BACKSLASH",
-        44..=53 => BOTTOM[(code - 44) as usize],
-        57 => "SPACE",
-        59..=68 => FUNCTION[(code - 59) as usize],
-        87 => "F11",
-        88 => "F12",
-        99 => "SYSRQ",
-        102 => "HOME",
-        103 => "UP",
-        104 => "PAGEUP",
-        105 => "LEFT",
-        106 => "RIGHT",
-        107 => "END",
-        108 => "DOWN",
-        109 => "PAGEDOWN",
-        110 => "INSERT",
-        111 => "DELETE",
-        _ => return None,
-    })
-}
-
 /// A key press as a Wayfire binding, if it can be one: a modifier and a key, or a function key alone.
 fn binding_of(code: u32, state: gdk::ModifierType) -> Option<String> {
-    let key = evdev_name(code)?;
-    let mut parts = Vec::new();
-    for (mask, name) in [(gdk::ModifierType::CONTROL_MASK, "<ctrl>"), (gdk::ModifierType::ALT_MASK, "<alt>"), (gdk::ModifierType::SHIFT_MASK, "<shift>"), (gdk::ModifierType::SUPER_MASK, "<super>")] {
-        if state.contains(mask) {
-            parts.push(name);
-        }
-    }
-    // Alone or with only Shift, a typing key would stop typing.
-    let function = (key.starts_with('F') && key.len() > 1) || key == "SYSRQ";
-    if (parts.is_empty() || parts == ["<shift>"]) && !function {
-        return None;
-    }
-    let key = format!("KEY_{key}");
-    parts.push(&key);
-    Some(parts.join(" "))
+    shortcuts::combo(code, state.contains(gdk::ModifierType::CONTROL_MASK), state.contains(gdk::ModifierType::ALT_MASK), state.contains(gdk::ModifierType::SHIFT_MASK), state.contains(gdk::ModifierType::SUPER_MASK))
+}
+
+fn keycaps(binding: &str) -> Vec<String> {
+    shortcuts::caps(binding)
 }
 
 /// Where each shortcut's binding lives in `[command]`: the name after `command_`, found by its command.

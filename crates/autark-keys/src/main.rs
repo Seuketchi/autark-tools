@@ -1,7 +1,6 @@
 //! Keyboard shortcuts: every key combination Wayfire answers, named for people and read from its own config, so it
 //! is never out of date. Run it again, or press Esc, and it goes.
 
-mod shortcuts;
 mod window;
 
 use gtk::glib;
