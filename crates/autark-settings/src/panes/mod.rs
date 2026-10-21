@@ -19,12 +19,14 @@ mod night;
 mod password;
 mod power;
 mod privacy;
+mod shell;
 mod sound;
 mod storage;
 mod terminal;
 mod updates;
 mod users;
 mod wifi;
+mod windows;
 
 use gtk::prelude::*;
 
@@ -46,12 +48,13 @@ const GRAPHITE: (&str, &str) = ("#454A55", "#141619");
 const PINK: (&str, &str) = ("#FF7A96", "#D92B55");
 const SILVER: (&str, &str) = ("#C3C9D2", "#6A717E");
 
-pub const PANES: [Pane; 23] = [
+pub const PANES: [Pane; 24] = [
     Pane { id: "wifi", label: "Wi-Fi", glyph: "M2 8.5a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0M12 19h.01", tile: BLUE, gap: false },
     Pane { id: "network", label: "Network", glyph: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18", tile: BLUE, gap: false },
     Pane { id: "bluetooth", label: "Bluetooth", glyph: "M7 7l10 10l-5 4V3l5 4L7 17", tile: BLUE, gap: false },
     Pane { id: "appearance", label: "Appearance", glyph: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18", tile: GRAPHITE, gap: true },
     Pane { id: "dock", label: "Desktop & Dock", glyph: "M3 5h18v11H3zM8 20h8M7 16v4M17 16v4", tile: GRAPHITE, gap: false },
+    Pane { id: "windows", label: "Windows", glyph: "M3 5h18v14H3zM3 9h18M6 7h.01M9 7h.01", tile: GRAPHITE, gap: false },
     Pane { id: "display", label: "Display", glyph: "M3 4h18v12H3zM9 20h6M12 16v4", tile: ("#4FD8E6", "#1380C4"), gap: false },
     Pane { id: "sound", label: "Sound", glyph: "M4 9h4l5-4v14l-5-4H4zM16.5 8.5a5 5 0 0 1 0 7", tile: PINK, gap: false },
     Pane { id: "notifications", label: "Notifications", glyph: "M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7zM10 20a2 2 0 0 0 4 0", tile: ("#FF8F7A", "#D9402B"), gap: false },
@@ -144,6 +147,14 @@ pub const INDEX: &[(&str, &str)] = &[
     ("Administrator", "users"),
     ("Security watch", "updates"),
     ("Kernel", "updates"),
+    ("Menu bar items", "dock"),
+    ("Clock format", "dock"),
+    ("Dock apps", "dock"),
+    ("Launcher results", "dock"),
+    ("Sound set", "sound"),
+    ("Window animations", "windows"),
+    ("Window placement", "windows"),
+    ("Title bar height", "windows"),
     ("Pointer speed", "mouse"),
     ("Natural scrolling", "mouse"),
     ("Tap to click", "mouse"),
@@ -176,6 +187,7 @@ pub fn build(id: &str) -> gtk::Widget {
         "appearance" => appearance::build(),
         "display" => display::build(),
         "dock" => dock::build(),
+        "windows" => windows::build(),
         "sound" => sound::build(),
         "power" => power::build(),
         "lock" => lock::build(),

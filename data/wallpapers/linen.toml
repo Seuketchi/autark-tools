@@ -1,0 +1,16 @@
+# Linen: Warm paper hills with a sage sun. The default.
+name = "Linen"
+author = "Tristan Jadman"
+licence = "MIT OR Apache-2.0"
+description = "Warm paper hills with a sage sun. The default."
+sky = "#EFE9DF"
+band = "#E9E2D6"
+sun = "#A9C7B6"
+hills = ["#DDD4C5", "#D0C5B3", "#B9CBBE", "#9DB5A5"]
+
+# What it looks like when the theme is dark: the same hills in warm greys and a muted sage sun.
+[dark]
+sky = "#1E1C18"
+band = "#221F1B"
+sun = "#4F7561"
+hills = ["#2B2823", "#322E28", "#2E4237", "#26362E"]

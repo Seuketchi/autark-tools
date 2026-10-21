@@ -1,0 +1,9 @@
+# Linen: what Autark looks like out of the box. It changes no colours, so it is exactly the default palette.
+name = "Linen"
+author = "Tristan Jadman"
+licence = "MIT OR Apache-2.0"
+description = "Warm paper and sage. The default."
+mode = "light"
+accent = "sage"
+wallpaper = "linen"
+font = "Geist"

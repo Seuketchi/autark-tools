@@ -178,6 +178,7 @@ dependencies = [
  "gtk4-layer-shell",
  "serde",
  "serde_json",
+ "toml",
  "zbus",
 ]
 
@@ -354,6 +355,7 @@ dependencies = [
  "gtk4-layer-shell",
  "serde",
  "serde_json",
+ "toml",
  "toml_edit",
  "wayland-client",
  "wayland-protocols-wlr",
@@ -528,6 +530,7 @@ dependencies = [
  "async-channel",
  "autark-common",
  "bindgen 0.69.5",
+ "chrono",
  "futures-util",
  "gtk4",
  "libc",

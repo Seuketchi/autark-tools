@@ -32,7 +32,7 @@ pub fn scheme(look: &Look, config: &Config) -> (Palette, bool) {
         Scheme::Follow => (look.palette.clone(), look.dark),
         Scheme::Light | Scheme::Dark => {
             let dark = config.scheme == Scheme::Dark;
-            (Palette::linen(dark, &look.theme.accent, look.theme.contrast), dark)
+            (look.theme.palette_for(dark), dark)
         }
     }
 }

@@ -30,6 +30,8 @@ pub enum Mode {
 #[serde(default, deny_unknown_fields)]
 pub struct Theme {
     pub theme: Mode,
+    /// The id of the look chosen in Settings (see `looks`), or empty: its colour tokens apply over Linen's.
+    pub look: String,
     pub accent: String,
     pub wallpaper: String,
     pub text_size: u32,
@@ -40,7 +42,7 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self { theme: Mode::Light, accent: "sage".into(), wallpaper: "linen".into(), text_size: 100, font: "Geist".into(), reduce_motion: false, contrast: false }
+        Self { theme: Mode::Light, look: String::new(), accent: "sage".into(), wallpaper: "linen".into(), text_size: 100, font: "Geist".into(), reduce_motion: false, contrast: false }
     }
 }
 
@@ -69,7 +71,18 @@ impl Theme {
     }
 
     pub fn palette(&self) -> Palette {
-        Palette::linen(self.dark(), &self.accent, self.contrast)
+        self.palette_for(self.dark())
+    }
+
+    /// The palette in the light or dark theme: Linen with this accent and contrast, then the chosen look's tokens.
+    pub fn palette_for(&self, dark: bool) -> Palette {
+        let mut palette = Palette::linen(dark, &self.accent, self.contrast);
+        if !self.look.is_empty()
+            && let Some(look) = crate::looks::find(&self.look)
+        {
+            look.apply(&mut palette, dark);
+        }
+        palette
     }
 
     /// The font stack for CSS, the chosen font first.
@@ -274,7 +287,11 @@ pub struct Palette {
 impl Palette {
     /// Linen, light or dark, with an accent from [`ACCENTS`] (sage when unknown).
     pub fn linen(dark: bool, accent: &str, contrast: bool) -> Self {
-        let (name, light_hex, dark_hex, on_dark) = ACCENTS.iter().find(|(name, ..)| *name == accent).copied().unwrap_or(ACCENTS[0]);
+        let custom = custom_accent(accent);
+        let (name, light_hex, dark_hex, on_dark): (&str, &str, &str, &str) = match &custom {
+            Some((name, light, dark, on_dark)) => (name, light, dark, on_dark),
+            None => ACCENTS.iter().find(|(name, ..)| *name == accent).copied().unwrap_or(ACCENTS[0]),
+        };
         let mut palette = if dark {
             let surface = "#26241F";
             Self {
@@ -332,6 +349,35 @@ impl Palette {
         palette
     }
 
+    /// Sets the token called `name` to `value`; false when there is no such token.
+    pub fn set(&mut self, name: &str, value: &str) -> bool {
+        let field = match name {
+            "ground" => &mut self.ground,
+            "surface" => &mut self.surface,
+            "sidebar" => &mut self.sidebar,
+            "border" => &mut self.border,
+            "text" => &mut self.text,
+            "text2" => &mut self.text2,
+            "text3" => &mut self.text3,
+            "heading" => &mut self.heading,
+            "faint" => &mut self.faint,
+            "accent" => &mut self.accent,
+            "on_accent" => &mut self.on_accent,
+            "accent_soft" => &mut self.accent_soft,
+            "accent_text" => &mut self.accent_text,
+            "wall" => &mut self.wall,
+            "bar" => &mut self.bar,
+            "raised" => &mut self.raised,
+            "danger" => &mut self.danger,
+            "warning" => &mut self.warning,
+            "good" => &mut self.good,
+            "shadow" => &mut self.shadow,
+            _ => return false,
+        };
+        *field = value.to_owned();
+        true
+    }
+
     /// GTK CSS `@define-color` lines, so stylesheets say `@accent` instead of a hex value.
     pub fn gtk_css(&self) -> String {
         self.tokens().iter().map(|(name, value)| format!("@define-color {name} {value};\n")).collect()
@@ -361,6 +407,12 @@ impl Palette {
             ("shadow", &self.shadow),
         ]
     }
+}
+
+/// An accent given as `#RRGGBB` instead of a name: it is the light theme's accent as it is, and the dark theme's is
+/// the same hue lightened, with the text on it made nearly black. `None` for a name.
+fn custom_accent(accent: &str) -> Option<(String, String, String, String)> {
+    crate::looks::is_hex(accent).then(|| ("custom".to_owned(), accent.to_ascii_uppercase(), mix(accent, "#FFFFFF", 0.65), mix(accent, "#000000", 0.15)))
 }
 
 fn channels(hex: &str) -> [f64; 3] {
@@ -449,7 +501,7 @@ mod style {
         fn now() -> Self {
             let theme = Theme::load();
             let dark = theme.dark();
-            let palette = Palette::linen(dark, &theme.accent, theme.contrast);
+            let palette = theme.palette_for(dark);
             Self { theme, dark, palette }
         }
     }

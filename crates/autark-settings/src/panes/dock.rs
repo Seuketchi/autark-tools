@@ -1,11 +1,13 @@
 //! Desktop & Dock: edits `dock.toml`, which the dock watches, and the widgets' "show on desktop" in the
 //! notification centre's own state file, which it watches too.
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use gtk::glib;
 use gtk::prelude::*;
 
+use super::shell;
 use crate::{bus, config, ui};
 
 #[zbus::proxy(interface = "org.autark.Notifications1", default_service = "org.autark.Notifications1", default_path = "/org/autark/Notifications")]
@@ -75,6 +77,10 @@ pub fn build() -> gtk::Widget {
     });
     dock.append(&ui::row("Hide and show the dock automatically", None, &autohide));
     column.append(&ui::section("Dock", None, &dock));
+    let shared: Rc<dyn Fn(Result<(), String>)> = Rc::new(report.clone());
+    column.append(&shell::dock_apps(&shared));
+    column.append(&shell::bar(&shared));
+    column.append(&shell::launcher(&shared));
 
     let desktop = ui::group();
     let widgets = config::state_path("widgets");

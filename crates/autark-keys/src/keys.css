@@ -68,3 +68,28 @@ window.keys .titlebar {
   border-top: 1px solid alpha(@text, 0.08);
   color: @text3;
 }
+
+.listening {
+  color: @accent;
+}
+
+.notice {
+  padding: 10px 24px;
+  background-color: @accent_soft;
+  border-bottom: 1px solid alpha(@text, 0.08);
+}
+
+button.action {
+  min-height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 7px;
+  background-color: alpha(@text, 0.07);
+  background-image: none;
+  box-shadow: none;
+  color: @text;
+}
+
+button.action:hover {
+  background-color: alpha(@text, 0.12);
+}

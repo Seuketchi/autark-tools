@@ -1,0 +1,9 @@
+# Dusk: Navy hills at sunset.
+name = "Dusk"
+author = "Tristan Jadman"
+licence = "MIT OR Apache-2.0"
+description = "Navy hills at sunset."
+sky = "#1B2436"
+band = "#1F2A3E"
+sun = "#E8914A"
+hills = ["#36435E", "#2C3850", "#252F45", "#1E2639"]

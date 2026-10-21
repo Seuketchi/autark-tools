@@ -1,5 +1,5 @@
 //! The desktop background: a layer-shell surface behind everything on each display, showing the wallpaper
-//! `theme.toml` names. That's one of the four drawn scenes, or a picture's path, which covers the display as
+//! `theme.toml` names. That's one of the drawn scenes, or a picture's path, which covers the display as
 //! a picture set to fill would. The file is watched, so Settings' choice shows at once, and displays coming
 //! and going get a background each.
 
@@ -122,7 +122,7 @@ fn content(name: &str, dark: bool) -> gtk::Widget {
             Err(error) => eprintln!("autark-wallpaper: {name}: {error}"),
         }
     }
-    let scene = *wallpaper::scene_for(name, dark).unwrap_or(&wallpaper::SCENES[0]);
+    let scene = wallpaper::find(name).or_else(|| wallpaper::find("linen")).unwrap_or_default().shades(dark).clone();
     let area = gtk::DrawingArea::new();
     area.set_draw_func(move |_, cr, width, height| wallpaper::draw(cr, &scene, f64::from(width), f64::from(height)));
     area.upcast()
