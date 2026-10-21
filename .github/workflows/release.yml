@@ -31,7 +31,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           scripts/ci/package-release.sh "${GITHUB_REF_NAME//\//-}" release dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: autark-tools
           path: dist/
