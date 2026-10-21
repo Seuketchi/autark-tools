@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: build-test
+    runs-on: ubuntu-latest
+    # Arch has the GTK layer-shell/session-lock 1.2 libraries these crates link against; Ubuntu 24.04 does not.
+    container: archlinux:latest
+    steps:
+      - name: System libraries and Rust
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git clang pkgconf rustup \
+            gtk4 gtk4-layer-shell vte4 pipewire cryptsetup pam gstreamer gst-plugins-base wayland libvpx opus
+          rustup default stable
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Clippy (hard errors only; style warnings do not fail the build yet)
+        run: |
+          rustup component add clippy
+          cargo clippy --workspace --locked --all-targets
+      - name: Tests
+        run: cargo test --workspace --locked --no-fail-fast
+
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No keys, tokens or logins
+        run: |
+          status=0
+          if git grep -InE -e '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----' -e 'gh[pousr]_[A-Za-z0-9]{36,}' -e 'github_pat_[A-Za-z0-9_]{50,}' -e 'AKIA[0-9A-Z]{16}' -- .; then status=1; fi
+          if git ls-files | grep -E '(^|/)(\.credentials\.json|\.claude\.json|id_(rsa|ed25519|ecdsa)|[^/]*\.(key|p12|pfx|kdbx))$'; then status=1; fi
+          exit $status
