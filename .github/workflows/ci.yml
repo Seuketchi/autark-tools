@@ -20,7 +20,7 @@ jobs:
           pacman -Syu --noconfirm --needed base-devel git clang pkgconf rustup \
             gtk4 gtk4-layer-shell vte4 pipewire cryptsetup pam gstreamer gst-plugins-base wayland libvpx opus
           rustup default stable
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build
         run: cargo build --workspace --locked
       - name: Clippy (hard errors only; style warnings do not fail the build yet)
@@ -34,7 +34,7 @@ jobs:
     name: secrets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: No keys, tokens or logins
         run: |
           status=0
