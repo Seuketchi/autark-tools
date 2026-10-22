@@ -1,7 +1,7 @@
 //! Reading the counters: `/proc` for the system, cgroups for your apps, sysfs for the battery
 //! and the CPU's energy counter. Each sample turns the change since the last one into rates.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -38,12 +38,14 @@ pub struct Sampler {
     previous: Option<Previous>,
     /// Names found for cgroups, since looking up desktop files reads the disk.
     names: HashMap<String, (String, Option<String>)>,
+    /// The same for programs in the login session, by the name of one of their processes.
+    commands: HashMap<String, Option<(String, String)>>,
 }
 
 impl Sampler {
     pub fn new() -> Self {
         let uid = std::fs::metadata("/proc/self").map(|meta| std::os::unix::fs::MetadataExt::uid(&meta)).unwrap_or(0);
-        Self { uid, previous: None, names: HashMap::new() }
+        Self { uid, previous: None, names: HashMap::new(), commands: HashMap::new() }
     }
 
     /// How long ago the last sample was taken.
@@ -102,7 +104,7 @@ impl Sampler {
             let cpu = if seconds > 0.0 && then.is_some() { usage as f64 / 1e4 / seconds } else { 0.0 };
             let watts = power.as_ref().filter(|_| busy_usec > 0.0).map(|power| power.watts * (usage as f64 / busy_usec).min(1.0));
             let mut processes = Vec::new();
-            for (pid, name, ticks, rss) in cgroup.processes {
+            for (pid, name, ticks, rss, _) in cgroup.processes {
                 let cpu = match previous.as_ref().and_then(|previous| previous.processes.get(&pid)) {
                     Some(&then) if seconds > 0.0 => ticks.saturating_sub(then) as f64 * 100.0 / TICKS_PER_SECOND / seconds,
                     _ => 0.0,
@@ -116,6 +118,7 @@ impl Sampler {
                 id: cgroup.id,
                 name: cgroup.name,
                 desktop_id: cgroup.desktop_id,
+                system: cgroup.system,
                 cpu,
                 memory: cgroup.memory,
                 disk: rate(cgroup.counters.disk, then.map(|then| then.disk)),
@@ -153,7 +156,8 @@ impl Sampler {
         }
     }
 
-    /// Every cgroup of yours with processes in it: apps, session services, the login session.
+    /// Every cgroup of yours with processes in it: apps and session services, and the programs
+    /// that share the login session's cgroup, each on its own.
     fn cgroups(&mut self) -> Vec<Cgroup> {
         let root = PathBuf::from(format!("/sys/fs/cgroup/user.slice/user-{0}.slice", self.uid));
         let mut leaves = Vec::new();
@@ -167,19 +171,69 @@ impl Sampler {
                 }
                 let id = dir.strip_prefix("/sys/fs/cgroup").ok()?.to_string_lossy().into_owned();
                 let leaf = dir.file_name()?.to_string_lossy().into_owned();
+                let processes: Vec<Proc> = pids.into_iter().filter_map(process).collect();
+                // Everything started from a launcher or a key binding lives here, so one entry for the cgroup
+                // would be one app made of every program on the desktop, and force quit couldn't tell them apart.
+                if leaf.starts_with("session-") && leaf.ends_with(".scope") {
+                    return Some(self.session_programs(&id, processes));
+                }
                 let (name, desktop_id) = self.names.entry(id.clone()).or_insert_with(|| name_for(&leaf)).clone();
                 let usage_usec = read(dir.join("cpu.stat")).and_then(|text| parse_cpu_stat(&text)).unwrap_or(0);
                 let memory = read(dir.join("memory.current")).and_then(|text| text.trim().parse().ok()).unwrap_or(0);
                 let disk = read(dir.join("io.stat")).map(|text| parse_io_stat(&text)).unwrap_or_default();
-                let processes: Vec<(u32, String, u64, u64)> = pids.into_iter().filter_map(process).collect();
-                // Terminal tabs and the like get random unit names; their first process says more.
+                // Terminal tabs, one-off jobs and the like get random unit names; the process that started them says more.
                 let name = match name.strip_suffix(GENERIC) {
-                    Some(_) => processes.iter().min_by_key(|(pid, ..)| *pid).map_or(name.clone(), |(_, comm, ..)| comm.clone()),
+                    Some(_) => {
+                        let known: Vec<u32> = processes.iter().map(|(pid, ..)| *pid).collect();
+                        let head = processes.iter().filter(|(_, _, _, _, parent)| !known.contains(parent)).min_by_key(|(pid, ..)| *pid).or(processes.first());
+                        head.map_or(name.clone(), |(pid, comm, ..)| job_name(*pid, comm))
+                    }
                     None => name,
                 };
-                Some(Cgroup { id, name, desktop_id, counters: AppCounters { usage_usec, disk }, memory, processes })
+                Some(vec![Cgroup { id, name, desktop_id, system: false, counters: AppCounters { usage_usec, disk }, memory, processes }])
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// The login session's processes as the programs they belong to. A cgroup has no per-program
+    /// counters, so these are added up from the processes.
+    fn session_programs(&mut self, id: &str, processes: Vec<Proc>) -> Vec<Cgroup> {
+        let parents: Vec<(u32, u32)> = processes.iter().map(|&(pid, _, _, _, parent)| (pid, parent)).collect();
+        split_trees(&parents)
+            .into_iter()
+            .map(|(head, pids)| {
+                let mut members: Vec<Proc> = processes.iter().filter(|(pid, ..)| pids.contains(pid)).cloned().collect();
+                members.sort_by_key(|(pid, ..)| (*pid != head, *pid));
+                let (name, desktop_id) = self.program_name(&members);
+                let service = desktop_service(&members[0].1);
+                let system = service.is_some() || members.iter().any(|(_, comm, ..)| comm == "wayfire");
+                let name = service.map_or(name, str::to_owned);
+                let ticks: u64 = members.iter().map(|(_, _, ticks, ..)| ticks).sum();
+                let counters = AppCounters {
+                    usage_usec: (ticks as f64 * 1e6 / TICKS_PER_SECOND) as u64,
+                    disk: members.iter().map(|(pid, ..)| io(*pid)).fold(Rate::default(), |sum, rate| Rate { read: sum.read + rate.read, write: sum.write + rate.write }),
+                };
+                let memory = members.iter().map(|(_, _, _, rss, _)| rss).sum();
+                Cgroup { id: format!("{id}#{head}"), name, desktop_id, system, counters, memory, processes: members }
             })
             .collect()
+    }
+
+    /// A readable name for a program: the first of its processes with a desktop file. An AppImage
+    /// is started by a runtime named after its version, and the app it runs is named after the app.
+    fn program_name(&mut self, members: &[Proc]) -> (String, Option<String>) {
+        for (_, comm, ..) in members {
+            let found = self
+                .commands
+                .entry(comm.clone())
+                .or_insert_with(|| Some((autark_common::desktop::app_name(comm)?, autark_common::desktop::desktop_id(comm)?)))
+                .clone();
+            if let Some((name, desktop_id)) = found {
+                return (name, Some(desktop_id));
+            }
+        }
+        (command_name(members[0].0, &members[0].1), None)
     }
 }
 
@@ -187,11 +241,14 @@ struct Cgroup {
     id: String,
     name: String,
     desktop_id: Option<String>,
+    system: bool,
     counters: AppCounters,
     memory: u64,
-    /// pid, name, CPU ticks so far, resident memory.
-    processes: Vec<(u32, String, u64, u64)>,
+    processes: Vec<Proc>,
 }
+
+/// pid, name, CPU ticks so far, resident memory, parent pid.
+type Proc = (u32, String, u64, u64, u32);
 
 const RAPL: &str = "/sys/class/powercap/intel-rapl:0/energy_uj";
 
@@ -217,13 +274,97 @@ fn collect_leaves(dir: &Path, leaves: &mut Vec<PathBuf>) {
     }
 }
 
-fn process(pid: u32) -> Option<(u32, String, u64, u64)> {
+fn process(pid: u32) -> Option<Proc> {
     let stat = read(format!("/proc/{pid}/stat"))?;
     let name = stat[stat.find('(')? + 1..stat.rfind(')')?].to_owned();
     let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+    let parent = fields.get(1)?.parse::<u32>().ok()?;
     let ticks = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
     let rss = fields.get(21)?.parse::<u64>().ok()? * PAGE_SIZE;
-    Some((pid, name, ticks, rss))
+    Some((pid, name, ticks, rss, parent))
+}
+
+/// What a process has read from and written to disk so far.
+fn io(pid: u32) -> Rate {
+    let text = read(format!("/proc/{pid}/io")).unwrap_or_default();
+    let field = |name: &str| text.lines().find_map(|line| line.strip_prefix(name)?.trim().parse::<u64>().ok()).unwrap_or(0);
+    Rate { read: field("read_bytes:"), write: field("write_bytes:") }
+}
+
+/// Groups processes by the program that started them: each one whose parent isn't among them
+/// (init started it, or its launcher has gone) heads a group with everything below it.
+/// Takes (pid, parent pid) pairs and gives each group's head and members.
+fn split_trees(processes: &[(u32, u32)]) -> Vec<(u32, Vec<u32>)> {
+    let parents: HashMap<u32, u32> = processes.iter().copied().collect();
+    let mut groups: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for &(pid, _) in processes {
+        let mut head = pid;
+        // A pid reused while we read could make a loop; the limit ends it.
+        for _ in 0..parents.len() {
+            match parents.get(&head) {
+                Some(&parent) if parent != head && parents.contains_key(&parent) => head = parent,
+                _ => break,
+            }
+        }
+        groups.entry(head).or_default().push(pid);
+    }
+    groups.into_iter().collect()
+}
+
+/// The parts of the desktop that run in the login session, by process name (cut at 15 characters),
+/// with what to call them. Killing one would leave the screen without its bar, dock or lock,
+/// so force quit leaves them out.
+fn desktop_service(comm: &str) -> Option<&'static str> {
+    [
+        ("login", "Login session"),
+        ("wayfire", "Desktop"),
+        ("autark-bar", "Top bar"),
+        ("autark-displays", "Displays"),
+        ("autark-dock", "Dock"),
+        ("autark-hw", "Hardware"),
+        ("autark-launcher", "Launcher"),
+        ("autark-lock", "Lock screen"),
+        ("autark-nightlight", "Night light"),
+        ("autark-notifyd", "Notifications"),
+        ("autark-osd", "On-screen display"),
+        ("autark-power", "Power"),
+        ("autark-wallpaper", "Wallpaper"),
+    ]
+    .into_iter()
+    .find(|(name, _)| name.chars().take(15).eq(comm.chars()))
+    .map(|(_, title)| title)
+}
+
+/// What to call a process: its name, from the command line when `comm` was cut short, and without
+/// a title such as the `: server` in `tmux: server`.
+fn command_name(pid: u32, comm: &str) -> String {
+    let comm = comm.split(':').next().unwrap_or(comm).trim();
+    if comm.chars().count() < 15 {
+        return comm.to_owned();
+    }
+    read(format!("/proc/{pid}/cmdline"))
+        .and_then(|text| Some(Path::new(text.split('\0').next()?).file_name()?.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| comm.to_owned())
+}
+
+/// A job's name for a unit that has none of its own: its command and subcommand, as in `cargo test`.
+fn job_name(pid: u32, comm: &str) -> String {
+    let name = command_name(pid, comm);
+    let subcommand = read(format!("/proc/{pid}/cmdline")).and_then(|text| {
+        let word = text.split('\0').nth(1)?;
+        (!word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !word.starts_with('-')).then(|| word.to_owned())
+    });
+    match subcommand {
+        Some(word) => format!("{name} {word}"),
+        None => name,
+    }
+}
+
+/// `run-p674502-i673944`: a unit made by `systemd-run` for a one-off command.
+fn is_run_unit(id: &str) -> bool {
+    id.strip_prefix("run-p").and_then(|rest| rest.split_once("-i")).is_some_and(|(pid, invocation)| {
+        !pid.is_empty() && !invocation.is_empty() && pid.chars().chain(invocation.chars()).all(|c| c.is_ascii_digit())
+    })
 }
 
 /// Marks a name made from a random unit name, to be replaced by its first process's name.
@@ -257,8 +398,11 @@ fn name_for(leaf: &str) -> (String, Option<String>) {
             id = rest;
         }
     }
-    if is_uuid_suffixed(id) {
+    if is_uuid_suffixed(id) || is_run_unit(id) {
         return (format!("{id}{GENERIC}"), None);
+    }
+    if id == "init" {
+        return ("System".to_owned(), None);
     }
     let desktop_id = autark_common::desktop::desktop_id(id);
     let name = autark_common::desktop::app_name(id).unwrap_or_else(|| id.to_owned());
@@ -425,6 +569,39 @@ mod tests {
     fn cgroup_files() {
         assert_eq!(parse_cpu_stat("usage_usec 123456\nuser_usec 1\n"), Some(123456));
         assert_eq!(parse_io_stat("259:0 rbytes=100 wbytes=50 rios=1\n8:0 rbytes=1 wbytes=2"), Rate { read: 101, write: 52 });
+    }
+
+    #[test]
+    fn session_programs_split_by_who_started_them() {
+        // Galley's runtime (10) started the app (11), which started a helper (12); a terminal (20) runs a shell (21) running cargo (22).
+        // Process 30's launcher (99) has gone, so it heads a group of its own.
+        let groups = split_trees(&[(10, 1), (11, 10), (12, 11), (20, 1), (21, 20), (22, 21), (30, 99)]);
+        assert_eq!(groups, vec![(10, vec![10, 11, 12]), (20, vec![20, 21, 22]), (30, vec![30])]);
+    }
+
+    #[test]
+    fn session_programs_survive_a_parent_loop() {
+        // Pids can be reused while we read; two processes naming each other must still end up somewhere.
+        let groups = split_trees(&[(5, 6), (6, 5), (7, 7)]);
+        assert_eq!(groups.iter().map(|(_, pids)| pids.len()).sum::<usize>(), 3);
+    }
+
+    #[test]
+    fn desktop_services_by_cut_name() {
+        assert_eq!(desktop_service("wayfire"), Some("Desktop"));
+        assert_eq!(desktop_service("autark-bar"), Some("Top bar"));
+        assert_eq!(desktop_service("autark-nightlig"), Some("Night light"));
+        assert_eq!(desktop_service("autark-wallpape"), Some("Wallpaper"));
+        assert!(desktop_service("galley").is_none() && desktop_service("autark-terminal").is_none() && desktop_service("autark-files").is_none());
+    }
+
+    #[test]
+    fn one_off_jobs_are_named_for_their_command() {
+        assert!(is_run_unit("run-p674502-i673944") && !is_run_unit("run-parser") && !is_run_unit("run-p12-i") && !is_run_unit("run-pxx-i1"));
+        assert!(name_for("run-p674502-i673944.scope").0.ends_with(GENERIC));
+        assert_eq!(name_for("init.scope").0, "System");
+        // This test's own process: a short name stays as it is, and a title after a colon is dropped.
+        assert_eq!(command_name(std::process::id(), "tmux: server"), "tmux");
     }
 
     #[test]

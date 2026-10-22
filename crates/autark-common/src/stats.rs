@@ -65,11 +65,16 @@ pub struct Battery {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct App {
-    /// The app's cgroup, relative to `/sys/fs/cgroup`.
+    /// The app's cgroup, relative to `/sys/fs/cgroup`. Programs that share the login session's
+    /// cgroup (started from a launcher or a key binding, not through systemd) get one entry each,
+    /// told apart by `#` and the pid that started them: `/user.slice/user-1000.slice/session-1.scope#2042`.
     pub id: String,
     pub name: String,
     /// The desktop file id, when the app has one.
     pub desktop_id: Option<String>,
+    /// Part of the desktop itself (the compositor, bar, dock, lock screen), which force quit doesn't offer.
+    #[serde(default)]
+    pub system: bool,
     pub cpu: f64,
     pub memory: u64,
     pub disk: Rate,

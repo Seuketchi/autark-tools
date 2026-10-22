@@ -2,7 +2,7 @@
 //! and a summary along the bottom.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use autark_common::stats::{App, Snapshot};
@@ -39,6 +39,8 @@ pub struct Monitor {
     tab: Cell<Tab>,
     selected: RefCell<Option<String>>,
     expanded: RefCell<HashSet<String>>,
+    /// Each app's reading averaged over the last few samples, for the tab it was taken on, to order the list by.
+    order: RefCell<(Tab, HashMap<String, f64>)>,
     widgets: RefCell<Option<Widgets>>,
 }
 
@@ -65,6 +67,7 @@ impl Monitor {
             tab: Cell::new(Tab::Energy),
             selected: RefCell::default(),
             expanded: RefCell::default(),
+            order: RefCell::new((Tab::Energy, HashMap::new())),
             widgets: RefCell::default(),
         });
         let weak = Rc::downgrade(&monitor);
@@ -297,7 +300,21 @@ impl Monitor {
                 Tab::Energy => impact(app),
                 _ => (app.disk.read + app.disk.write) as f64,
             };
-            apps.sort_by(|a, b| key(b).total_cmp(&key(a)));
+            // Ordered by a running average, so an app whose reading wobbles doesn't jump about the list every second.
+            let order = {
+                let mut order = self.order.borrow_mut();
+                if order.0 != tab {
+                    *order = (tab, HashMap::new());
+                }
+                let averaged: HashMap<String, f64> = snapshot
+                    .apps
+                    .iter()
+                    .map(|app| (app.id.clone(), order.1.get(&app.id).map_or(key(app), |before| before * 0.8 + key(app) * 0.2)))
+                    .collect();
+                order.1 = averaged.clone();
+                averaged
+            };
+            apps.sort_by(|a, b| order[&b.id].total_cmp(&order[&a.id]).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
             let total_memory = snapshot.memory.total.max(1) as f64;
             for app in apps {
                 let cells = match tab {
