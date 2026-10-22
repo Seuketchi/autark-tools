@@ -141,7 +141,7 @@ impl Visor {
     fn now(&self) -> f64 {
         let Some(clock) = self.area.frame_clock() else { return 0.0 };
         let seconds = clock.frame_time() as f64 / 1_000_000.0;
-        seconds - *self.inner.start.get().get_or_insert(seconds)
+        since_start(&self.inner.start, seconds)
     }
 
     /// Whether anything moves now, apart from blinking.
@@ -269,6 +269,16 @@ impl Visor {
 }
 
 /// How open the eyes are at `now`: shut to 12% at 95% of each cycle, open the rest of it.
+/// Seconds since the first call, which sets the start. (`Cell::get` hands back a copy, so
+/// the start has to be stored back for the next call to see it.)
+fn since_start(start: &Cell<Option<f64>>, seconds: f64) -> f64 {
+    let first = start.get().unwrap_or_else(|| {
+        start.set(Some(seconds));
+        seconds
+    });
+    seconds - first
+}
+
 fn blink(now: f64) -> f64 {
     let phase = now.rem_euclid(BLINK) / BLINK;
     if phase < 0.9 {
@@ -309,6 +319,14 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, width: f64, height: f6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_runs_from_the_first_frame() {
+        let start = Cell::new(None);
+        assert_eq!(since_start(&start, 100.0), 0.0);
+        assert_eq!(since_start(&start, 100.5), 0.5);
+        assert_eq!(since_start(&start, 103.0), 3.0);
+    }
 
     #[test]
     fn a_blink_shuts_the_eyes_briefly() {
