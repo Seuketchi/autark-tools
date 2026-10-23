@@ -206,6 +206,8 @@ repo = ""                             # prebuilt packages: a folder served over 
 
 **Prebuilt packages.** With `repo` set, `install` and `upgrade` look in the repository for `<name>-<version>-<release>.tar.zst` and its `.minisig` before building. Nothing is trusted because it was downloaded: the signature must verify against a key in the `keys` folder, and the archive must be the package and version asked for (`--no-repo` skips the repository). A system trusts releases by having the release key's `.pub` in `keys`. A repository that can't be reached, or doesn't have the package, means the package is built as before.
 
+`ark update` fetches the repository's `index` and `index.minisig`, checks them against the same keys (a package's signature is not accepted for an index), keeps them in the cache, and lists the installed packages the repository has another version of. `-n` only says where it would fetch from.
+
 The release key is made once, kept offline, and never on the build machine:
 
 ```

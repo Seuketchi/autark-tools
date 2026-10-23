@@ -112,35 +112,54 @@ pub fn sign_with(archive: &Path, key: &Path, password: String, info: &PkgInfo) -
     std::fs::write(&path, signature.into_string()).ctx(&path)
 }
 
-/// The archive's `.PKGINFO`, once its signature has verified against one of the trusted keys.
-pub fn verify(config: &Config, archive: &Path) -> Result<PkgInfo> {
-    let signature_file = signature_path(archive);
+/// What the trusted comment of the repository's `index` signature must say. It is checked when an index is verified,
+/// so changing it would reject every index signed before.
+pub const INDEX_COMMENT: &str = "autark-pkg index";
+
+/// The signature beside `file`, once it has verified `file` against one of the trusted keys.
+fn verify_signature(config: &Config, file: &Path) -> Result<minisign::SignatureBox> {
+    let signature_file = signature_path(file);
     let signature = minisign::SignatureBox::from_file(&signature_file).ctx(&signature_file)?;
     let keys = trusted_keys(config)?;
     if keys.is_empty() {
         return fail(format!("no trusted keys in {}; create one with `ark keygen`", config.keys.display()));
     }
-    let mut last = Error(format!("{}: signed by a key not in {}", archive.display(), config.keys.display()));
+    let mut last = Error(format!("{}: signed by a key not in {}", file.display(), config.keys.display()));
     let mut verified = false;
     for key in &keys {
-        let file = File::open(archive).ctx(archive)?;
-        match minisign::verify(key, &signature, BufReader::new(file), true, false, false) {
+        let open = File::open(file).ctx(file)?;
+        match minisign::verify(key, &signature, BufReader::new(open), true, false, false) {
             Ok(()) => {
                 verified = true;
                 break;
             }
-            Err(error) if !error.to_string().contains("different from public key") => last = Error(format!("{}: {error}", archive.display())),
+            Err(error) if !error.to_string().contains("different from public key") => last = Error(format!("{}: {error}", file.display())),
             Err(_) => {}
         }
     }
     if !verified {
         return Err(last);
     }
+    Ok(signature)
+}
+
+/// The archive's `.PKGINFO`, once its signature has verified against one of the trusted keys.
+pub fn verify(config: &Config, archive: &Path) -> Result<PkgInfo> {
+    let signature = verify_signature(config, archive)?;
     let info = read_info(archive)?;
-    if signature.trusted_comment().ctx(&signature_file)? != info.trusted_comment() {
+    if signature.trusted_comment().ctx(&signature_path(archive))? != info.trusted_comment() {
         return fail(format!("{}: the signature is for another package", archive.display()));
     }
     Ok(info)
+}
+
+/// Checks the repository's `index` against its `.minisig`: a trusted key signed it, as an index and not as a package.
+pub fn verify_index(config: &Config, index: &Path) -> Result<()> {
+    let signature = verify_signature(config, index)?;
+    if signature.trusted_comment().ctx(&signature_path(index))? != INDEX_COMMENT {
+        return fail(format!("{}: the signature is not for an index", index.display()));
+    }
+    Ok(())
 }
 
 fn trusted_keys(config: &Config) -> Result<Vec<minisign::PublicKey>> {

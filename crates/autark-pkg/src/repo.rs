@@ -63,6 +63,92 @@ pub fn prebuilt(config: &Config, name: &str, version: &str) -> Result<Option<Pat
     Ok(Some(kept))
 }
 
+/// One line of the repository's `index`: `name version sha256 size file`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexEntry {
+    pub name: String,
+    /// `version-release`.
+    pub version: String,
+    pub sha256: String,
+    pub size: u64,
+    pub file: String,
+}
+
+fn plain(word: &str) -> bool {
+    !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+}
+
+/// The entries of an `index`. A line that is not exactly what `publish` writes is an error, so nothing in it can name
+/// a file outside the repository.
+pub fn parse_index(text: &str) -> Result<Vec<IndexEntry>> {
+    let mut entries = Vec::new();
+    for (number, line) in text.lines().enumerate().filter(|(_, line)| !line.trim().is_empty()) {
+        let bad = |why: &str| Error(format!("index line {}: {why}", number + 1));
+        let words: Vec<&str> = line.split(' ').collect();
+        let [name, version, sha256, size, file] = words[..] else {
+            return Err(bad("expected `name version sha256 size file`"));
+        };
+        if !plain(name) || !plain(version) {
+            return Err(bad("a name or version with characters a package can't have"));
+        }
+        if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(bad("not a sha256"));
+        }
+        let size = size.parse().map_err(|_| bad("not a size"))?;
+        if file != archive::file_name(name, version) {
+            return Err(bad("the file is not <name>-<version>.tar.zst"));
+        }
+        entries.push(IndexEntry { name: name.to_owned(), version: version.to_owned(), sha256: sha256.to_owned(), size, file: file.to_owned() });
+    }
+    Ok(entries)
+}
+
+/// Fetches the repository's `index` and `index.minisig`, checks them against the trusted keys, keeps them in the cache
+/// and returns what the index lists. Nothing is kept unless the index verifies and every line is well formed.
+pub fn update(config: &Config) -> Result<Vec<IndexEntry>> {
+    let Some(base) = &config.repo else {
+        return fail("no repository: set `repo` in /etc/autark/pkg.toml");
+    };
+    let staging = config.cache.join(".fetch");
+    std::fs::create_dir_all(&staging).ctx(&staging)?;
+    let index_path = staging.join("index");
+    let signature_path = archive::signature_path(&index_path);
+    let clean = || {
+        let _ = std::fs::remove_file(&index_path);
+        let _ = std::fs::remove_file(&signature_path);
+    };
+    for (url, path) in [(format!("{base}/index"), &index_path), (format!("{base}/index.minisig"), &signature_path)] {
+        match download(&url, path) {
+            Ok(true) => {}
+            Ok(false) => {
+                clean();
+                return fail(format!("{url}: not found"));
+            }
+            Err(error) => {
+                clean();
+                return Err(error);
+            }
+        }
+    }
+    if let Err(error) = archive::verify_index(config, &index_path) {
+        clean();
+        return fail(format!("the index from {base} was refused: {error}"));
+    }
+    let entries = std::fs::read_to_string(&index_path).ctx(&index_path).and_then(|text| parse_index(&text));
+    let entries = match entries {
+        Ok(entries) => entries,
+        Err(error) => {
+            clean();
+            return fail(format!("the index from {base} was refused: {error}"));
+        }
+    };
+    for (from, name) in [(&index_path, "index"), (&signature_path, "index.minisig")] {
+        let kept = config.cache.join(name);
+        std::fs::rename(from, &kept).ctx(&kept)?;
+    }
+    Ok(entries)
+}
+
 /// Downloads `url` to `path`; false when the server says there is no such file.
 fn download(url: &str, path: &Path) -> Result<bool> {
     let response = match ureq::get(url).call() {
@@ -117,7 +203,7 @@ pub fn publish(config: &Config, out: &Path, key: &Path, password: &str, names: &
     let secret = minisign::SecretKey::from_file(key, Some(password.to_owned())).ctx(format!("{} (wrong password?)", key.display()))?;
     let public = minisign::PublicKey::from_secret_key(&secret).ctx("public key")?;
     let file = std::fs::File::open(&index_path).ctx(&index_path)?;
-    let signature = minisign::sign(Some(&public), &secret, std::io::BufReader::new(file), Some("autark-pkg index"), Some("signed by autark-pkg")).ctx("signing the index")?;
+    let signature = minisign::sign(Some(&public), &secret, std::io::BufReader::new(file), Some(archive::INDEX_COMMENT), Some("signed by autark-pkg")).ctx("signing the index")?;
     let signature_path = archive::signature_path(&index_path);
     std::fs::write(&signature_path, signature.into_string()).ctx(&signature_path)?;
     Ok(newest.len())
@@ -251,5 +337,76 @@ mod tests {
         let error = prebuilt(&client, "hello", "9.0-1").unwrap_err().to_string();
         assert!(error.contains("refused") || error.contains("not hello 9.0-1"), "{error}");
         assert!(!client.cache.join("hello-9.0-1.tar.zst").exists());
+    }
+
+    #[test]
+    fn the_index_is_fetched_checked_and_kept() {
+        let (top, build, secret, public) = built("update");
+        let out = top.join("out");
+        publish(&build, &out, &secret, "correct horse", &[]).unwrap();
+        let mut client = Config::load(&top.join("client"), None, None).unwrap();
+        client.repo = Some(serve(out));
+        std::fs::create_dir_all(&client.keys).unwrap();
+
+        // Not trusting the release key: refused, and nothing is kept.
+        let error = update(&client).unwrap_err().to_string();
+        assert!(error.contains("refused"), "{error}");
+        assert!(!client.cache.join("index").exists());
+
+        std::fs::copy(&public, client.keys.join("release.pub")).unwrap();
+        let entries = update(&client).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!((entries[0].name.as_str(), entries[0].version.as_str(), entries[0].file.as_str()), ("hello", "1.0-1", "hello-1.0-1.tar.zst"));
+        assert!(client.cache.join("index").exists() && client.cache.join("index.minisig").exists());
+        assert!(!client.cache.join(".fetch/index").exists());
+    }
+
+    #[test]
+    fn a_changed_index_and_a_package_signature_on_an_index_are_refused() {
+        let (top, build, secret, public) = built("tamper");
+        let out = top.join("out");
+        publish(&build, &out, &secret, "correct horse", &[]).unwrap();
+        let mut client = Config::load(&top.join("client"), None, None).unwrap();
+        client.repo = Some(serve(out.clone()));
+        std::fs::create_dir_all(&client.keys).unwrap();
+        std::fs::copy(&public, client.keys.join("release.pub")).unwrap();
+
+        // A line added after the index was signed.
+        let index = std::fs::read_to_string(out.join("index")).unwrap();
+        std::fs::write(out.join("index"), format!("{index}evil 1-1 {} 1 evil-1-1.tar.zst\n", "0".repeat(64))).unwrap();
+        let error = update(&client).unwrap_err().to_string();
+        assert!(error.contains("refused"), "{error}");
+
+        // The release key's signature, but made the way a package is signed: not an index's.
+        std::fs::write(out.join("index"), &index).unwrap();
+        let info = PkgInfo { name: "hello".into(), version: "1.0-1".into(), depends: vec![], mode: "staged".into(), built: 100 };
+        archive::sign_with(&out.join("index"), &secret, "correct horse".to_owned(), &info).unwrap();
+        let error = update(&client).unwrap_err().to_string();
+        assert!(error.contains("not for an index"), "{error}");
+        assert!(!client.cache.join("index").exists() && !client.cache.join(".fetch/index").exists());
+    }
+
+    #[test]
+    fn index_lines_that_name_anything_but_a_package_file_are_refused() {
+        let hash = "a".repeat(64);
+        assert_eq!(parse_index(&format!("hello 1.0-1 {hash} 12 hello-1.0-1.tar.zst\n\n")).unwrap().len(), 1);
+        for line in [
+            format!("hello 1.0-1 {hash} 12 ../etc/passwd"),
+            format!("hello 1.0-1 {hash} 12 other-1.0-1.tar.zst"),
+            format!("hello 1.0-1 abc 12 hello-1.0-1.tar.zst"),
+            format!("hello 1.0-1 {hash} big hello-1.0-1.tar.zst"),
+            format!("he/llo 1.0-1 {hash} 12 he/llo-1.0-1.tar.zst"),
+            "hello 1.0-1".to_owned(),
+            format!("hello 1.0-1 {hash} 12 hello-1.0-1.tar.zst extra"),
+        ] {
+            assert!(parse_index(&line).is_err(), "{line}");
+        }
+    }
+
+    #[test]
+    fn update_needs_a_repository() {
+        let top = scratch("norepo");
+        let client = Config::load(&top.join("client"), None, None).unwrap();
+        assert!(update(&client).unwrap_err().to_string().contains("no repository"));
     }
 }

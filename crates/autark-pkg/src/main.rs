@@ -37,6 +37,7 @@ const USAGE: &str = "usage: ark [options] <command> [names…]
   import               take over the file lists the phase scripts recorded (/var/lib/autark/files)
   arch <names>         import recipes from Arch Linux (and the runtime dependencies they need), without installing
   refresh [names]      import the current Arch recipes again (all imported ones by default); upgrade then sees new versions
+  update               fetch and check the repository's index; say which installed packages it has other versions of
   keygen               make the signing key pair
   release-keygen <dir> make the offline release key pair (password-protected) in <dir>
   publish <dir> [names]  copy the newest builds to <dir>, signed with --key, with an index (all packages by default)
@@ -111,7 +112,7 @@ fn run() -> Result<()> {
     };
     let root = std::fs::canonicalize(&root).ctx(&root)?;
     let config = Config::load(&root, config_file.as_deref(), recipes_dir.as_deref())?;
-    let changes = matches!(command.as_str(), "install" | "remove" | "upgrade" | "rollback" | "build" | "import" | "keygen" | "arch" | "refresh");
+    let changes = matches!(command.as_str(), "install" | "remove" | "upgrade" | "rollback" | "build" | "import" | "keygen" | "arch" | "refresh" | "update");
     if changes && !options.dry_run && config.is_live() && !build::is_root() {
         return fail(format!("{command} changes the system: run it as root"));
     }
@@ -214,6 +215,7 @@ fn run() -> Result<()> {
             println!("secret key: {} (keep it offline, with its password)\npublic key: {} (put it in the keys folder of systems that should trust releases)", secret.display(), public.display());
             Ok(())
         }
+        "update" => update(&config, &options),
         "publish" => {
             need("a folder")?;
             let Some(key) = &options.key else {
@@ -263,6 +265,33 @@ fn recipes_for(config: &Config, wanted: &[String], options: &Options) -> Result<
     arch::import(config, &missing, options.make_deps)?;
     recipes = load_recipes(config)?;
     Ok(recipes)
+}
+
+/// Fetches the repository's index (see `repo::update`) and lists the installed packages it has another version of:
+/// what `upgrade` would find prebuilt, or what the repository has not caught up to.
+fn update(config: &Config, options: &Options) -> Result<()> {
+    if options.dry_run {
+        return match &config.repo {
+            Some(repo) => {
+                println!("would fetch the index from {repo}");
+                Ok(())
+            }
+            None => fail("no repository: set `repo` in /etc/autark/pkg.toml"),
+        };
+    }
+    let entries = repo::update(config)?;
+    let installed = Db::open_read(config)?.all()?;
+    let mut other = 0;
+    for entry in &entries {
+        let Some(have) = installed.get(&entry.name) else { continue };
+        if have.version != entry.version {
+            println!("  {}: installed {}, repository {}", entry.name, have.version, entry.version);
+            other += 1;
+        }
+    }
+    let matching = entries.iter().filter(|entry| installed.contains_key(&entry.name)).count() - other;
+    println!("{} packages in the index; {matching} installed match it, {other} differ", entries.len());
+    Ok(())
 }
 
 fn search(config: &Config, words: &[String]) -> Result<()> {
