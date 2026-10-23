@@ -10,6 +10,7 @@ members = [
     "crates/autark-calendar",
     "crates/autark-clock",
     "crates/autark-common",
+    "crates/autark-cursors",
     "crates/autark-contacts",
     "crates/autark-displays",
     "crates/autark-dock",
