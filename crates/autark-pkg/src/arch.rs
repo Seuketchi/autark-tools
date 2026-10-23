@@ -13,8 +13,9 @@ use crate::config::Config;
 use crate::error::{Context, Result, fail};
 use crate::recipe::Recipe;
 
-/// Imports `names` and the runtime dependencies they need that no recipe has, into `config.imported`.
-pub fn import(config: &Config, names: &[String]) -> Result<()> {
+/// Imports `names` and the runtime dependencies they need that no recipe has, into `config.imported`. With
+/// `make_deps` the build-time ones too: far more packages, but what a package needs to build is not left out.
+pub fn import(config: &Config, names: &[String], make_deps: bool) -> Result<()> {
     let Some(imported) = &config.imported else {
         return fail("recipes come from --recipes here, so nothing can be imported");
     };
@@ -39,6 +40,9 @@ pub fn import(config: &Config, names: &[String]) -> Result<()> {
         .env("HOME", &config.arch_cache)
         .env("LC_ALL", "C.UTF-8")
         .stdin(Stdio::null());
+    if make_deps {
+        command.arg("--make-deps");
+    }
     if config.is_live() && build::is_root() {
         let Some((uid, gid)) = build::user(&config.build_user) else {
             return fail(format!("no user {}: the importer does not run as root", config.build_user));

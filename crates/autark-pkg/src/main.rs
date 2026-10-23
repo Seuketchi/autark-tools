@@ -50,6 +50,7 @@ options:
   --force              let a package take over files another one owns
   -y, --yes            import missing packages from Arch Linux without asking
   --no-arch            never import: a package with no recipe is an error
+  --make-deps          when importing, take the build-time dependencies too (many more packages)
   --no-repo            don't look for prebuilt packages in the `repo` setting
   --key <file>         the release secret key, for publish
   --password-file <f>  read the release key's password from a file instead of asking
@@ -62,6 +63,7 @@ struct Options {
     force: bool,
     yes: bool,
     no_arch: bool,
+    make_deps: bool,
     no_repo: bool,
     key: Option<PathBuf>,
     password_file: Option<PathBuf>,
@@ -77,7 +79,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let (mut root, mut config_file, mut recipes_dir) = (PathBuf::from("/"), None, None);
-    let mut options = Options { dry_run: false, force: false, yes: false, no_arch: false, no_repo: false, key: None, password_file: None };
+    let mut options = Options { dry_run: false, force: false, yes: false, no_arch: false, make_deps: false, no_repo: false, key: None, password_file: None };
     let mut words = Vec::new();
     while let Some(arg) = args.next() {
         let mut value = |flag: &str| args.next().ok_or_else(|| error::Error(format!("{flag} needs a value")));
@@ -89,6 +91,7 @@ fn run() -> Result<()> {
             "--force" => options.force = true,
             "-y" | "--yes" => options.yes = true,
             "--no-arch" => options.no_arch = true,
+            "--make-deps" => options.make_deps = true,
             "--no-repo" => options.no_repo = true,
             "--key" => options.key = Some(PathBuf::from(value("--key")?)),
             "--password-file" => options.password_file = Some(PathBuf::from(value("--password-file")?)),
@@ -182,7 +185,7 @@ fn run() -> Result<()> {
         "import" => import(&config, &options),
         "arch" => {
             need("names")?;
-            arch::import(&config, names)
+            arch::import(&config, names, options.make_deps)
         }
         "refresh" => {
             let mut wanted = names.to_vec();
@@ -193,7 +196,7 @@ fn run() -> Result<()> {
                 println!("nothing imported yet");
                 return Ok(());
             }
-            arch::import(&config, &wanted)
+            arch::import(&config, &wanted, options.make_deps)
         }
         "keygen" => {
             let path = archive::keygen(&config)?;
@@ -257,7 +260,7 @@ fn recipes_for(config: &Config, wanted: &[String], options: &Options) -> Result<
         return Ok(recipes);
     }
     arch::confirm(&missing, options.yes)?;
-    arch::import(config, &missing)?;
+    arch::import(config, &missing, options.make_deps)?;
     recipes = load_recipes(config)?;
     Ok(recipes)
 }
