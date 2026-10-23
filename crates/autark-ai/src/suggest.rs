@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::events::{Builds, Event, Kind, Readings, Wifi};
 use crate::server::Ai;
 
-/// Where `autark-pkg` keeps its build logs unless `[suggestions]` says otherwise.
+/// Where `ark` keeps its build logs unless `[suggestions]` says otherwise.
 pub const BUILD_LOGS: &str = "/var/log/autark-pkg";
 
 /// A rating at or above this shows the card.
@@ -30,7 +30,7 @@ pub struct Limits {
     pub per_hour: usize,
     /// The battery percentage, on battery, that's an event.
     pub low_battery: f64,
-    /// `autark-pkg`'s `logs`, if pkg.toml moves them.
+    /// `ark`'s `logs`, if pkg.toml moves them.
     pub build_logs: PathBuf,
 }
 

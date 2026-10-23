@@ -1,7 +1,7 @@
-//! Software Updates: the versions, the security watch's report, and the buttons: check what `autark-pkg upgrade` would
+//! Software Updates: the versions, the security watch's report, and the buttons: check what `ark upgrade` would
 //! change (a dry run), install it, and run the security watch now. Checking and installing are root's, so they go through
 //! the helper with your password (see `privileged.rs`); installing is only offered after a check has worked, and the
-//! helper runs only `autark-pkg` from its own recipes folder, never one a user can write to. The security report is
+//! helper runs only `ark` from its own recipes folder, never one a user can write to. The security report is
 //! `autark-cve-watch`'s, which compares the installed versions with the NVD's advisories; running it needs no root.
 
 use std::cell::RefCell;

@@ -1,6 +1,6 @@
 //! `autark-hub-helper <verb> …`: the root half of the Hub. The Hub runs it through `sudo` with the password you type
 //! there; it is installed in `/usr/libexec/autark/`. It does only what the verbs below say, checks every name before it
-//! runs anything, and runs `autark-pkg` without a shell.
+//! runs anything, and runs `ark` without a shell.
 //!
 //! ```text
 //! install <name>…      remove <name>…      upgrade [<name>…]      rollback <name>
@@ -11,7 +11,7 @@
 
 use std::process::{Command, Stdio};
 
-const PKG: &str = "/usr/bin/autark-pkg";
+const PKG: &str = "/usr/bin/ark";
 const PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 const MOST_NAMES: usize = 40;
 
@@ -45,7 +45,7 @@ fn valid_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || "+._-".contains(c))
 }
 
-/// The arguments for `autark-pkg`, or why the request is refused.
+/// The arguments for `ark`, or why the request is refused.
 fn command_line(args: &[&str]) -> Result<Vec<String>, String> {
     let (verb, names) = args.split_first().ok_or("no verb: install, remove, upgrade or rollback")?;
     if names.len() > MOST_NAMES {

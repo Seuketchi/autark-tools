@@ -1,6 +1,6 @@
 //! What Kith's suggestions start from, all noticed by code: an app keeping a core busy or draining the
 //! battery for minutes, and the battery running low, from one `autark-stats` reading a minute (each an
-//! average over that minute, so it costs almost nothing); an `autark-pkg` build ending, from the outcome
+//! average over that minute, so it costs almost nothing); an `ark` build ending, from the outcome
 //! line it writes at the end of each log; and a Wi-Fi network you haven't joined in range while the laptop
 //! is offline, from iwd.
 
@@ -118,9 +118,9 @@ impl Readings {
     }
 }
 
-/// What `autark-pkg` writes as the last line of a build's log: `== autark-pkg: gcc 15.2.0 built in 812s`, or
-/// `== autark-pkg: gcc 15.2.0 failed (exit status: 2)`.
-pub const OUTCOME: &str = "== autark-pkg: ";
+/// What `ark` writes as the last line of a build's log: `== ark: gcc 15.2.0 built in 812s`, or
+/// `== ark: gcc 15.2.0 failed (exit status: 2)`.
+pub const OUTCOME: &str = "== ark: ";
 
 /// The build logs, each looked at again when it changes.
 pub struct Builds {
@@ -169,7 +169,7 @@ fn build_ended(path: &Path) -> Option<Event> {
     let lines: Vec<&str> = tail.lines().filter(|line| !line.trim().is_empty()).collect();
     let (last, before) = lines.split_last()?;
     let outcome = last.strip_prefix(OUTCOME)?.trim();
-    let mut facts = format!("An autark-pkg build ended: {outcome}.");
+    let mut facts = format!("An ark build ended: {outcome}.");
     if outcome.contains(" failed") {
         let shown: Vec<&str> = before.iter().rev().take(12).rev().copied().collect();
         facts.push_str(&format!(" The log's last lines:\n{}", shown.join("\n")));
@@ -318,16 +318,16 @@ mod tests {
     fn a_build_ending_is_read_from_its_log() {
         let folder = std::env::temp_dir().join(format!("autark-ai-builds-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
-        std::fs::write(folder.join("old.log"), "make\n== autark-pkg: old 1.0 built in 3s\n").unwrap();
+        std::fs::write(folder.join("old.log"), "make\n== ark: old 1.0 built in 3s\n").unwrap();
         let mut builds = Builds::new(&folder);
         assert!(builds.scan().is_empty());
         std::fs::write(folder.join("gcc.log"), "make: *** [all] Error 2\n").unwrap();
         assert!(builds.scan().is_empty());
         std::thread::sleep(Duration::from_millis(20));
-        std::fs::write(folder.join("gcc.log"), "checking\nmake: *** [all] Error 2\n== autark-pkg: gcc 15.2.0 failed (exit status: 2)\n").unwrap();
+        std::fs::write(folder.join("gcc.log"), "checking\nmake: *** [all] Error 2\n== ark: gcc 15.2.0 failed (exit status: 2)\n").unwrap();
         let events = builds.scan();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].facts, "An autark-pkg build ended: gcc 15.2.0 failed (exit status: 2). The log's last lines:\nchecking\nmake: *** [all] Error 2");
+        assert_eq!(events[0].facts, "An ark build ended: gcc 15.2.0 failed (exit status: 2). The log's last lines:\nchecking\nmake: *** [all] Error 2");
         std::fs::remove_dir_all(&folder).unwrap();
     }
 }

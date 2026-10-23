@@ -35,7 +35,7 @@ build
 "#;
 
 /// Paths a tracked build's scan never looks in: other filesystems' mount points, scratch space, logs, and
-/// autark-pkg's own folders.
+/// ark's own folders.
 const SKIP: &[&str] =
     &["/proc", "/sys", "/dev", "/run", "/tmp", "/var/tmp", "/var/log", "/var/cache", "/var/lib/autark", "/root", "/home", "/mnt", "/media", "/sources", "/lost+found", "/etc/ld.so.cache"];
 
@@ -277,12 +277,12 @@ fn changed(config: &Config, since: SystemTime, before: &HashSet<PathBuf>, owners
 }
 
 /// Ends the log with how the build went, the line Kith's suggestions watch the log folder for:
-/// `== autark-pkg: gcc 15.2.0 built in 812s`.
+/// `== ark: gcc 15.2.0 built in 812s`.
 fn outcome(log: &Path, text: &str) {
     use std::io::Write;
-    let written = std::fs::OpenOptions::new().append(true).open(log).and_then(|mut file| writeln!(file, "== autark-pkg: {text}"));
+    let written = std::fs::OpenOptions::new().append(true).open(log).and_then(|mut file| writeln!(file, "== ark: {text}"));
     if let Err(err) = written {
-        eprintln!("autark-pkg: {}: {err}", log.display());
+        eprintln!("ark: {}: {err}", log.display());
     }
 }
 

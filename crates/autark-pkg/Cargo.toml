@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[[bin]]
+name = "ark"
+path = "src/main.rs"
+
 [dependencies]
 libc = "0.2"
 md-5 = "0.10"

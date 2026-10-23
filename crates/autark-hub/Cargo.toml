@@ -1,6 +1,6 @@
 [package]
 name = "autark-hub"
-description = "Software: find, install, update and remove packages from a window; autark-pkg does the work and the checking."
+description = "Software: find, install, update and remove packages from a window; ark does the work and the checking."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

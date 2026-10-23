@@ -1,4 +1,4 @@
-//! `autark-pkg catalog`: every package this system knows, as one JSON document, for programs (the Hub) that show them.
+//! `ark catalog`: every package this system knows, as one JSON document, for programs (the Hub) that show them.
 //! A package is known when it has a recipe or is installed. Nothing is changed and nothing is downloaded.
 //!
 //! ```json
@@ -7,7 +7,7 @@
 //! ```
 //!
 //! `version` is the recipe's (the installed one for a package with no recipe); `installed` is null when it isn't
-//! installed; `upgrade` is the recipe's version when `autark-pkg upgrade` would install it, null otherwise (a package
+//! installed; `upgrade` is the recipe's version when `ark upgrade` would install it, null otherwise (a package
 //! held after a rollback is never due: `held` says so); `kept` lists the builds in the cache, newest first.
 
 use std::collections::BTreeMap;

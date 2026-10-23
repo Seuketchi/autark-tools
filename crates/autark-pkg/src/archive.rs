@@ -97,7 +97,7 @@ pub fn pack(config: &Config, from: &Path, paths: &[String], info: &PkgInfo, root
 
 fn sign(config: &Config, archive: &Path, info: &PkgInfo) -> Result<()> {
     if !config.secret_key.exists() {
-        return fail(format!("no signing key at {}; create one with `autark-pkg keygen`", config.secret_key.display()));
+        return fail(format!("no signing key at {}; create one with `ark keygen`", config.secret_key.display()));
     }
     sign_with(archive, &config.secret_key, String::new(), info)
 }
@@ -118,7 +118,7 @@ pub fn verify(config: &Config, archive: &Path) -> Result<PkgInfo> {
     let signature = minisign::SignatureBox::from_file(&signature_file).ctx(&signature_file)?;
     let keys = trusted_keys(config)?;
     if keys.is_empty() {
-        return fail(format!("no trusted keys in {}; create one with `autark-pkg keygen`", config.keys.display()));
+        return fail(format!("no trusted keys in {}; create one with `ark keygen`", config.keys.display()));
     }
     let mut last = Error(format!("{}: signed by a key not in {}", archive.display(), config.keys.display()));
     let mut verified = false;

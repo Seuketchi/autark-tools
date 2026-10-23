@@ -21,7 +21,7 @@ use db::{Db, Installed, Item, Kind};
 use error::{Context, Result, fail};
 use recipe::Recipe;
 
-const USAGE: &str = "usage: autark-pkg [options] <command> [names…]
+const USAGE: &str = "usage: ark [options] <command> [names…]
 
   search <words>       recipes whose name or description has every word
   info <name>          a recipe and what's installed of it
@@ -71,7 +71,7 @@ struct Options {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("autark-pkg: {error}");
+        eprintln!("ark: {error}");
         std::process::exit(1);
     }
 }
@@ -415,7 +415,7 @@ fn upgrade(config: &Config, names: &[String], options: &Options) -> Result<()> {
             continue;
         }
         if info.held {
-            println!("{} is held at {} after a rollback; `autark-pkg install {}` takes the recipe's {}", info.name, info.version, info.name, recipe.full_version());
+            println!("{} is held at {} after a rollback; `ark install {}` takes the recipe's {}", info.name, info.version, info.name, recipe.full_version());
             held += 1;
             continue;
         }

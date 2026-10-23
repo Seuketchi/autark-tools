@@ -1,4 +1,4 @@
-//! Recipes: `<recipes>/<name>.sh`, a bash file whose header is plain assignments autark-pkg reads without
+//! Recipes: `<recipes>/<name>.sh`, a bash file whose header is plain assignments ark reads without
 //! running anything, followed by a `build()` function the build runs.
 //!
 //! ```sh
@@ -64,7 +64,7 @@ pub struct Recipe {
     pub mode: Mode,
     /// The file it was read from, which the build sources.
     pub file: Option<PathBuf>,
-    /// Whether it came from Arch Linux (`autark-pkg arch`), not from the autark repo.
+    /// Whether it came from Arch Linux (`ark arch`), not from the autark repo.
     pub imported: bool,
 }
 
@@ -214,7 +214,7 @@ pub fn load_all(dir: &Path) -> Result<BTreeMap<String, Recipe>> {
     Ok(out)
 }
 
-/// The recipes `autark-pkg arch` imported. That folder is written by the build user, so what is read from it is held
+/// The recipes `ark arch` imported. That folder is written by the build user, so what is read from it is held
 /// to less: a recipe that doesn't parse is left out with a warning, not an error that stops everything, and one that
 /// isn't `staged` (which would run as root) is refused.
 pub fn load_imported(dir: &Path) -> BTreeMap<String, Recipe> {
@@ -238,8 +238,8 @@ pub fn load_imported(dir: &Path) -> BTreeMap<String, Recipe> {
                 recipe.imports.clear();
                 out.insert(recipe.name.clone(), recipe);
             }
-            Ok(recipe) => eprintln!("autark-pkg: skipped imported {}: it is {}, and only staged recipes are taken from there", recipe.name, recipe.mode.name()),
-            Err(error) => eprintln!("autark-pkg: skipped imported recipe: {error}"),
+            Ok(recipe) => eprintln!("ark: skipped imported {}: it is {}, and only staged recipes are taken from there", recipe.name, recipe.mode.name()),
+            Err(error) => eprintln!("ark: skipped imported recipe: {error}"),
         }
     }
     out

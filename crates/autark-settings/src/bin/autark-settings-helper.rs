@@ -92,11 +92,11 @@ fn run(args: &[&str], caller: &str) -> Result<String, String> {
         }
         ["pkg-check"] => {
             check_recipes()?;
-            command("autark-pkg", &["-n", "upgrade"])
+            command("ark", &["-n", "upgrade"])
         }
         ["pkg-upgrade"] => {
             check_recipes()?;
-            command("autark-pkg", &["upgrade"])
+            command("ark", &["upgrade"])
         }
         _ => Err(format!("not something it does: {}", args.join(" "))),
     }
@@ -158,7 +158,7 @@ fn check_shell(shell: &str) -> Result<(), String> {
     if listed && Path::new(shell).is_file() { Ok(()) } else { Err(format!("{shell:?} isn't a shell this system lists")) }
 }
 
-/// `autark-pkg` runs the recipes' scripts as root, so they must be root's and nobody else's to write: a recipes folder
+/// `ark` runs the recipes' scripts as root, so they must be root's and nobody else's to write: a recipes folder
 /// (or a file or parent in it) that a user could change would hand that user root.
 fn check_recipes() -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;

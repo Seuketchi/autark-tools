@@ -54,13 +54,13 @@ pub struct Db {
 }
 
 impl Db {
-    /// Opens the database, waiting for any other autark-pkg to finish.
+    /// Opens the database, waiting for any other ark to finish.
     pub fn open(config: &Config) -> Result<Self> {
         std::fs::create_dir_all(&config.db).ctx(&config.db)?;
         let path = config.db.join(".lock");
         let lock = File::create(&path).ctx(&path)?;
         if lock.try_lock().is_err() {
-            println!("waiting for another autark-pkg to finish");
+            println!("waiting for another ark to finish");
             lock.lock().ctx(&path)?;
         }
         Ok(Self { dir: config.db.clone(), _lock: lock })
@@ -72,7 +72,7 @@ impl Db {
         let lock = File::open(config.db.join(".lock")).ok();
         if let Some(lock) = &lock {
             if lock.try_lock_shared().is_err() {
-                println!("waiting for another autark-pkg to finish");
+                println!("waiting for another ark to finish");
                 lock.lock_shared().ctx(&config.db.join(".lock"))?;
             }
         }
@@ -233,7 +233,7 @@ mod tests {
         std::fs::set_permissions(&config.db, std::fs::Permissions::from_mode(0o555)).unwrap();
         std::fs::set_permissions(config.db.join(".lock"), std::fs::Permissions::from_mode(0o444)).unwrap();
         let names = Db::open_read(&config).and_then(|db| db.names());
-        // Without the lock file too (a database made by an older autark-pkg).
+        // Without the lock file too (a database made by an older ark).
         std::fs::set_permissions(&config.db, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::remove_file(config.db.join(".lock")).unwrap();
         let without_lock = Db::open_read(&config).and_then(|db| db.names());

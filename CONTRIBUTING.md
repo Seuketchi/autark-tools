@@ -17,7 +17,7 @@ CI builds it on Arch Linux; see `.github/workflows/ci.yml` for the exact package
 
 ## What review looks at
 
-- **Risk first.** Code that runs as root or handles keys and passwords (`autark-pkg`, `autark-init`,
+- **Risk first.** Code that runs as root or handles keys and passwords (`ark`, `autark-init`,
   `autark-hw-helper`, the Settings helper, `autark-sandbox`, `autark-lock`) gets a slower, closer review and a real test.
 - **Small changes.** One thing per pull request, with the screen or command you tried it on.
 - **Style.** Match the surrounding code. The workspace is not formatted with rustfmt defaults, so do not reformat files

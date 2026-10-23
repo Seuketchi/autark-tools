@@ -68,7 +68,7 @@ pub fn confirm(missing: &[String], yes: bool) -> Result<()> {
         return Ok(());
     }
     if !std::io::stdin().is_terminal() {
-        return fail("import them from Arch Linux with `autark-pkg arch <names>`, or pass -y");
+        return fail("import them from Arch Linux with `ark arch <names>`, or pass -y");
     }
     print!("import {} from Arch Linux, and build it as the build user? [y/N] ", if missing.len() == 1 { "it" } else { "them" });
     std::io::stdout().flush().ctx("stdout")?;

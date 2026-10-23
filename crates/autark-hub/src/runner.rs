@@ -50,7 +50,7 @@ enum Failure {
 }
 
 /// Runs `verb names…` as root. `line` gets each line of output; `done` gets the outcome (an error is the last thing the
-/// helper, `autark-pkg` or sudo complained of). Asks for the password unless one was accepted in the last five minutes.
+/// helper, `ark` or sudo complained of). Asks for the password unless one was accepted in the last five minutes.
 pub fn run(parent: Option<&gtk::Window>, reason: &str, args: Vec<String>, line: impl Fn(String) + 'static, done: impl FnOnce(Result<(), String>) + 'static) {
     if !installed() {
         done(Err(SETUP.to_owned()));
@@ -167,7 +167,7 @@ fn run_command(mut command: Command, password: &Zeroizing<String>, sender: &asyn
             return Err(Failure::Other(SETUP.to_owned()));
         }
         let last = said.iter().rev().find(|text| !text.trim().is_empty()).map(|text| text.trim()).unwrap_or("it failed");
-        Err(Failure::Other(last.trim_start_matches("autark-hub-helper: ").trim_start_matches("autark-pkg: ").to_owned()))
+        Err(Failure::Other(last.trim_start_matches("autark-hub-helper: ").trim_start_matches("ark: ").to_owned()))
     })();
     let _ = sender.send_blocking(Message::Done(result));
 }
@@ -286,8 +286,8 @@ mod tests {
 
     #[test]
     fn a_refusal_from_autark_pkg_comes_back_as_its_last_message_without_the_program_prefix() {
-        let (lines, end) = run_fake("echo \"removing zlib\"; echo \"autark-pkg: zlib is needed by openssl\" >&2; exit 1");
-        assert_eq!(lines, ["autark-pkg: zlib is needed by openssl", "removing zlib"]);
+        let (lines, end) = run_fake("echo \"removing zlib\"; echo \"ark: zlib is needed by openssl\" >&2; exit 1");
+        assert_eq!(lines, ["ark: zlib is needed by openssl", "removing zlib"]);
         match end {
             Err(Failure::Other(text)) => assert_eq!(text, "zlib is needed by openssl"),
             other => panic!("expected the refusal, got {}", if other.is_ok() { "success" } else { "another failure" }),

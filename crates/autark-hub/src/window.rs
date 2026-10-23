@@ -1,5 +1,5 @@
 //! The Hub's window: navigation on the left, the packages in the middle, and the chosen package on the right with what
-//! can be done to it. Everything it shows comes from `autark-pkg catalog`; every change goes through the root helper.
+//! can be done to it. Everything it shows comes from `ark catalog`; every change goes through the root helper.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -502,7 +502,7 @@ impl Hub {
                 let name = name.clone();
                 hub.confirm(
                     &format!("Remove {name}?"),
-                    "Packages that need it stop this: autark-pkg refuses to remove something another package depends on. You can install it again later; that builds it from its recipe.",
+                    "Packages that need it stop this: ark refuses to remove something another package depends on. You can install it again later; that builds it from its recipe.",
                     "Remove",
                     Box::new(move |hub| hub.job("remove", &[name.as_str()], &format!("remove {name}"), &format!("Removed {name}."))),
                 );

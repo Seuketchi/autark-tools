@@ -191,7 +191,7 @@ fn quit(app: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("kill failed ({status})")) }
 }
 
-/// A file Kith may open: one it may read (see `files`), or an `autark-pkg` build log.
+/// A file Kith may open: one it may read (see `files`), or an `ark` build log.
 fn openable(path: &str) -> Result<std::path::PathBuf, String> {
     let config: crate::config::Ai = autark_common::config::load("ai");
     let logs = std::fs::canonicalize(&config.suggestions.build_logs).ok();

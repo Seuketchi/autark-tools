@@ -22,7 +22,7 @@ They live apart from the distro so other Linux systems can use them too.
 | 🖥️ **Desktop shell** | A top bar, a dock with magnification, a Spotlight-style launcher with clipboard history, a notification centre with widgets, a lock screen (password or fingerprint), a wallpaper layer, night light and display layouts. GTK4 and Rust, for any wlroots compositor. |
 | 🗂️ **Apps** | Files, Notes (Markdown vaults with links and a graph), Calendar, Contacts, Mail pieces, Viewer, Player, Calculator, Archives, Clock, Task manager, Screenshots, Settings and a hardware page. |
 | 🤖 **Kith** | An assistant that runs on [Ollama](https://ollama.com) on your laptop. Off until you turn it on; it reads only files you name and logs every call. Jev, an optional cloud engine for fast typed decisions, is off unless you switch it on per feature. |
-| 📦 **autark-pkg** | Builds package recipes into signed archives, installs, upgrades, removes and rolls back, and imports a recipe from Arch Linux when none exists. Autark only. |
+| 📦 **ark** | Builds package recipes into signed archives, installs, upgrades, removes and rolls back, and imports a recipe from Arch Linux when none exists. Autark only. |
 | 🔓 **autark-init** | An initramfs init that unlocks a LUKS2 disk with TPM plus PIN, then hands over to systemd. |
 | 🧱 **autark-sandbox** | Runs a vendor binary under a per-app Landlock profile. |
 
@@ -35,7 +35,7 @@ flowchart LR
     build["build scripts and installer"]
   end
   subgraph T["🦀 autark-tools: this repo"]
-    pkg["autark-pkg"]
+    pkg["ark"]
     init["autark-init"]
     shell["bar, dock, launcher,<br>notifications, lock"]
     apps["Files, Notes, Settings..."]
@@ -71,7 +71,7 @@ The distribution builds the system and installs it; these programs are what you 
 | `autark-monitor` | Task manager: apps and processes with CPU, memory, disk, network and energy impact; force quit |
 | `autark-viewer` | Viewer: pictures with zoom toward the pointer, pan, rotate, and the rest of the folder one key away |
 | `autark-player` | Player: video and audio through GStreamer, frames drawn by GTK, with controls that fade while a video plays |
-| `autark-hub` | Software: find, install, update, remove and roll back packages from a window; `autark-pkg` does the work, through a root helper that only knows those four verbs |
+| `autark-hub` | Software: find, install, update, remove and roll back packages from a window; `ark` does the work, through a root helper that only knows those four verbs |
 | `autark-calc` | Calculator: type a sum or press keys, with the answer shown as you go |
 | `autark-archive` | Archives: look inside a zip or tar, take things out, pack files up through `bsdtar`; extraction never overwrites anything |
 | `autark-keys` | Keyboard shortcuts: every key combination Wayfire answers, read from its own config so it is never out of date |
@@ -86,7 +86,7 @@ The distribution builds the system and installs it; these programs are what you 
 | `autark-settings` | Settings: one pane per area, editing the same config files the tools watch |
 | `autark-sandbox` | Sandbox launcher: runs vendor binaries under a per-app Landlock profile |
 | `autark-init` | Initramfs init: TPM-plus-PIN LUKS2 unlock through libcryptsetup and tpm2-tss, then hands over to systemd |
-| `autark-pkg` | Autark's package manager (Autark-only): signed packages from recipes, with install, remove, upgrade, search and rollback |
+| `ark` | Autark's package manager (Autark-only): signed packages from recipes, with install, remove, upgrade, search and rollback |
 | `autark-power` | Idle timers (screens off, then sleep; battery or plugged in) and the low-battery warning |
 
 Each tool is described in detail in [`docs/reference.md`](docs/reference.md): what it does, its D-Bus interface and its settings.
@@ -95,7 +95,7 @@ Each tool is described in detail in [`docs/reference.md`](docs/reference.md): wh
 
 - **Desktop crates:** any wlroots compositor (Wayfire, sway, Hyprland, labwc, river) with systemd and D-Bus. GNOME and KDE aren't targeted.
 - **`autark-init`:** any systemd distro with LUKS2 and a TPM.
-- **`autark-pkg` and `autark-hub`:** Autark only (the Hub is a window on `autark-pkg`).
+- **`ark` and `autark-hub`:** Autark only (the Hub is a window on `ark`).
 - **Configuration:** paths and settings come from config files, never hard-coded to Autark.
 
 ## 🚀 Install and build
@@ -188,7 +188,7 @@ check = true
 ask = true
 ```
 
-`autark-pkg` reads `/etc/autark/pkg.toml` (paths as the target sees them; `--root` moves them all):
+`ark` reads `/etc/autark/pkg.toml` (paths as the target sees them; `--root` moves them all):
 
 ```toml
 # /etc/autark/pkg.toml
@@ -209,13 +209,13 @@ repo = ""                             # prebuilt packages: a folder served over 
 The release key is made once, kept offline, and never on the build machine:
 
 ```
-autark-pkg release-keygen /path/to/usb/release        # asks for a password; writes autark-release.key and .pub
-autark-pkg publish out/ --key /path/to/usb/release/autark-release.key [names…]
+ark release-keygen /path/to/usb/release        # asks for a password; writes autark-release.key and .pub
+ark publish out/ --key /path/to/usb/release/autark-release.key [names…]
 ```
 
 `publish` takes the newest cached build of each package (or of `names`), checks each against the keys it trusts, copies it to `out/`, signs the copy with the release key, and writes `index` (name, version, sha256, size, file) with `index.minisig`. Upload the folder's files to the repository. `--password-file` reads the key's password from a file instead of asking.
 
-A package with no recipe is imported from Arch Linux: `autark-pkg install htop` asks, then runs `scripts/arch-import.py` as the
+A package with no recipe is imported from Arch Linux: `ark install htop` asks, then runs `scripts/arch-import.py` as the
 `autark-build` user, which reads Arch's PKGBUILD, downloads and checks its sources, and writes a recipe (and ones for the runtime
 dependencies no recipe has) into `imported`; the build then goes on as for any recipe. `-y` skips the question, `--no-arch` turns
 it off, `arch <names>` imports without installing, and `refresh [names]` imports the current Arch recipes again, so `upgrade` sees

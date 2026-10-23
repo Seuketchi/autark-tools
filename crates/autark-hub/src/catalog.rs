@@ -1,4 +1,4 @@
-//! What the Hub knows about packages: the JSON `autark-pkg catalog` prints, which of them each view shows, and what
+//! What the Hub knows about packages: the JSON `ark catalog` prints, which of them each view shows, and what
 //! state a package is in. The Hub reads and never changes anything itself; changes go through the root helper.
 
 use std::process::{Command, Stdio};
@@ -15,13 +15,13 @@ pub struct Package {
     pub depends: Vec<String>,
     #[serde(default)]
     pub mode: String,
-    /// Made from an Arch Linux package by `autark-pkg arch`; nobody on Autark has reviewed it.
+    /// Made from an Arch Linux package by `ark arch`; nobody on Autark has reviewed it.
     #[serde(default)]
     pub imported: bool,
     pub installed: Option<String>,
     #[serde(default)]
     pub held: bool,
-    /// The recipe's version, when `autark-pkg upgrade` would install it.
+    /// The recipe's version, when `ark upgrade` would install it.
     pub upgrade: Option<String>,
     /// Builds in the cache, newest first.
     #[serde(default)]
@@ -34,17 +34,17 @@ struct Catalog {
 }
 
 pub fn parse(json: &str) -> Result<Vec<Package>, String> {
-    serde_json::from_str::<Catalog>(json).map(|catalog| catalog.packages).map_err(|error| format!("autark-pkg's catalog wasn't understood: {error}"))
+    serde_json::from_str::<Catalog>(json).map(|catalog| catalog.packages).map_err(|error| format!("ark's catalog wasn't understood: {error}"))
 }
 
-/// `autark-pkg catalog`; `AUTARK_PKG` names another program, for trying a build that isn't installed yet.
+/// `ark catalog`; `AUTARK_PKG` names another program, for trying a build that isn't installed yet.
 pub fn load() -> Result<Vec<Package>, String> {
-    let program = std::env::var("AUTARK_PKG").unwrap_or_else(|_| "autark-pkg".to_owned());
+    let program = std::env::var("AUTARK_PKG").unwrap_or_else(|_| "ark".to_owned());
     let output = Command::new(&program).arg("catalog").stdin(Stdio::null()).output().map_err(|error| format!("couldn't run {program}: {error}"))?;
     if !output.status.success() {
         let said = String::from_utf8_lossy(&output.stderr);
         let first = said.lines().find(|line| !line.trim().is_empty()).unwrap_or("it failed");
-        return Err(if said.contains("unknown command") { format!("{program} is too old for the Hub: it has no `catalog` command. Update autark-pkg.") } else { first.to_owned() });
+        return Err(if said.contains("unknown command") { format!("{program} is too old for the Hub: it has no `catalog` command. Update ark.") } else { first.to_owned() });
     }
     parse(&String::from_utf8_lossy(&output.stdout))
 }
@@ -75,13 +75,13 @@ impl Package {
         }
     }
 
-    /// A kept build other than the installed one: what `autark-pkg rollback` goes back to.
+    /// A kept build other than the installed one: what `ark rollback` goes back to.
     pub fn rollback_to(&self) -> Option<&str> {
         let installed = self.installed.as_deref()?;
         self.kept.iter().map(String::as_str).find(|version| *version != installed)
     }
 
-    /// The same words `autark-pkg search` looks for: every word in the name or the description.
+    /// The same words `ark search` looks for: every word in the name or the description.
     fn matches(&self, words: &[String]) -> bool {
         let haystack = format!("{} {}", self.name, self.description).to_lowercase();
         words.iter().all(|word| haystack.contains(word.as_str()))
@@ -141,7 +141,7 @@ mod tests {
         let all = parse(json).unwrap();
         assert_eq!((all[0].name.as_str(), all[0].state()), ("zlib", State::NotInstalled));
         assert!(parse("not json").unwrap_err().contains("wasn't understood"));
-        // A field an older or newer autark-pkg leaves out or adds does not stop the Hub.
+        // A field an older or newer ark leaves out or adds does not stop the Hub.
         assert_eq!(parse(r#"{"packages":[{"name":"a","version":"1-1","installed":null,"upgrade":null,"extra":1}]}"#).unwrap().len(), 1);
     }
 

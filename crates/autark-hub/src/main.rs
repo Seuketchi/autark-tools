@@ -1,5 +1,5 @@
-//! Software: find, install, update and remove packages from a window. It reads `autark-pkg catalog` and changes things
-//! only through `autark-hub-helper`, which runs `autark-pkg`, so the signature checks and the rules are `autark-pkg`'s.
+//! Software: find, install, update and remove packages from a window. It reads `ark catalog` and changes things
+//! only through `autark-hub-helper`, which runs `ark`, so the signature checks and the rules are `ark`'s.
 //! `autark-hub <package>` opens with that package chosen.
 
 mod catalog;

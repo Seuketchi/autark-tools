@@ -2,7 +2,7 @@
 # Installs the Hub's root helper and makes sure sudo works for you. Run it once, as root:
 #   su -c 'sh ~/autark-tools/crates/autark-hub/data/install-helper.sh'
 # It puts autark-hub-helper in /usr/libexec/autark/ and adds a rule letting the wheel group use sudo if nothing grants it
-# (Settings' helper does the same; whichever you run first sets it up). The helper can only run `autark-pkg` with the verbs
+# (Settings' helper does the same; whichever you run first sets it up). The helper can only run `ark` with the verbs
 # install, remove, upgrade and rollback, on package names, and never imports from Arch Linux.
 set -eu
 
