@@ -460,6 +460,10 @@ impl Dock {
         if let Some(texture) = snapshot::focused() {
             self.pictures.borrow_mut().insert(id, texture);
         }
+        // A capture is a few screens' worth of pixels, copied a few times. Freed, they would stay in the heap, and the
+        // dock would keep the biggest capture it ever took (tens of megabytes) for as long as it runs.
+        // SAFETY: malloc_trim only hands back free memory.
+        unsafe { libc::malloc_trim(0) };
     }
 
     /// The pointer reached or left an icon: after a short wait, show that app's list of windows or take it away.
