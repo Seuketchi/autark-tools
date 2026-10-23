@@ -37,6 +37,16 @@ const EYE: &str = "#7FC1A1";
 /// The face inverted for a dark background, where dark glass would vanish: a pale plate with deep sage eyes.
 const GLASS_ON_DARK: &str = "#ECE8E1";
 const EYE_ON_DARK: &str = "#2F6B52";
+/// Seconds since the first call, which is remembered in `start`. (Setting the copy `Cell::get` returns would forget it,
+/// so the time would read 0 for ever and a face that should be still would redraw on every frame.)
+fn elapsed(start: &Cell<Option<f64>>, seconds: f64) -> f64 {
+    let first = start.get().unwrap_or_else(|| {
+        start.set(Some(seconds));
+        seconds
+    });
+    seconds - first
+}
+
 /// Rings and dots: the design's sage, lighter on a dark background.
 const SAGE: &str = "#3F7A5F";
 
@@ -140,8 +150,7 @@ impl Visor {
     /// Seconds on the frame clock since this face started.
     fn now(&self) -> f64 {
         let Some(clock) = self.area.frame_clock() else { return 0.0 };
-        let seconds = clock.frame_time() as f64 / 1_000_000.0;
-        seconds - *self.inner.start.get().get_or_insert(seconds)
+        elapsed(&self.inner.start, clock.frame_time() as f64 / 1_000_000.0)
     }
 
     /// Whether anything moves now, apart from blinking.
@@ -309,6 +318,14 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, width: f64, height: f6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_runs_from_the_first_look() {
+        let start = Cell::new(None);
+        assert_eq!(elapsed(&start, 100.0), 0.0);
+        assert_eq!(elapsed(&start, 100.5), 0.5);
+        assert_eq!(elapsed(&start, 103.0), 3.0);
+    }
 
     #[test]
     fn a_blink_shuts_the_eyes_briefly() {
