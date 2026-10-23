@@ -16,8 +16,9 @@ const GRID: f64 = 32.0;
 const TURN: u32 = 12;
 const FRAME_MS: u32 = 80;
 
-/// Near-black with a hint of warmth, to sit with the Linen theme.
-const INK: (f64, f64, f64) = (0.09, 0.08, 0.07);
+/// The theme's blue (#3D63E8): a mid tone with a white edge stays solid on light and dark alike, where near-black
+/// turns into an outline on a dark window and white into one on a light window.
+const INK: (f64, f64, f64) = (0.239, 0.388, 0.910);
 
 pub struct Cursor {
     pub name: &'static str,
@@ -32,7 +33,7 @@ pub const CURSORS: &[Cursor] = &[
     Cursor { name: "default", hot: (6.0, 3.0), frames: 1, draw: |cr, _| solid(cr, &[&arrow]) },
     Cursor { name: "text", hot: (16.0, 16.0), frames: 1, draw: |cr, _| lines(cr, &text_beam, 4.0, 2.0) },
     Cursor { name: "vertical-text", hot: (16.0, 16.0), frames: 1, draw: |cr, _| lines(cr, &|cr| rotated(cr, PI / 2.0, &text_beam), 4.0, 2.0) },
-    Cursor { name: "pointer", hot: (14.5, 4.0), frames: 1, draw: |cr, _| solid(cr, &[&|cr| rounded(cr, 12.0, 4.0, 5.0, 14.0, 2.5), &|cr| rounded(cr, 8.0, 14.0, 16.0, 13.0, 4.5)]) },
+    Cursor { name: "pointer", hot: (13.0, 3.5), frames: 1, draw: |cr, _| solid(cr, &[&|cr| rounded(cr, 10.5, 3.0, 5.0, 17.0, 2.5), &|cr| rounded(cr, 7.0, 15.0, 18.0, 12.0, 5.0), &|cr| rounded(cr, 15.5, 11.5, 4.0, 8.0, 2.0), &|cr| rounded(cr, 19.5, 13.0, 4.0, 7.0, 2.0), &|cr| rounded(cr, 4.0, 17.0, 6.0, 7.0, 3.0)]) },
     Cursor { name: "wait", hot: (16.0, 16.0), frames: TURN, draw: |cr, frame| lines(cr, &|cr| ring(cr, 16.0, 16.0, 9.0, frame), 5.0, 3.0) },
     Cursor {
         name: "progress",
