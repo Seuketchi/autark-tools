@@ -11,6 +11,8 @@ publish = false
 toplevels = ["dep:glib", "dep:glib-unix", "dep:wayland-client", "dep:wayland-protocols-wlr"]
 # Watching config files from a GTK tool, so a change (from Settings or by hand) applies at once.
 watch = ["dep:gio", "dep:glib"]
+# Capturing outputs through wlr-screencopy, for screenshots and window pictures.
+capture = ["dep:rustix", "dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr"]
 # Sound through PipeWire: devices and levels, the microphone's level and the sound effects.
 audio = ["dep:pipewire", "dep:async-channel", "dep:serde_json"]
 # Watching config files from a daemon, with inotify and async-io.
@@ -28,6 +30,7 @@ glib-unix = { version = "0.22", optional = true }
 rustix = { version = "1", features = ["fs"], optional = true }
 pipewire = { version = "0.10.1", features = ["v0_3_49"], optional = true }
 wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", optional = true }

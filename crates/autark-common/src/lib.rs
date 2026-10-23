@@ -3,6 +3,8 @@
 #[cfg(feature = "audio")]
 pub mod audio;
 pub mod backlight;
+#[cfg(feature = "capture")]
+pub mod capture;
 pub mod catalog;
 #[cfg(feature = "style")]
 pub mod chrome;

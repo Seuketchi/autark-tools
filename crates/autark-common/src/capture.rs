@@ -170,6 +170,9 @@ pub struct Layout {
     pub y_invert: bool,
 }
 
+/// What a buffer was made for, and the buffer with the memory behind it.
+type Made = ((wl_shm::Format, u32, u32, u32), std::fs::File, wl_shm_pool::WlShmPool, wl_buffer::WlBuffer);
+
 /// One output captured again and again over a connection kept open, with the same buffer each time, for recording.
 pub struct Session {
     queue: wayland_client::EventQueue<State>,
@@ -182,8 +185,7 @@ pub struct Session {
     /// The output's connector name, and its size on the desktop in logical pixels.
     pub name: String,
     pub logical: (i32, i32),
-    /// What the buffer was made for, and the buffer with the memory behind it.
-    made: Option<((wl_shm::Format, u32, u32, u32), std::fs::File, wl_shm_pool::WlShmPool, wl_buffer::WlBuffer)>,
+    made: Option<Made>,
 }
 
 impl Session {
