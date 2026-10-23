@@ -24,4 +24,4 @@ libc = "0.2.191"
 # pam-sys's bindgen and PipeWire's share clang-sys, whose `runtime` feature PipeWire turns on;
 # this turns on the matching bindgen feature so a whole-workspace build loads libclang.
 [build-dependencies]
-bindgen = { version = "0.69", default-features = false, features = ["runtime"] }
+bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
