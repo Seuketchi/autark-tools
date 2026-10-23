@@ -108,6 +108,10 @@ const KNOWN: &[(&str, &str, Is)] = &[
     ("Windows", "Minimise", Opt("wm-actions", "minimize")),
     ("Windows", "Keep on top", Opt("wm-actions", "toggle_always_on_top")),
     ("Windows", "Show the desktop", Opt("wm-actions", "toggle_showdesktop")),
+    ("Windows", "Next app", Command("autark-switcher next")),
+    ("Windows", "Previous app", Command("autark-switcher prev")),
+    ("Windows", "Next window of this app", Command("autark-switcher next-window")),
+    ("Windows", "Previous window of this app", Command("autark-switcher prev-window")),
     ("Windows", "Next window", Opt("switcher", "next_view")),
     ("Windows", "Previous window", Opt("switcher", "prev_view")),
     ("Windows", "Quick window switch", Opt("fast-switcher", "activate")),
@@ -409,6 +413,17 @@ toggle = <super> KEY_TAB
         let other = groups.iter().find(|group| group.name == "Other").unwrap();
         assert_eq!(other.rows[0].label, "my-script --now please");
         assert!(groups.iter().any(|group| group.name == "Sound and display"));
+    }
+
+    #[test]
+    fn the_app_switcher_is_named() {
+        let ini = "[command]\nbinding_switch_next = <alt> KEY_TAB\ncommand_switch_next = autark-switcher next\nbinding_switch_window_prev = <alt> <shift> KEY_GRAVE\ncommand_switch_window_prev = autark-switcher prev-window\n";
+        let groups = groups(ini);
+        let windows = groups.iter().find(|group| group.name == "Windows").unwrap();
+        let row = |label: &str| windows.rows.iter().find(|row| row.label == label).unwrap();
+        assert_eq!(row("Next app").combos, ["<alt> KEY_TAB"]);
+        assert_eq!(row("Previous window of this app").combos, ["<alt> <shift> KEY_GRAVE"]);
+        assert!(groups.iter().all(|group| group.name != "Other"));
     }
 
     #[test]
