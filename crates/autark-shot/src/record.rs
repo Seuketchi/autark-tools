@@ -10,7 +10,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 
-use crate::capture::{Layout, Pixels, Session};
+use autark_common::capture::{Layout, Pixels, Session};
 use crate::opus;
 use crate::vpx::{Encoder, Yuv};
 use crate::webm::Writer;

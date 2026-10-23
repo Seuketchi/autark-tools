@@ -2,6 +2,7 @@
 //! always or only when the pointer reaches its edge. `dock.toml` is watched, so Settings' changes apply at once.
 
 mod config;
+mod snapshot;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -23,6 +24,16 @@ const SPREAD: f64 = 2.2;
 const MARGIN: i32 = 6;
 /// How long the pointer must be gone before a hiding dock goes.
 const HIDE_AFTER: Duration = Duration::from_millis(400);
+/// How long the pointer rests on an app with several windows before its list of them shows, so passing over the dock doesn't.
+const LIST_AFTER: Duration = Duration::from_millis(250);
+/// How long the list stays once the pointer has left, enough to cross the gap onto it.
+const LIST_LINGER: Duration = Duration::from_millis(300);
+/// How long a window has to keep focus before its picture is taken, so it has drawn what it opens with.
+const SETTLE: Duration = Duration::from_millis(600);
+/// A window's picture in the list, in pixels.
+const THUMB: (i32, i32) = (160, 100);
+/// The windows in the list sit side by side, this many to a line at most.
+const PER_LINE: u32 = 4;
 
 fn main() -> glib::ExitCode {
     let app = gtk::Application::builder().application_id("org.autark.Dock").build();
@@ -48,6 +59,18 @@ struct Dock {
     panel: gtk::Box,
     /// One per app, in order, with the separator before the first unpinned app.
     icons: RefCell<Vec<gtk::Image>>,
+    /// The box each icon sits in, in the same order, which an app's window list hangs off.
+    items: RefCell<Vec<gtk::Box>>,
+    /// The list of an app's windows, shown while the pointer is on its icon, and the app it's for.
+    list: RefCell<Option<(String, gtk::Popover)>>,
+    /// Whether the pointer is on that list.
+    on_list: Cell<bool>,
+    /// Counts hovers, so a wait that began for an earlier one knows it's stale.
+    hover_epoch: Cell<u32>,
+    /// Each window's picture as last taken, by window ID, for the window list.
+    pictures: RefCell<HashMap<u32, gdk::Texture>>,
+    /// The window that had focus at the last update.
+    focused: Cell<u32>,
     apps: RefCell<Vec<App>>,
     /// The open windows as last reported, to rebuild from when the config changes.
     windows: RefCell<Vec<Window>>,
@@ -82,6 +105,12 @@ fn start(app: &gtk::Application) {
         revealer,
         panel,
         icons: RefCell::default(),
+        items: RefCell::default(),
+        list: RefCell::default(),
+        on_list: Cell::new(false),
+        hover_epoch: Cell::new(0),
+        pictures: RefCell::default(),
+        focused: Cell::new(0),
         apps: RefCell::default(),
         windows: RefCell::default(),
         toplevels: RefCell::default(),
@@ -161,6 +190,8 @@ fn start(app: &gtk::Application) {
     match toplevels::watch(move |windows| {
         if let Some(dock) = watched.upgrade() {
             *dock.windows.borrow_mut() = windows.to_vec();
+            dock.pictures.borrow_mut().retain(|id, _| windows.iter().any(|window| window.id == *id));
+            dock.focus_moved(windows);
             dock.update();
         }
     }) {
@@ -235,6 +266,8 @@ impl Dock {
 
     /// Rebuilds the icons from the pinned list and the open windows.
     fn update(self: &Rc<Self>) {
+        // The list hangs off an icon that's about to be replaced; it comes back on the new one below.
+        let reopen = self.close_list();
         let installed = gio::AppInfo::all();
         let find = |id: &str| installed.iter().find(|info| info.id().is_some_and(|known| known == id)).cloned();
         let config = self.config.borrow().clone();
@@ -258,6 +291,7 @@ impl Dock {
         }
         let vertical = config.position != Position::Bottom;
         let mut icons = Vec::new();
+        let mut items = Vec::new();
         for (index, app) in apps.iter().enumerate() {
             if !app.pinned && apps.get(index.wrapping_sub(1)).is_some_and(|before| before.pinned) {
                 let separator = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -273,9 +307,15 @@ impl Dock {
             let (item, icon) = self.item(app, index, &config);
             self.panel.append(&item);
             icons.push(icon);
+            items.push(item);
         }
         *self.icons.borrow_mut() = icons;
+        *self.items.borrow_mut() = items;
         *self.apps.borrow_mut() = apps;
+        let reopened = reopen.and_then(|id| self.apps.borrow().iter().position(|app| app.id == id));
+        if let Some(index) = reopened {
+            self.show_list(index);
+        }
 
         // The window is as deep as the dock at its most magnified, so it never resizes under the pointer.
         let depth = config.size * 3 / 2 + 30;
@@ -330,7 +370,29 @@ impl Dock {
             item.add_css_class("running");
         }
         let name = app.info.as_ref().map(|info| info.display_name().to_string()).unwrap_or_else(|| app.id.clone());
-        item.set_tooltip_text(Some(&name));
+        if app.windows.len() < 2 {
+            item.set_tooltip_text(Some(&name));
+        } else {
+            // Its windows are listed instead, which says the name too.
+            let motion = gtk::EventControllerMotion::new();
+            motion.connect_enter({
+                let dock = Rc::downgrade(self);
+                move |_, _, _| {
+                    if let Some(dock) = dock.upgrade() {
+                        dock.hover(index, true);
+                    }
+                }
+            });
+            motion.connect_leave({
+                let dock = Rc::downgrade(self);
+                move |_| {
+                    if let Some(dock) = dock.upgrade() {
+                        dock.hover(index, false);
+                    }
+                }
+            });
+            item.add_controller(motion);
+        }
 
         let click = gtk::GestureClick::builder().button(0).build();
         click.connect_released({
@@ -374,6 +436,166 @@ impl Dock {
         }
     }
 
+    /// A window that has just taken focus gets its picture once it has settled.
+    fn focus_moved(self: &Rc<Self>, windows: &[Window]) {
+        let focused = windows.iter().find(|window| window.activated).map_or(0, |window| window.id);
+        if self.focused.replace(focused) == focused || focused == 0 {
+            return;
+        }
+        let dock = Rc::downgrade(self);
+        glib::timeout_add_local_once(SETTLE, move || {
+            if let Some(dock) = dock.upgrade()
+                && dock.focused.get() == focused
+            {
+                dock.take_picture(focused);
+            }
+        });
+    }
+
+    /// Takes the focused window's picture, unless the window list is up: it would be in the picture.
+    fn take_picture(&self, id: u32) {
+        if self.list.borrow().is_some() {
+            return;
+        }
+        if let Some(texture) = snapshot::focused() {
+            self.pictures.borrow_mut().insert(id, texture);
+        }
+    }
+
+    /// The pointer reached or left an icon: after a short wait, show that app's list of windows or take it away.
+    fn hover(self: &Rc<Self>, index: usize, entered: bool) {
+        let epoch = self.hover_epoch.get().wrapping_add(1);
+        self.hover_epoch.set(epoch);
+        let dock = Rc::downgrade(self);
+        glib::timeout_add_local_once(if entered { LIST_AFTER } else { LIST_LINGER }, move || {
+            let Some(dock) = dock.upgrade() else { return };
+            if dock.hover_epoch.get() != epoch {
+                return;
+            }
+            if entered {
+                dock.show_list(index);
+            } else if !dock.on_list.get() {
+                dock.close_list();
+            }
+        });
+    }
+
+    /// Lists the app's windows by title above its icon (beside it, for a dock on a side): click one to focus it.
+    fn show_list(self: &Rc<Self>, index: usize) {
+        let apps = self.apps.borrow();
+        let Some(app) = apps.get(index).filter(|app| app.windows.len() >= 2) else { return };
+        if self.list.borrow().as_ref().is_some_and(|(id, _)| *id == app.id) {
+            return;
+        }
+        let Some(item) = self.items.borrow().get(index).cloned() else { return };
+        self.close_list();
+        let name = app.info.as_ref().map(|info| info.display_name().to_string()).unwrap_or_else(|| app.id.clone());
+        let (side, offset) = match self.config.borrow().position {
+            Position::Bottom => (gtk::PositionType::Top, (0, -8)),
+            Position::Left => (gtk::PositionType::Right, (8, 0)),
+            Position::Right => (gtk::PositionType::Left, (-8, 0)),
+        };
+        let popover = gtk::Popover::builder().autohide(false).has_arrow(false).position(side).build();
+        popover.set_offset(offset.0, offset.1);
+        popover.add_css_class("windows");
+        let rows = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).min_children_per_line(1).max_children_per_line(PER_LINE.min(app.windows.len() as u32)).row_spacing(4).column_spacing(4).homogeneous(true).build();
+        for window in &app.windows {
+            let title = if window.title.is_empty() { name.as_str() } else { window.title.as_str() };
+            let label = gtk::Label::builder().label(title).xalign(0.5).ellipsize(gtk::pango::EllipsizeMode::End).max_width_chars(20).build();
+            // The picture, or the app's icon where the window hasn't had one taken yet.
+            let thumb = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            thumb.add_css_class("thumb");
+            thumb.set_size_request(THUMB.0, THUMB.1);
+            thumb.set_overflow(gtk::Overflow::Hidden);
+            match self.pictures.borrow().get(&window.id) {
+                Some(texture) => {
+                    let picture = gtk::Picture::builder().paintable(texture).content_fit(gtk::ContentFit::Contain).can_shrink(true).vexpand(true).build();
+                    thumb.append(&picture);
+                }
+                None => {
+                    let icon = match app.info.as_ref().and_then(|info| info.icon()) {
+                        Some(icon) => gtk::Image::from_gicon(&icon),
+                        None => gtk::Image::from_icon_name("application-x-executable"),
+                    };
+                    icon.set_pixel_size(32);
+                    icon.set_vexpand(true);
+                    thumb.append(&icon);
+                }
+            }
+            let contents = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            contents.append(&thumb);
+            contents.append(&label);
+            let row = gtk::Button::builder().child(&contents).build();
+            row.add_css_class("window-row");
+            if window.activated {
+                row.add_css_class("focused");
+            }
+            if window.minimized {
+                row.add_css_class("minimized");
+            }
+            row.connect_clicked({
+                let (dock, id) = (Rc::downgrade(self), window.id);
+                move |_| {
+                    let Some(dock) = dock.upgrade() else { return };
+                    if let Some(toplevels) = &*dock.toplevels.borrow() {
+                        toplevels.activate(id);
+                    }
+                    // Not closed here: this handler belongs to a widget the list owns.
+                    let dock = Rc::downgrade(&dock);
+                    glib::idle_add_local_once(move || {
+                        if let Some(dock) = dock.upgrade() {
+                            dock.close_list();
+                        }
+                    });
+                }
+            });
+            rows.insert(&row, -1);
+        }
+        popover.set_child(Some(&rows));
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_enter({
+            let dock = Rc::downgrade(self);
+            move |_, _, _| {
+                if let Some(dock) = dock.upgrade() {
+                    dock.on_list.set(true);
+                    dock.hover_epoch.set(dock.hover_epoch.get().wrapping_add(1));
+                }
+            }
+        });
+        motion.connect_leave({
+            let dock = Rc::downgrade(self);
+            move |_| {
+                let Some(dock) = dock.upgrade() else { return };
+                dock.on_list.set(false);
+                let epoch = dock.hover_epoch.get().wrapping_add(1);
+                dock.hover_epoch.set(epoch);
+                let dock = Rc::downgrade(&dock);
+                glib::timeout_add_local_once(LIST_LINGER, move || {
+                    if let Some(dock) = dock.upgrade()
+                        && dock.hover_epoch.get() == epoch
+                        && !dock.on_list.get()
+                    {
+                        dock.close_list();
+                        dock.hide_soon();
+                    }
+                });
+            }
+        });
+        popover.add_controller(motion);
+        popover.set_parent(&item);
+        popover.popup();
+        *self.list.borrow_mut() = Some((app.id.clone(), popover));
+    }
+
+    /// Takes the window list away, saying which app's it was.
+    fn close_list(&self) -> Option<String> {
+        let (id, popover) = self.list.borrow_mut().take()?;
+        self.on_list.set(false);
+        popover.popdown();
+        popover.unparent();
+        Some(id)
+    }
+
     /// Brings a hiding dock back while the pointer is on it.
     fn show(&self) {
         if let Some(timer) = self.hide_timer.borrow_mut().take() {
@@ -393,7 +615,7 @@ impl Dock {
         let id = glib::timeout_add_local_once(HIDE_AFTER, move || {
             if let Some(dock) = dock.upgrade() {
                 dock.hide_timer.borrow_mut().take();
-                if dock.pointer.get().is_none() {
+                if dock.pointer.get().is_none() && !dock.on_list.get() {
                     dock.revealer.set_reveal_child(false);
                     dock.update_input_region();
                 }

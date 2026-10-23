@@ -61,3 +61,52 @@ tooltip {
   font-family: "Geist", "Inter", sans-serif;
   font-size: 12px;
 }
+
+/* The list of an app's windows above its icon. Drawn at once, like the switcher. */
+popover.windows,
+popover.windows > contents {
+  animation: none;
+  transition: none;
+}
+
+popover.windows > contents {
+  padding: 6px;
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 12px;
+  background-color: alpha(@sidebar, 0.92);
+  box-shadow: none;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 13px;
+}
+
+popover.windows flowboxchild {
+  padding: 0;
+}
+
+popover.windows button.window-row {
+  min-height: 0;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  box-shadow: none;
+  color: @text;
+}
+
+popover.windows button.window-row:hover {
+  background-color: alpha(@text, 0.10);
+}
+
+popover.windows button.window-row.focused {
+  font-weight: 600;
+}
+
+popover.windows button.window-row.minimized {
+  opacity: 0.6;
+}
+
+popover.windows .thumb {
+  border-radius: 6px;
+  background-color: alpha(@text, 0.06);
+}

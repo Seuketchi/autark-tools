@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use gtk::{gdk, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-use crate::capture::Shot;
+use autark_common::capture::Shot;
 use crate::options::{Options, SaveTo};
 use crate::windows::Window;
 

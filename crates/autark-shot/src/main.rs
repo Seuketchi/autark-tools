@@ -3,7 +3,6 @@
 //! the rest. Pictures go to `~/Pictures/Screenshots` and a thumbnail shows for five seconds. `autark-shot record`
 //! records the screen to `~/Videos/Screen Recordings` until it's run again, `record area` an area of it (see `record`).
 
-mod capture;
 mod clipboard;
 mod opus;
 mod options;
@@ -23,7 +22,7 @@ use std::time::Duration;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
-use capture::{Image, Pixels, Shot};
+use autark_common::capture::{self, Image, Pixels, Shot};
 use options::Options;
 use overlay::Choice;
 
