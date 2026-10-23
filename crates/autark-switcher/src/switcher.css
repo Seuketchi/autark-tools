@@ -1,0 +1,37 @@
+window.switcher {
+  background: none;
+}
+
+.panel {
+  padding: 14px 16px 12px;
+  background-color: alpha(@surface, 0.92);
+  border: 1px solid alpha(@text, 0.10);
+  border-radius: 22px;
+}
+
+/* The first moments of a quick tap, when the panel isn't drawn yet. */
+.panel.waiting {
+  opacity: 0;
+}
+
+.tile {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.tile.selected {
+  background-color: alpha(@text, 0.14);
+}
+
+.name {
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: @text;
+}
+
+.title {
+  margin-top: 2px;
+  font-size: 12px;
+  color: alpha(@text, 0.70);
+}

@@ -35,6 +35,7 @@ members = [
     "crates/autark-settings",
     "crates/autark-shot",
     "crates/autark-showdesktop",
+    "crates/autark-switcher",
     "crates/autark-splash-font",
     "crates/autark-stats",
     "crates/autark-terminal",
