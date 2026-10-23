@@ -1,7 +1,8 @@
 //! Alt+Tab as a still row of app icons, one per app, most recently used first, with the selected app's name and window
 //! title underneath. Nothing slides or fades: it's drawn where it ends up. Wayfire runs `autark-switcher next` or
 //! `prev` on Alt+Tab and Alt+Shift+Tab; the first press selects the previous app, later ones move along the row, and
-//! letting go of Alt switches. A tap that's over before the row would be noticed switches without drawing it.
+//! letting go of Alt switches; `next-window` and `prev-window` (Alt+`) move along the focused app's windows instead.
+//! A tap that's over before the row would be noticed switches without drawing it.
 //! Wayfire has no history to ask, so the first run stays resident, and later runs hand it their command.
 
 use std::cell::{Cell, RefCell};
@@ -29,10 +30,12 @@ fn main() -> glib::ExitCode {
             switcher
         });
         match line.arguments().get(1).and_then(|argument| argument.to_str()) {
-            Some("next") => switcher.step(1),
-            Some("prev") => switcher.step(-1),
+            Some("next") => switcher.step(1, false),
+            Some("prev") => switcher.step(-1, false),
+            Some("next-window") => switcher.step(1, true),
+            Some("prev-window") => switcher.step(-1, true),
             Some(other) => {
-                eprintln!("autark-switcher: unknown command {other:?} (use next or prev)");
+                eprintln!("autark-switcher: unknown command {other:?} (use next, prev, next-window or prev-window)");
                 return glib::ExitCode::FAILURE;
             }
             None => {}
@@ -129,8 +132,8 @@ impl Switcher {
                 match key {
                     gdk::Key::Escape => switcher.close(),
                     gdk::Key::Return | gdk::Key::KP_Enter => switcher.commit(),
-                    gdk::Key::Right => switcher.step(1),
-                    gdk::Key::Left => switcher.step(-1),
+                    gdk::Key::Right => switcher.step(1, false),
+                    gdk::Key::Left => switcher.step(-1, false),
                     _ => return glib::Propagation::Proceed,
                 }
                 glib::Propagation::Stop
@@ -181,6 +184,14 @@ impl Switcher {
         *self.windows.borrow_mut() = windows.to_vec();
     }
 
+    /// One tile per window of the focused app, the one used last first: Alt+` to reach a second window of the same app.
+    fn window_entries(&self) -> Vec<Entry> {
+        let focused = self.windows.borrow().iter().find(|window| window.activated).map(|window| window.id);
+        let apps = self.entries();
+        let Some(app) = apps.into_iter().find(|app| focused.is_none_or(|id| app.windows.iter().any(|window| window.id == id))) else { return Vec::new() };
+        app.windows.into_iter().map(|window| Entry { name: app.name.clone(), icon: app.icon.clone(), windows: vec![window] }).collect()
+    }
+
     /// One tile per app, ordered by the app's most recently used window.
     fn entries(&self) -> Vec<Entry> {
         let windows = self.windows.borrow();
@@ -201,10 +212,11 @@ impl Switcher {
         entries.into_iter().map(|(_, entry)| entry).collect()
     }
 
-    /// Moves the selection along the row, opening it first if this is the first press.
-    fn step(self: &Rc<Self>, delta: isize) {
+    /// Moves the selection along the row, opening it first if this is the first press: the row is the apps, or
+    /// with `within_app` the windows of the focused app.
+    fn step(self: &Rc<Self>, delta: isize, within_app: bool) {
         if !self.open.get() {
-            let entries = self.entries();
+            let entries = if within_app { self.window_entries() } else { self.entries() };
             if entries.len() < 2 {
                 return;
             }
