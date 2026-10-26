@@ -18,6 +18,7 @@ pub fn new(folder: Option<&Path>, exited: impl Fn(&Terminal) + 'static) -> Termi
     terminal.set_mouse_autohide(true);
     terminal.set_audible_bell(false);
     terminal.set_allow_hyperlink(true);
+    links(&terminal);
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
     terminal.add_css_class("autark-terminal");
@@ -46,6 +47,44 @@ pub fn new(folder: Option<&Path>, exited: impl Fn(&Terminal) + 'static) -> Termi
     terminal.connect_child_exited(move |terminal, _status| exited(terminal));
     spawn_shell(&terminal, folder);
     terminal
+}
+
+/// What counts as a link in plain text: a web address, without the full stop or bracket that ends the sentence around it.
+const LINK: &str = r#"https?://[^\s<>"'`]*[^\s<>"'`.,;:!?)\]}]"#;
+/// PCRE2_MULTILINE, which VTE asks of every regex it matches with.
+const PCRE2_MULTILINE: u32 = 0x0000_0400;
+
+/// Web addresses in the text, and links a program marked itself (`ls --hyperlink`, `gcc`), open with Ctrl+click: a plain
+/// click is the program's when it has the mouse (tmux, vim) and starts a selection when it doesn't.
+fn links(terminal: &Terminal) {
+    if let Ok(regex) = vte::Regex::for_match(LINK, PCRE2_MULTILINE) {
+        let tag = terminal.match_add_regex(&regex, 0);
+        terminal.match_set_cursor_name(tag, "pointer");
+    }
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_PRIMARY);
+    // Before the terminal's own handling of the click, which would otherwise take it.
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.connect_pressed({
+        let weak = terminal.downgrade();
+        move |click, _, x, y| {
+            let Some(terminal) = weak.upgrade() else { return };
+            if !click.current_event_state().contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                return;
+            }
+            let uri = terminal.check_hyperlink_at(x, y).or_else(|| terminal.check_match_at(x, y).0);
+            if let Some(uri) = uri {
+                click.set_state(gtk::EventSequenceState::Claimed);
+                let window = terminal.root().and_downcast::<gtk::Window>();
+                gtk::UriLauncher::new(&uri).launch(window.as_ref(), None::<&gio::Cancellable>, move |result| {
+                    if let Err(error) = result {
+                        eprintln!("autark-terminal: couldn't open {uri}: {error}");
+                    }
+                });
+            }
+        }
+    });
+    terminal.add_controller(click);
 }
 
 /// Font, cursor, scrollback and colours, from the config and the desktop's look.
