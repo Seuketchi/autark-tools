@@ -142,6 +142,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-agentd"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "toml",
+ "zbus",
+]
+
+[[package]]
 name = "autark-ai"
 version = "0.0.0"
 dependencies = [

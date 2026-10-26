@@ -1,7 +1,7 @@
-//! Kith's team: named agents, each with a job, a soul and a conversation of its own. Kith itself is always the
-//! first of them, with the soul in `soul.md` and the conversation the launcher shows. The others are folders of
-//! `~/.config/autark-ai/agents/<id>/agent.toml`, with their conversation in
-//! `$XDG_STATE_HOME/autark-ai/agents/<id>/chat.json`: what one says and remembers is never mixed with another's.
+//! The team: named agents, each with a job, a soul, a memory and a conversation of its own. Kith itself is always the
+//! first of them, kept by `autark-ai`: its conversation is the one the launcher shows. The others are folders of
+//! `~/.config/autark-agentd/agents/<id>/` (`agent.toml`, `memory.toml`), with their conversation in
+//! `$XDG_STATE_HOME/autark-agentd/agents/<id>/chat.json`: what one says and remembers is never mixed with another's.
 
 use std::path::{Path, PathBuf};
 
@@ -37,16 +37,12 @@ pub struct Agent {
     pub can: Vec<String>,
     /// Skills it works by, as `SKILL.md` folders (see `skill_text`): their text is part of its instructions.
     pub skills: Vec<String>,
+    /// The agents it may hand work to, by id.
+    pub links: Vec<String>,
 }
 
 /// What an agent can be allowed to look at, as `senses` names them.
 pub const ABILITIES: [&str; 6] = ["mail", "calendar", "tasks", "notes", "web", "laptop"];
-
-impl Agent {
-    pub fn allows(&self, ability: &str) -> bool {
-        self.id == KITH || self.can.iter().any(|can| can == ability)
-    }
-}
 
 #[derive(Serialize, Deserialize, Default)]
 struct File {
@@ -61,6 +57,8 @@ struct File {
     can: Vec<String>,
     #[serde(default)]
     skills: Vec<String>,
+    #[serde(default)]
+    links: Vec<String>,
 }
 
 fn home() -> PathBuf {
@@ -68,11 +66,21 @@ fn home() -> PathBuf {
 }
 
 fn config_root() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("autark-ai/agents")
+    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("autark-agentd/agents")
+}
+
+/// Where the daemon keeps what it writes as it runs: the event log, the mailbox and each agent's conversation.
+pub fn state_base() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state")).join("autark-agentd")
 }
 
 fn state_root() -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state")).join("autark-ai/agents")
+    state_base().join("agents")
+}
+
+/// Where an agent's memory is kept, `None` for an id that isn't a slug.
+pub fn memory_path(id: &str) -> Option<PathBuf> {
+    (id != KITH && valid(id)).then(|| config_root().join(id).join("memory.toml"))
 }
 
 /// Where an agent's conversation is kept. Kith's is the one the launcher shows.
@@ -94,6 +102,7 @@ fn kith() -> Agent {
         soul: String::new(),
         can: ABILITIES.map(str::to_owned).to_vec(),
         skills: Vec::new(),
+        links: Vec::new(),
     }
 }
 
@@ -110,7 +119,7 @@ fn all_in(root: &Path) -> Vec<Agent> {
         .filter_map(|entry| {
             let id = entry.file_name().into_string().ok().filter(|id| valid(id) && id != KITH)?;
             let file: File = toml::from_str(&std::fs::read_to_string(entry.path().join("agent.toml")).ok()?).ok()?;
-            Some(Agent { id, name: file.name, colour: file.colour % COLOURS, job: file.job, soul: file.soul, can: file.can, skills: file.skills })
+            Some(Agent { id, name: file.name, colour: file.colour % COLOURS, job: file.job, soul: file.soul, can: file.can, skills: file.skills, links: file.links })
         })
         .collect();
     found.sort_by_key(|agent| agent.name.to_lowercase());
@@ -124,11 +133,91 @@ pub fn get(id: &str) -> Option<Agent> {
 }
 
 /// Makes an agent, and returns it. The id comes from the name.
-pub fn create(name: &str, job: &str, soul: &str, can: &[String], skills: &[String]) -> Result<Agent, String> {
-    create_in(&config_root(), name, job, soul, can, skills)
+pub fn create(name: &str, job: &str, soul: &str, can: &[String], skills: &[String], links: &[String]) -> Result<Agent, String> {
+    create_in(&config_root(), name, job, soul, can, skills, links)
 }
 
-fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], skills: &[String]) -> Result<Agent, String> {
+/// What `SetAgent` may change; a field left out stays as it is. The name stays: a conversation says who spoke.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Patch {
+    job: Option<String>,
+    soul: Option<String>,
+    can: Option<Vec<String>>,
+    skills: Option<Vec<String>>,
+    links: Option<Vec<String>>,
+}
+
+/// Changes an agent's job, soul, abilities, skills or links, and returns it. Kith's can't be changed.
+pub fn update(id: &str, patch: &Patch) -> Result<Agent, String> {
+    update_in(&config_root(), id, patch)
+}
+
+fn update_in(root: &Path, id: &str, patch: &Patch) -> Result<Agent, String> {
+    if id == KITH {
+        return Err("Kith's job and soul are kept in its own files".to_owned());
+    }
+    let existing = all_in(root);
+    let mut agent = existing.iter().find(|agent| agent.id == id).cloned().ok_or_else(|| format!("there is no agent {id}"))?;
+    if let Some(job) = &patch.job {
+        agent.job = job.trim().to_owned();
+    }
+    if let Some(soul) = &patch.soul {
+        agent.soul = soul.trim().to_owned();
+    }
+    if agent.job.chars().count() > JOB || agent.soul.len() > SOUL {
+        return Err("that job or soul is too long".to_owned());
+    }
+    if let Some(can) = &patch.can {
+        agent.can = abilities(can);
+    }
+    if let Some(skills) = &patch.skills {
+        agent.skills = slugs(skills);
+    }
+    if let Some(links) = &patch.links {
+        agent.links = linked(links, &existing, id)?;
+    }
+    write(root, &agent)?;
+    Ok(agent)
+}
+
+/// The abilities asked for that are real ones, in their usual order.
+fn abilities(asked: &[String]) -> Vec<String> {
+    ABILITIES.iter().filter(|ability| asked.iter().any(|asked| asked == *ability)).map(|ability| (*ability).to_owned()).collect()
+}
+
+fn slugs(skills: &[String]) -> Vec<String> {
+    skills.iter().map(|skill| skill.trim().to_owned()).filter(|skill| valid(skill)).take(MAX_SKILLS).collect()
+}
+
+/// The agents to link to: ones on the team that are not `own`, each once. Kith can be handed work too.
+fn linked(links: &[String], existing: &[Agent], own: &str) -> Result<Vec<String>, String> {
+    let mut found: Vec<String> = Vec::new();
+    for link in links {
+        let link = link.trim();
+        if link == own {
+            return Err("an agent can't be linked to itself".to_owned());
+        }
+        if !existing.iter().any(|agent| agent.id == link) {
+            return Err(format!("there is no agent {link} to link to"));
+        }
+        if !found.iter().any(|seen| seen == link) {
+            found.push(link.to_owned());
+        }
+    }
+    Ok(found)
+}
+
+fn write(root: &Path, agent: &Agent) -> Result<(), String> {
+    let file =
+        File { name: agent.name.clone(), colour: agent.colour, job: agent.job.clone(), soul: agent.soul.clone(), can: agent.can.clone(), skills: agent.skills.clone(), links: agent.links.clone() };
+    let dir = root.join(&agent.id);
+    std::fs::create_dir_all(&dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
+    let text = toml::to_string(&file).map_err(|err| err.to_string())?;
+    std::fs::write(dir.join("agent.toml"), text).map_err(|err| format!("writing {}: {err}", dir.display()))
+}
+
+fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], skills: &[String], links: &[String]) -> Result<Agent, String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > NAME {
         return Err(format!("an agent's name is 1 to {NAME} characters"));
@@ -143,17 +232,14 @@ fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], ski
     if existing.iter().any(|agent| agent.name.eq_ignore_ascii_case(name)) {
         return Err(format!("there is an agent called {name} already"));
     }
-    let can: Vec<String> = ABILITIES.iter().filter(|ability| can.iter().any(|asked| asked == *ability)).map(|ability| (*ability).to_owned()).collect();
-    let skills: Vec<String> = skills.iter().map(|skill| skill.trim().to_owned()).filter(|skill| valid(skill)).take(MAX_SKILLS).collect();
+    let can = abilities(can);
+    let skills = slugs(skills);
     let id = slug(name, &existing);
+    let links = linked(links, &existing, &id)?;
     // Each new agent takes the colour least used, so a team looks varied.
     let colour = (0..COLOURS).min_by_key(|colour| existing.iter().filter(|agent| agent.colour == *colour).count()).unwrap_or(0);
-    let agent = Agent { id: id.clone(), name: name.to_owned(), colour, job: job.trim().to_owned(), soul: soul.trim().to_owned(), can, skills };
-    let file = File { name: agent.name.clone(), colour, job: agent.job.clone(), soul: agent.soul.clone(), can: agent.can.clone(), skills: agent.skills.clone() };
-    let dir = root.join(&id);
-    std::fs::create_dir_all(&dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
-    let text = toml::to_string(&file).map_err(|err| err.to_string())?;
-    std::fs::write(dir.join("agent.toml"), text).map_err(|err| format!("writing {}: {err}", dir.display()))?;
+    let agent = Agent { id, name: name.to_owned(), colour, job: job.trim().to_owned(), soul: soul.trim().to_owned(), can, skills, links };
+    write(root, &agent)?;
     Ok(agent)
 }
 
@@ -191,19 +277,19 @@ fn seed_lenses_in(root: &Path, dirs: &[PathBuf]) {
         if skill_in(dirs, skill).is_none() {
             continue;
         }
-        if let Err(err) = create_in(root, name, job, "", &[], &[skill.to_owned()]) {
-            eprintln!("ai: making the agent {name}: {err}");
+        if let Err(err) = create_in(root, name, job, "", &[], &[skill.to_owned()], &[]) {
+            eprintln!("agentd: making the agent {name}: {err}");
         }
     }
     if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
-        eprintln!("ai: marking the lens agents as made in {}", root.display());
+        eprintln!("agentd: marking the lens agents as made in {}", root.display());
     }
 }
 
 /// Where skills are looked for: a folder of your own for the agents, then Claude Code's.
 fn skill_dirs() -> Vec<PathBuf> {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
-    vec![config.join("autark-ai/skills-md"), home().join(".claude/skills")]
+    vec![config.join("autark-agentd/skills-md"), home().join(".claude/skills")]
 }
 
 /// A skill's text: its `SKILL.md` without the front matter, at most 10 KB. `None` when it isn't there.
@@ -247,42 +333,6 @@ fn without_sources(text: &str) -> String {
     out
 }
 
-/// The starters' first names, and the names they have now: an install that made them under the old ones is renamed
-/// once. Only an agent still called its old name is touched, so a name you chose is never changed.
-const RENAMED: [(&str, &str, &str); 10] = [
-    ("chief", "Chief", "ATLAS"),
-    ("inbox", "Inbox", "PIPER"),
-    ("scout", "Scout", "RAVEN"),
-    ("scribe", "Scribe", "QUILL"),
-    ("accountant", "Accountant", "LEDGER"),
-    ("tax", "Tax", "LEVY"),
-    ("counsel", "Counsel", "GAVEL"),
-    ("doctor", "Doctor", "PULSE"),
-    ("therapist", "Therapist", "HAVEN"),
-    ("engineer", "Engineer", "FORGE"),
-];
-
-pub fn rename_starters() {
-    rename_starters_in(&config_root());
-}
-
-fn rename_starters_in(root: &Path) {
-    for (id, old, new) in RENAMED {
-        let path = root.join(id).join("agent.toml");
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(mut file) = toml::from_str::<File>(&text) else { continue };
-        if file.name != old || all_in(root).iter().any(|agent| agent.name.eq_ignore_ascii_case(new)) {
-            continue;
-        }
-        file.name = new.to_owned();
-        if let Ok(text) = toml::to_string(&file)
-            && let Err(err) = std::fs::write(&path, text)
-        {
-            eprintln!("ai: renaming {old} to {new}: {err}");
-        }
-    }
-}
-
 /// Makes the starter team when this install hasn't had one.
 pub fn seed() {
     seed_in(&config_root());
@@ -295,12 +345,12 @@ fn seed_in(root: &Path) {
     }
     for (name, job, soul, can) in STARTERS {
         let can: Vec<String> = can.iter().map(|can| (*can).to_owned()).collect();
-        if let Err(err) = create_in(root, name, job, soul, &can, &[]) {
-            eprintln!("ai: making the agent {name}: {err}");
+        if let Err(err) = create_in(root, name, job, soul, &can, &[], &[]) {
+            eprintln!("agentd: making the agent {name}: {err}");
         }
     }
     if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
-        eprintln!("ai: marking the starter team as made in {}", root.display());
+        eprintln!("agentd: marking the starter team as made in {}", root.display());
     }
 }
 
@@ -351,7 +401,7 @@ mod tests {
     use super::*;
 
     fn folder(test: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("autark-ai-agents-{test}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("agentd-agents-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -359,8 +409,8 @@ mod tests {
     #[test]
     fn kith_is_first_and_the_rest_are_by_name() {
         let root = folder("order");
-        create_in(&root, "Sales Outbound", "Draft outreach.", "", &[], &[]).unwrap();
-        create_in(&root, "Inbox Manager", "Keep the inbox at zero.", "Brisk.", &[], &[]).unwrap();
+        create_in(&root, "Sales Outbound", "Draft outreach.", "", &[], &[], &[]).unwrap();
+        create_in(&root, "Inbox Manager", "Keep the inbox at zero.", "Brisk.", &[], &[], &[]).unwrap();
         let names: Vec<String> = all_in(&root).into_iter().map(|agent| agent.name).collect();
         assert_eq!(names, ["Kith", "Inbox Manager", "Sales Outbound"]);
         let _ = std::fs::remove_dir_all(root);
@@ -369,22 +419,22 @@ mod tests {
     #[test]
     fn an_agent_is_kept_with_its_job_and_soul() {
         let root = folder("kept");
-        create_in(&root, "Expense Manager", "File receipts.", "Short and exact.", &["mail".to_owned(), "bogus".to_owned()], &[]).unwrap();
+        create_in(&root, "Expense Manager", "File receipts.", "Short and exact.", &["mail".to_owned(), "bogus".to_owned()], &[], &[]).unwrap();
         let agent = all_in(&root).into_iter().find(|agent| agent.id == "expense-manager").unwrap();
         assert_eq!((agent.job.as_str(), agent.soul.as_str()), ("File receipts.", "Short and exact."));
         // Only a real ability is kept, and it is all the agent may look at.
         assert_eq!(agent.can, ["mail"]);
-        assert!(agent.allows("mail") && !agent.allows("calendar") && kith().allows("calendar"));
+        assert_eq!(kith().can.len(), ABILITIES.len());
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn a_name_is_not_used_twice_and_never_takes_kiths_id() {
         let root = folder("names");
-        create_in(&root, "Scout", "", "", &[], &[]).unwrap();
-        assert!(create_in(&root, "scout", "", "", &[], &[]).is_err());
-        assert_eq!(create_in(&root, "Kith!", "", "", &[], &[]).unwrap().id, "kith-2");
-        assert_eq!(create_in(&root, "Scout?", "", "", &[], &[]).unwrap().id, "scout-2");
+        create_in(&root, "Scout", "", "", &[], &[], &[]).unwrap();
+        assert!(create_in(&root, "scout", "", "", &[], &[], &[]).is_err());
+        assert_eq!(create_in(&root, "Kith!", "", "", &[], &[], &[]).unwrap().id, "kith-2");
+        assert_eq!(create_in(&root, "Scout?", "", "", &[], &[], &[]).unwrap().id, "scout-2");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -401,7 +451,7 @@ mod tests {
     #[test]
     fn kith_cannot_be_deleted_and_others_can() {
         let root = folder("delete");
-        let agent = create_in(&root, "Talent Scout", "", "", &[], &[]).unwrap();
+        let agent = create_in(&root, "Talent Scout", "", "", &[], &[], &[]).unwrap();
         assert!(delete_in(&root, &root, KITH).is_err());
         delete_in(&root, &root, &agent.id).unwrap();
         assert_eq!(all_in(&root).len(), 1);
@@ -411,7 +461,7 @@ mod tests {
     #[test]
     fn new_agents_take_different_colours() {
         let root = folder("colours");
-        let colours: Vec<u8> = ["A", "B", "C"].iter().map(|name| create_in(&root, name, "", "", &[], &[]).unwrap().colour).collect();
+        let colours: Vec<u8> = ["A", "B", "C"].iter().map(|name| create_in(&root, name, "", "", &[], &[], &[]).unwrap().colour).collect();
         assert_eq!(colours.len(), 3);
         assert!(colours[0] != colours[1] && colours[1] != colours[2] && colours[0] != colours[2]);
         let _ = std::fs::remove_dir_all(root);
@@ -490,20 +540,33 @@ mod tests {
     }
 
     #[test]
-    fn an_install_with_the_first_names_is_renamed_and_a_chosen_name_is_kept() {
-        let root = folder("renamed");
-        create_in(&root, "Chief", "Plan the day.", "", &[], &[]).unwrap();
-        create_in(&root, "Inbox", "Mail.", "", &[], &[]).unwrap();
-        // The user renamed this one themselves.
-        let scout = create_in(&root, "Scout", "Web.", "", &[], &[]).unwrap();
-        let path = root.join(&scout.id).join("agent.toml");
-        std::fs::write(&path, std::fs::read_to_string(&path).unwrap().replace("name = \"Scout\"", "name = \"Finder\"")).unwrap();
-        rename_starters_in(&root);
-        let names: Vec<String> = all_in(&root).into_iter().skip(1).map(|agent| agent.name).collect();
-        assert_eq!(names, ["ATLAS", "Finder", "PIPER"]);
-        // Its job and id are untouched.
-        let atlas = all_in(&root).into_iter().find(|agent| agent.name == "ATLAS").unwrap();
-        assert_eq!((atlas.id.as_str(), atlas.job.as_str()), ("chief", "Plan the day."));
+    fn links_name_agents_on_the_team_and_never_the_agent_itself() {
+        let root = folder("links");
+        create_in(&root, "Piper", "", "", &[], &[], &[]).unwrap();
+        let atlas = create_in(&root, "Atlas", "", "", &[], &[], &["piper".to_owned(), "kith".to_owned(), "piper".to_owned()]).unwrap();
+        assert_eq!(atlas.links, ["piper", "kith"]);
+        assert!(create_in(&root, "Raven", "", "", &[], &[], &["nobody".to_owned()]).is_err());
+        assert!(update_in(&root, "atlas", &Patch { links: Some(vec!["atlas".to_owned()]), ..Patch::default() }).is_err());
+        assert_eq!(all_in(&root).iter().find(|agent| agent.id == "atlas").unwrap().links, ["piper", "kith"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_agent_is_changed_a_field_at_a_time_and_kith_is_not() {
+        let root = folder("update");
+        create_in(&root, "Piper", "Read mail.", "Brisk.", &["mail".to_owned()], &[], &[]).unwrap();
+        let piper = update_in(
+            &root,
+            "piper",
+            &Patch { job: Some(" Read mail, then calendar. ".to_owned()), can: Some(vec!["calendar".to_owned(), "mail".to_owned(), "bogus".to_owned()]), ..Patch::default() },
+        )
+        .unwrap();
+        assert_eq!((piper.job.as_str(), piper.soul.as_str()), ("Read mail, then calendar.", "Brisk."));
+        assert_eq!(piper.can, ["mail", "calendar"]);
+        assert_eq!(all_in(&root).iter().find(|agent| agent.id == "piper").unwrap(), &piper);
+        assert!(update_in(&root, KITH, &Patch::default()).is_err());
+        assert!(update_in(&root, "nobody", &Patch::default()).is_err());
+        assert!(update_in(&root, "piper", &Patch { soul: Some("x".repeat(SOUL + 1)), ..Patch::default() }).is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }
