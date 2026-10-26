@@ -115,6 +115,18 @@ weekdays at 8:00" over it.
 - **It is read-only like any answer:** the agent looks only at its `can` list, and a job can hand work on, within the
   mailbox's limits.
 
+## Telling you
+
+An answer you didn't ask for just now is the one you'd miss: a scheduled run's, or an agent's reply to work it handed on.
+When one lands, `autark-agentd` puts a card in the notification centre, quietly (the same `x-autark-quiet` card Kith's
+other suggestions are: no banner, no chime, so Focus and a presentation are not broken into), titled with the agent
+("QUILL · scheduled", or the asker's name for a reply) and holding the first 140 characters: "RAVEN replied: Friday is
+free." A run that failed says so ("Couldn't run: Ollama isn't running"), so a job doesn't go quiet. The roster puts a dot and
+bold words on that agent's row until you open the conversation with the window in front (or come back to it with that
+conversation open); `MarkRead` is what tells the daemon. An answer to what you said yourself is never news, and neither
+is the first half of a handoff, only the reply. Which agents are unread is kept while the daemon runs, not across a restart:
+the conversation still holds the answer. Clicking a card doesn't open the roster yet.
+
 Heartbeats, as OpenClaw's, are next: an agent wakes every so often, code runs the cheap checks first (is there new mail? has
 the calendar changed?), and only when something changed does the model get called. That is what makes a 4B model usable for
 standing work, and it needs those checks to exist in `autark-ai` first.
@@ -128,6 +140,7 @@ standing work, and it needs those checks to exist in `autark-ai` first.
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation |
 | `Memory(id)` / `Remember(id, text)` / `Forget(id, n)` | Its memory |
 | `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, n)` / `SetJobEnabled(id, n, on)` / `RunJob(id, n)` | Its schedule |
+| `MarkRead(id)` | You've seen what an agent said while you weren't looking; the `unread` flag in `Agents()` goes |
 | `Events(since)` | What happened, as JSON lines |
 | signals `AgentChanged(id)`, `AgentsChanged()`, `AnswerPiece(answer, offset, text)` | What clients follow |
 
@@ -147,4 +160,5 @@ agent's whole answer.
    would do as an action is left to the launcher's panel, where it asks first.
 2. **The mailbox** (stacked on the first): `links`, `HANDOFF`, depth limit, both chats showing it.
 3. **The schedule** (stacked on the mailbox), then **heartbeats**.
-4. **Clients:** the launcher and the bar show a waiting agent; a Kitchen agent that reads `kitchend`.
+4. **Clients:** a quiet card and an unread dot when an answer lands (the notification-centre side is done; the launcher
+   and the bar showing a waiting agent are not), and a Kitchen agent that reads `kitchend`.

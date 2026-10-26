@@ -2,7 +2,7 @@
 //! `autark-ai` reads what it is allowed to read and runs the model. A client (the roster, later the launcher or the bar)
 //! talks to this and nothing else.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,7 @@ use crate::jobs;
 use crate::mailbox;
 use crate::memory;
 use crate::notes;
+use crate::notify::{self, News};
 use crate::prompt;
 use crate::remember;
 use crate::when::{self, When};
@@ -52,6 +53,8 @@ struct Meta {
     chain: Vec<String>,
     /// The agent that asked for it, which gets the answer back.
     origin: Option<String>,
+    /// Whether a schedule started it, so you weren't there to see it arrive.
+    scheduled: bool,
 }
 
 /// An answer being written by an agent here.
@@ -84,11 +87,13 @@ pub struct Ended {
     /// Further events: kind, agent and what.
     logged: Vec<(&'static str, String, String)>,
     delivery: Option<Delivery>,
+    /// Answers that landed without you asking just now.
+    news: Vec<News>,
 }
 
 impl Ended {
     fn of(agent: &str, kind: &'static str, said: String) -> Self {
-        Self { agent: agent.to_owned(), kind, said, changed: Vec::new(), logged: Vec::new(), delivery: None }
+        Self { agent: agent.to_owned(), kind, said, changed: Vec::new(), logged: Vec::new(), delivery: None, news: Vec::new() }
     }
 }
 
@@ -111,6 +116,8 @@ struct Core {
     pending: HashMap<u32, Pending>,
     /// What `autark-ai` said of an answer before its id reached `say`.
     early: VecDeque<(u32, Heard)>,
+    /// The agents with an answer you haven't opened the conversation for. Kept while the daemon runs.
+    unread: HashSet<String>,
 }
 
 pub struct Shared {
@@ -213,6 +220,14 @@ impl Core {
             chat.save();
             ended.changed.push(asker.id.clone());
             ended.logged.push(("replied", from.id.clone(), format!("to {}", asker.id)));
+            ended.news.push(notify::replied(&asker.id, &asker.name, &from.name, &said, well));
+        } else if pending.meta.scheduled
+            && let Some(from) = &from
+        {
+            ended.news.push(notify::scheduled(&from.id, &from.name, &said, well));
+        }
+        for news in &ended.news {
+            self.unread.insert(news.agent.clone());
         }
         ended.said = said;
         Some(ended)
@@ -237,7 +252,8 @@ impl Core {
                 chain.push(to.id.clone());
                 ended.changed.push(to.id.clone());
                 ended.logged.push(("handoff", from.id.clone(), format!("to {}: {}", to.id, asked.brief)));
-                ended.delivery = Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()) } });
+                ended.delivery =
+                    Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()), scheduled: false } });
             }
             Err(why) => {
                 self.chat(from).push(What::Handoff { to: asked.to.clone(), name: asked.to.clone(), brief: asked.brief, refused: why.clone() });
@@ -335,6 +351,7 @@ impl Agents {
             false => Default::default(),
         };
         let mut core = self.shared.core();
+        let unread = core.unread.clone();
         let rows: Vec<Value> = team
             .iter()
             .map(|agent| {
@@ -345,7 +362,7 @@ impl Agents {
                     let (last, time) = chat.last_said();
                     (last, time, chat.writing())
                 };
-                json!({ "id": agent.id, "name": agent.name, "colour": agent.colour, "job": agent.job, "can": agent.can, "skills": agent.skills, "links": agent.links, "last": last, "time": time, "writing": writing })
+                json!({ "id": agent.id, "name": agent.name, "colour": agent.colour, "job": agent.job, "can": agent.can, "skills": agent.skills, "links": agent.links, "last": last, "time": time, "writing": writing, "unread": unread.contains(&agent.id) })
             })
             .collect();
         Ok(Value::Array(rows).to_string())
@@ -464,7 +481,7 @@ impl Agents {
             (entry, conversation)
         };
         Self::agent_changed(&emitter, &agent.id).await?;
-        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: false };
         match start_answer(&self.shared, connection, &agent, entry, &text, &conversation, None, meta).await {
             Ok((answer, ended)) => {
                 // An answer that failed at once has ended by now.
@@ -480,6 +497,15 @@ impl Agents {
         }
     }
 
+    /// Says you have seen what an agent said while you weren't looking (the roster calls it when you open the conversation).
+    /// Nothing to do, and no error, if there was nothing unread.
+    async fn mark_read(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String) -> Result<(), Error> {
+        if self.shared.core().unread.remove(&id) {
+            Self::agent_changed(&emitter, &id).await?;
+        }
+        Ok(())
+    }
+
     /// Clears an agent's conversation.
     async fn clear(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String) -> Result<(), Error> {
         let agent = find(&id)?;
@@ -488,6 +514,7 @@ impl Agents {
         } else {
             let mut core = self.shared.core();
             core.pending.retain(|_, pending| pending.agent != id);
+            core.unread.remove(&id);
             let chat = core.chat(&agent);
             chat.clear();
             chat.save();
@@ -683,7 +710,7 @@ async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitte
     if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
         eprintln!("agentd: sending a change: {err}");
     }
-    let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+    let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: true };
     match start_answer(&shared, &connection, &agent, entry, &prompt, &conversation, None, meta).await {
         Ok((_, ended)) => settle(shared, connection, emitter, ended).await,
         Err(why) => {
@@ -868,6 +895,9 @@ fn settle(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmit
                 eprintln!("agentd: sending a change: {err}");
             }
         }
+        for news in &ended.news {
+            notify::send(&connection, news).await;
+        }
         if let Some(delivery) = ended.delivery {
             let Delivery { from, to, entry, brief, conversation, meta } = delivery;
             match start_answer(&shared, &connection, &to, entry, &brief, &conversation, Some(&from.name), meta).await {
@@ -992,7 +1022,7 @@ mod tests {
     }
 
     fn in_chain(ids: &[&str], depth: u8) -> Meta {
-        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None }
+        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None, scheduled: false }
     }
 
     #[test]
@@ -1050,7 +1080,7 @@ mod tests {
     #[test]
     fn an_answer_to_handed_over_work_goes_back_to_the_agent_that_asked() {
         let team = [linked("atlas", &["raven"]), linked("raven", &[])];
-        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
         let mut core = handoff_core(&team, "raven", "", meta.clone());
         core.hear(5, Heard::Piece("Rain, 28 degrees.".into()), &team);
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
@@ -1065,12 +1095,46 @@ mod tests {
     #[test]
     fn an_answer_that_hands_on_after_being_handed_work_does_both() {
         let team = [linked("atlas", &["raven"]), linked("raven", &["quill"]), linked("quill", &[])];
-        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
         let mut core = handoff_core(&team, "raven", "Ask QUILL too.\nHANDOFF quill: find my trip notes", meta);
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
         assert_eq!(ended.delivery.as_ref().map(|delivery| delivery.meta.depth), Some(2));
         assert_eq!(ended.delivery.as_ref().map(|delivery| delivery.meta.chain.clone()), Some(vec!["atlas".to_owned(), "raven".to_owned(), "quill".to_owned()]));
         assert!(ended.changed.contains(&"quill".to_owned()) && ended.changed.contains(&"atlas".to_owned()));
         assert!(matches!(&core.chat(&team[0]).entries()[0].what, What::From { text, reply: true, .. } if text == "Ask QUILL too."));
+    }
+
+    #[test]
+    fn a_reply_to_handed_over_work_is_news_for_the_asker_and_unread_there() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
+        let mut core = handoff_core(&team, "raven", "", meta);
+        core.hear(5, Heard::Piece("Rain.".into()), &team);
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert_eq!(ended.news.iter().map(|news| (news.agent.as_str(), news.body.as_str())).collect::<Vec<_>>(), [("atlas", "RAVEN replied: Rain.")]);
+        assert_eq!(core.unread, HashSet::from(["atlas".to_owned()]));
+    }
+
+    #[test]
+    fn a_scheduled_answer_is_news_for_the_agent_that_ran_it_even_when_it_failed() {
+        let team = [linked("piper", &[])];
+        let meta = Meta { depth: 0, chain: vec!["piper".into()], origin: None, scheduled: true };
+        let mut core = handoff_core(&team, "piper", "", meta.clone());
+        core.hear(5, Heard::Piece("Two wrote.".into()), &team);
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert_eq!(ended.news.iter().map(|news| (news.title.as_str(), news.body.as_str())).collect::<Vec<_>>(), [("PIPER · scheduled", "Two wrote.")]);
+        let mut failed = handoff_core(&team, "piper", "", meta);
+        let ended = failed.hear(5, Heard::Done("Ollama isn't running".into()), &team).unwrap();
+        assert_eq!(ended.news[0].body, "Couldn't run: Ollama isn't running");
+        assert!(failed.unread.contains("piper"));
+    }
+
+    #[test]
+    fn an_answer_to_you_is_not_news() {
+        let team = [linked("piper", &[])];
+        let mut core = handoff_core(&team, "piper", "", in_chain(&["piper"], 0));
+        core.hear(5, Heard::Piece("Hi.".into()), &team);
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert!(ended.news.is_empty() && core.unread.is_empty());
     }
 }

@@ -9,6 +9,7 @@ mod jobs;
 mod mailbox;
 mod memory;
 mod notes;
+mod notify;
 mod prompt;
 mod remember;
 mod service;

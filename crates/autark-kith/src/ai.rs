@@ -11,6 +11,7 @@ pub trait Agents {
     fn history(&self, id: &str) -> zbus::Result<String>;
     fn say(&self, id: &str, text: &str) -> zbus::Result<(u32, u64)>;
     fn clear(&self, id: &str) -> zbus::Result<()>;
+    fn mark_read(&self, id: &str) -> zbus::Result<()>;
     fn memory(&self, id: &str) -> zbus::Result<String>;
     fn remember(&self, id: &str, text: &str) -> zbus::Result<()>;
     fn forget(&self, id: &str, n: u32) -> zbus::Result<()>;
