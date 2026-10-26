@@ -333,6 +333,12 @@ impl Monitor {
                             _ => vec![cell(String::new(), 120), cell(String::new(), 120), cell(String::new(), 100)],
                         };
                         w.rows.append(&process_row(&process.name, process.pid, cells));
+                        if tab == Tab::Cpu {
+                            for thread in &process.threads {
+                                let cells = vec![cell(format!("{:.1}", thread.cpu), 110), cell(String::new(), 100), cell(String::new(), 110)];
+                                w.rows.append(&process_row(&format!("      ↳ {}", thread.name), thread.tid, cells));
+                            }
+                        }
                     }
                 }
             }
