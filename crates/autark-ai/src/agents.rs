@@ -160,21 +160,21 @@ fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], ski
 /// The team a new install starts with, once: a folder marks that it was made, so an agent deleted later stays gone.
 /// Each looks at only what its job needs.
 const STARTERS: [(&str, &str, &str, &[&str]); 4] = [
-    ("Chief", "Plan the user's day: what is on the calendar and the task board, and what to do first. Be brief and put the first thing first.", "Calm and decisive.", &["calendar", "tasks", "notes"]),
-    ("Inbox", "Keep the user's inbox at zero: say who has written and what needs a reply, most urgent first. You only read; you never send.", "Brisk and dry.", &["mail"]),
-    ("Scout", "Look things up on the web for the user and say which site each fact comes from.", "Curious and exact.", &["web"]),
-    ("Scribe", "Find what the user has written or said before in their notes and conversations, and bring it back word for word.", "Quiet and precise.", &["notes"]),
+    ("ATLAS", "Plan the user's day: what is on the calendar and the task board, and what to do first. Be brief and put the first thing first.", "Calm and decisive.", &["calendar", "tasks", "notes"]),
+    ("PIPER", "Keep the user's inbox at zero: say who has written and what needs a reply, most urgent first. You only read; you never send.", "Brisk and dry.", &["mail"]),
+    ("RAVEN", "Look things up on the web for the user and say which site each fact comes from.", "Curious and exact.", &["web"]),
+    ("QUILL", "Find what the user has written or said before in their notes and conversations, and bring it back word for word.", "Quiet and precise.", &["notes"]),
 ];
 
 /// The profession lenses: an agent for each skill that is on this machine, made once. They look at nothing of
 /// the user's: they work from what the user tells them.
 const LENSES: [(&str, &str, &str); 6] = [
-    ("Accountant", "accountant", "Work the user's books or financial-statements question the way an accountant does, by your skill."),
-    ("Tax", "tax-advisor", "Work the user's tax question the way a tax advisor does, by your skill."),
-    ("Counsel", "lawyer", "Think the user's legal question through the way a lawyer opens a matter, by your skill."),
-    ("Doctor", "doctor", "Work the user's health question the way a physician does, by your skill. You never diagnose."),
-    ("Therapist", "psychiatrist", "Work the user's mental-health question the way a psychiatrist opens an evaluation, by your skill."),
-    ("Engineer", "engineer", "Work the user's design or failure problem in a professional engineer's order, by your skill."),
+    ("LEDGER", "accountant", "Work the user's books or financial-statements question the way an accountant does, by your skill."),
+    ("LEVY", "tax-advisor", "Work the user's tax question the way a tax advisor does, by your skill."),
+    ("GAVEL", "lawyer", "Think the user's legal question through the way a lawyer opens a matter, by your skill."),
+    ("PULSE", "doctor", "Work the user's health question the way a physician does, by your skill. You never diagnose."),
+    ("HAVEN", "psychiatrist", "Work the user's mental-health question the way a psychiatrist opens an evaluation, by your skill."),
+    ("FORGE", "engineer", "Work the user's design or failure problem in a professional engineer's order, by your skill."),
 ];
 
 /// Makes the lens agents whose skills are installed, once.
@@ -245,6 +245,42 @@ fn without_sources(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The starters' first names, and the names they have now: an install that made them under the old ones is renamed
+/// once. Only an agent still called its old name is touched, so a name you chose is never changed.
+const RENAMED: [(&str, &str, &str); 10] = [
+    ("chief", "Chief", "ATLAS"),
+    ("inbox", "Inbox", "PIPER"),
+    ("scout", "Scout", "RAVEN"),
+    ("scribe", "Scribe", "QUILL"),
+    ("accountant", "Accountant", "LEDGER"),
+    ("tax", "Tax", "LEVY"),
+    ("counsel", "Counsel", "GAVEL"),
+    ("doctor", "Doctor", "PULSE"),
+    ("therapist", "Therapist", "HAVEN"),
+    ("engineer", "Engineer", "FORGE"),
+];
+
+pub fn rename_starters() {
+    rename_starters_in(&config_root());
+}
+
+fn rename_starters_in(root: &Path) {
+    for (id, old, new) in RENAMED {
+        let path = root.join(id).join("agent.toml");
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(mut file) = toml::from_str::<File>(&text) else { continue };
+        if file.name != old || all_in(root).iter().any(|agent| agent.name.eq_ignore_ascii_case(new)) {
+            continue;
+        }
+        file.name = new.to_owned();
+        if let Ok(text) = toml::to_string(&file)
+            && let Err(err) = std::fs::write(&path, text)
+        {
+            eprintln!("ai: renaming {old} to {new}: {err}");
+        }
+    }
 }
 
 /// Makes the starter team when this install hasn't had one.
@@ -386,8 +422,8 @@ mod tests {
         let root = folder("seed");
         seed_in(&root);
         let names: Vec<String> = all_in(&root).into_iter().map(|agent| agent.name).collect();
-        assert_eq!(names, ["Kith", "Chief", "Inbox", "Scout", "Scribe"]);
-        delete_in(&root, &root, "scout").unwrap();
+        assert_eq!(names, ["Kith", "ATLAS", "PIPER", "QUILL", "RAVEN"]);
+        delete_in(&root, &root, "raven").unwrap();
         seed_in(&root);
         assert_eq!(all_in(&root).len(), 4);
         let _ = std::fs::remove_dir_all(root);
@@ -431,8 +467,8 @@ mod tests {
         }
         seed_lenses_in(&root, std::slice::from_ref(&skills));
         let made: Vec<(String, Vec<String>)> = all_in(&root).into_iter().skip(1).map(|agent| (agent.name, agent.skills)).collect();
-        assert_eq!(made, [("Accountant".to_owned(), vec!["accountant".to_owned()]), ("Counsel".to_owned(), vec!["lawyer".to_owned()])]);
-        delete_in(&root, &root, "counsel").unwrap();
+        assert_eq!(made, [("GAVEL".to_owned(), vec!["lawyer".to_owned()]), ("LEDGER".to_owned(), vec!["accountant".to_owned()])]);
+        delete_in(&root, &root, "gavel").unwrap();
         seed_lenses_in(&root, std::slice::from_ref(&skills));
         assert_eq!(all_in(&root).len(), 2);
         let _ = std::fs::remove_dir_all(root);
@@ -451,5 +487,23 @@ mod tests {
         assert_eq!(without_sources("Ask the country. [sourced C7, C8] Then the entity. [sourced C9]\nDone."), "Ask the country. Then the entity.\nDone.");
         assert_eq!(without_sources("no notes"), "no notes");
         assert_eq!(without_sources("open [sourced C1"), "open");
+    }
+
+    #[test]
+    fn an_install_with_the_first_names_is_renamed_and_a_chosen_name_is_kept() {
+        let root = folder("renamed");
+        create_in(&root, "Chief", "Plan the day.", "", &[], &[]).unwrap();
+        create_in(&root, "Inbox", "Mail.", "", &[], &[]).unwrap();
+        // The user renamed this one themselves.
+        let scout = create_in(&root, "Scout", "Web.", "", &[], &[]).unwrap();
+        let path = root.join(&scout.id).join("agent.toml");
+        std::fs::write(&path, std::fs::read_to_string(&path).unwrap().replace("name = \"Scout\"", "name = \"Finder\"")).unwrap();
+        rename_starters_in(&root);
+        let names: Vec<String> = all_in(&root).into_iter().skip(1).map(|agent| agent.name).collect();
+        assert_eq!(names, ["ATLAS", "Finder", "PIPER"]);
+        // Its job and id are untouched.
+        let atlas = all_in(&root).into_iter().find(|agent| agent.name == "ATLAS").unwrap();
+        assert_eq!((atlas.id.as_str(), atlas.job.as_str()), ("chief", "Plan the day."));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
