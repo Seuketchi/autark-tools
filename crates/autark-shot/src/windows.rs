@@ -33,12 +33,21 @@ struct View {
     focused_at: i64,
 }
 
+/// Wayfire writes these as decimals (`966.0`), which an integer field refuses.
 #[derive(Deserialize)]
 struct Geometry {
+    #[serde(deserialize_with = "pixels")]
     x: i32,
+    #[serde(deserialize_with = "pixels")]
     y: i32,
+    #[serde(deserialize_with = "pixels")]
     width: i32,
+    #[serde(deserialize_with = "pixels")]
     height: i32,
+}
+
+fn pixels<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<i32, D::Error> {
+    f64::deserialize(deserializer).map(|value| value.round() as i32)
 }
 
 #[derive(Deserialize)]
@@ -103,5 +112,21 @@ mod tests {
         let windows = parse(views, &outputs);
         assert_eq!(windows.iter().map(|w| w.title.as_str()).collect::<Vec<_>>(), ["new", "old"]);
         assert_eq!((windows[1].x, windows[1].y), (1450, 20));
+    }
+
+    #[test]
+    fn wayfire_writes_pixels_as_decimals() {
+        let views: Vec<View> = serde_json::from_str(r#"[{"title":"Galley","role":"toplevel","mapped":true,"geometry":{"x":0.0,"y":32.0,"width":1920.0,"height":966.0},"output-id":1,"last-focus-timestamp":7}]"#).unwrap();
+        let outputs: Vec<Output> = serde_json::from_str(r#"[{"id":1,"geometry":{"x":0.0,"y":0.0,"width":1920.0,"height":1080.0}}]"#).unwrap();
+        let windows = parse(views, &outputs);
+        assert_eq!((windows[0].x, windows[0].y, windows[0].width, windows[0].height), (0, 32, 1920, 966));
+    }
+
+    #[test]
+    #[ignore = "needs a running Wayfire with the ipc plugins"]
+    fn lists_the_real_windows() {
+        let windows = list();
+        println!("{windows:#?}");
+        assert!(!windows.is_empty());
     }
 }
