@@ -48,6 +48,7 @@ pub fn chrome_css(p: &Palette) -> String {
 {w} .terminal-titlebar .window-title {{ color: {heading}; }}
 {w} windowcontrols button {{ color: {text2}; }}
 {w} windowcontrols button:hover {{ background-color: alpha({text}, 0.08); color: {text}; }}
+{w} windowcontrols button > image, {w} windowcontrols button:hover > image, {w} windowcontrols button:active > image {{ background: none; box-shadow: none; }}
 {w} windowcontrols button.close:hover {{ background-color: {danger}; color: #FFFFFF; }}
 {w} .tabs > header {{ background-color: {sidebar}; border-bottom-color: {border}; }}
 {w} .tabs > header.top > tabs > tab {{ color: {text2}; }}

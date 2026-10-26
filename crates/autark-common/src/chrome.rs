@@ -36,6 +36,14 @@ windowcontrols.autark-controls button.close:hover {
   color: #FFFFFF;
 }
 
+/* GTK's own theme paints a dark circle on the icon of a hovered window button, which would cover the red. */
+windowcontrols.autark-controls button > image,
+windowcontrols.autark-controls button:hover > image,
+windowcontrols.autark-controls button:active > image {
+  background: none;
+  box-shadow: none;
+}
+
 windowcontrols.autark-controls button image {
   -gtk-icon-size: 14px;
 }
