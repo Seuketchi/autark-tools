@@ -116,6 +116,8 @@ impl Kith {
         let roster = gtk::Box::new(gtk::Orientation::Vertical, 0);
         roster.add_css_class("roster");
         roster.set_width_request(320);
+        // A row's text expands inside it, which would pass up and let the roster grow beyond its width.
+        roster.set_hexpand(false);
         roster.append(&head);
         roster.append(&search);
         roster.append(&roster_scroll);
@@ -457,7 +459,13 @@ impl Kith {
 
     /// A small window to name an agent, say what it is for and how it sounds.
     fn new_agent(self: &Rc<Self>) {
-        let dialog = gtk::Window::builder().transient_for(&self.window).modal(true).title("New agent").default_width(420).build();
+        let dialog = gtk::Window::builder()
+            .application(&self.window.application().expect("the window belongs to the app"))
+            .transient_for(&self.window)
+            .modal(true)
+            .title("New agent")
+            .default_width(420)
+            .build();
         dialog.add_css_class("new-agent");
         let form = gtk::Box::new(gtk::Orientation::Vertical, 4);
         form.add_css_class("form");
