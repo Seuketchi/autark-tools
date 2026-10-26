@@ -83,5 +83,17 @@ pub struct Process {
     pub pid: u32,
     pub name: String,
     pub cpu: f64,
+    /// Its share of memory: pages it shares with other processes count in part (PSS), so the
+    /// sum over processes is what they really cost together. Resident size when PSS is unreadable.
     pub memory: u64,
+    /// Threads using CPU right now, busiest first. Idle ones are left out.
+    #[serde(default)]
+    pub threads: Vec<Thread>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Thread {
+    pub tid: u32,
+    pub name: String,
+    pub cpu: f64,
 }
