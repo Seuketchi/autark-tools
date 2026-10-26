@@ -16,4 +16,4 @@ sha2 = "0.10"
 tar = "0.4"
 toml = "1.1.8"
 ureq = "3"
-zstd = { version = "0.13", features = ["zstdmt"] }
+zstd = { version = "0.14", features = ["zstdmt"] }
