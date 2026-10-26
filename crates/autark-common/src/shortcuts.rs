@@ -94,6 +94,7 @@ const KNOWN: &[(&str, &str, Is)] = &[
     ("Apps", "Ask Kith", Runs("autark-launcher --assistant")),
     ("Apps", "Clipboard history", Runs("autark-launcher --clipboard")),
     ("Apps", "Terminal", Command("foot")),
+    ("Apps", "Terminal", Command("autark-terminal")),
     ("Apps", "Files", Runs("autark-files")),
     ("Apps", "Notes", Runs("autark-notes")),
     ("Apps", "Calculator", Runs("autark-calc")),
@@ -108,6 +109,7 @@ const KNOWN: &[(&str, &str, Is)] = &[
     ("Windows", "Minimise", Opt("wm-actions", "minimize")),
     ("Windows", "Keep on top", Opt("wm-actions", "toggle_always_on_top")),
     ("Windows", "Show the desktop", Opt("wm-actions", "toggle_showdesktop")),
+    ("Windows", "Show the desktop", Command("autark-showdesktop")),
     ("Windows", "Next app", Command("autark-switcher next")),
     ("Windows", "Previous app", Command("autark-switcher prev")),
     ("Windows", "Next window of this app", Command("autark-switcher next-window")),
@@ -138,6 +140,12 @@ const KNOWN: &[(&str, &str, Is)] = &[
     ("Screen", "Record an area", Runs("autark-shot record area")),
     ("Screen", "Record the screen", Runs("autark-shot record")),
     ("Screen", "Invert colours", Opt("invert", "toggle")),
+    ("Sound and display", "Volume up", Runs("autark-osd volume up")),
+    ("Sound and display", "Volume down", Runs("autark-osd volume down")),
+    ("Sound and display", "Mute", Runs("autark-osd volume mute")),
+    ("Sound and display", "Mute the microphone", Runs("autark-osd mic mute")),
+    ("Sound and display", "Brighter", Runs("autark-osd brightness up")),
+    ("Sound and display", "Dimmer", Runs("autark-osd brightness down")),
     ("Sound and display", "Volume up", Runs("set-volume -l 1.0 @DEFAULT_AUDIO_SINK@")),
     ("Sound and display", "Volume down", Runs("set-volume @DEFAULT_AUDIO_SINK@ 5%-")),
     ("Sound and display", "Mute", Runs("set-mute @DEFAULT_AUDIO_SINK@")),
@@ -424,6 +432,33 @@ toggle = <super> KEY_TAB
         assert_eq!(row("Next app").combos, ["<alt> KEY_TAB"]);
         assert_eq!(row("Previous window of this app").combos, ["<alt> <shift> KEY_GRAVE"]);
         assert!(groups.iter().all(|group| group.name != "Other"));
+    }
+
+    /// The default session ships in `data/session/`; a shortcut it binds that Settings can't name, or a command that isn't
+    /// a program in this workspace, would show up as a raw command under Other, or do nothing.
+    #[test]
+    fn the_default_session_is_all_named_and_all_real() {
+        let ini = include_str!("../../../data/session/wayfire.ini");
+        let groups = groups(ini);
+        assert!(groups.iter().all(|group| group.name != "Other"), "unnamed: {:?}", groups.iter().filter(|group| group.name == "Other").flat_map(|group| group.rows.iter().map(|row| &row.label)).collect::<Vec<_>>());
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut commands: Vec<String> = parse(ini).into_iter().filter_map(|binding| binding.command).collect();
+        // Programs started with the session.
+        let mut in_autostart = false;
+        for line in ini.lines().map(str::trim) {
+            if let Some(section) = line.strip_prefix('[') {
+                in_autostart = section == "autostart]";
+            } else if in_autostart && !line.starts_with('#') && let Some((key, value)) = line.split_once('=') && key.trim() != "autostart_wf_shell" && !key.trim().starts_with("0_") {
+                commands.push(value.trim().to_owned());
+            }
+        }
+        for command in commands {
+            let program = command.split_whitespace().next().unwrap();
+            if program.starts_with("autark-") {
+                assert!(workspace.join(program).is_dir(), "{program}, from `{command}`, is not a crate here");
+            }
+        }
+        assert!(groups.iter().flat_map(|group| &group.rows).any(|row| row.label == "Next app" && row.combos == ["<alt> KEY_TAB"]));
     }
 
     #[test]
