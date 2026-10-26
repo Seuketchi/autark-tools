@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/autark-accounts",
+    "crates/autark-agentd",
     "crates/autark-ai",
     "crates/autark-archive",
     "crates/autark-bar",

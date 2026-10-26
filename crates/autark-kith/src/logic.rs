@@ -1,4 +1,4 @@
-//! What the roster shows, worked out from what `autark-ai` sends: the team, a conversation's messages, previews and
+//! What the roster shows, worked out from what `autark-agentd` sends: the team, a conversation's messages, previews and
 //! times. No GTK here, so it can be tested.
 
 use serde::Deserialize;
@@ -83,6 +83,12 @@ pub fn matches(member: &Member, query: &str) -> bool {
 /// The avatar colours, as `autark-ai` numbers them.
 pub const COLOURS: [&str; 8] = ["#48B5A0", "#F2A33A", "#6C63E8", "#9B6FE0", "#3D8BF2", "#E8743B", "#E5527D", "#5DB85C"];
 
+/// The facts of an agent's memory, as the backend sends them.
+pub fn facts(json: &str) -> Vec<String> {
+    let facts: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
+    facts.iter().filter_map(|fact| fact["text"].as_str().map(str::to_owned)).collect()
+}
+
 pub fn colour(index: u8) -> &'static str {
     COLOURS[usize::from(index) % COLOURS.len()]
 }
@@ -152,6 +158,12 @@ mod tests {
         assert!(matches(&member, "inbox zero"));
         assert!(!matches(&member, "inbox sales"));
         assert!(matches(&member, ""));
+    }
+
+    #[test]
+    fn the_memory_shows_each_fact_in_order() {
+        assert_eq!(facts(r#"[{"text":"A","added":1},{"text":"B","added":2}]"#), ["A", "B"]);
+        assert!(facts("nonsense").is_empty());
     }
 
     #[test]

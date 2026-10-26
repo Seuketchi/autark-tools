@@ -1,5 +1,5 @@
 //! The team's window: the roster on the left, with a face, the last words and the time for each agent, and the
-//! conversation with the one picked on the right. A new answer grows in its bubble as `autark-ai` writes it.
+//! conversation with the one picked on the right. A new answer grows in its bubble as `autark-agentd` writes it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use gtk::{glib, pango};
 use crate::ai;
 use crate::logic::{self, Member, Message, Who};
 
-/// What `autark-ai` tells the window.
+/// What `autark-agentd` tells the window.
 enum Event {
     /// An agent's conversation changed.
     Agent(String),
@@ -93,6 +93,56 @@ fn long_time(time: i64) -> String {
         (Ok(then), Ok(now)) if then.ymd() != now.ymd() => format!("{short}, {}", then.format("%-I:%M %p").map(|text| text.to_string()).unwrap_or_default()),
         _ => short,
     }
+}
+
+/// Shows an agent's facts in `facts`, each with a button to forget it.
+fn fill_memory(facts: &gtk::Box, error: &gtk::Label, id: &str) {
+    let (facts, error, id) = (facts.clone(), error.clone(), id.to_owned());
+    glib::spawn_future_local(async move {
+        let json = async { ai::proxy().await?.memory(&id).await }.await;
+        while let Some(child) = facts.first_child() {
+            facts.remove(&child);
+        }
+        let json = match json {
+            Ok(json) => json,
+            Err(err) => {
+                error.set_label(&ai::said(&err));
+                error.set_visible(true);
+                return;
+            }
+        };
+        let list = logic::facts(&json);
+        if list.is_empty() {
+            let none = gtk::Label::builder().label("Nothing yet.").xalign(0.0).build();
+            none.add_css_class("empty-fact");
+            facts.append(&none);
+        }
+        for (n, fact) in list.iter().enumerate() {
+            let text = gtk::Label::builder().label(fact).wrap(true).wrap_mode(pango::WrapMode::WordChar).xalign(0.0).hexpand(true).selectable(true).build();
+            let forget = gtk::Button::builder().icon_name("edit-delete-symbolic").tooltip_text("Forget this").valign(gtk::Align::Start).build();
+            forget.add_css_class("flat");
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            row.append(&text);
+            row.append(&forget);
+            facts.append(&row);
+            let (facts, error, id) = (facts.clone(), error.clone(), id.clone());
+            forget.connect_clicked(move |_| {
+                let (facts, error, id) = (facts.clone(), error.clone(), id.clone());
+                glib::spawn_future_local(async move {
+                    match async { ai::proxy().await?.forget(&id, n as u32).await }.await {
+                        Ok(()) => {
+                            error.set_visible(false);
+                            fill_memory(&facts, &error, &id);
+                        }
+                        Err(err) => {
+                            error.set_label(&ai::said(&err));
+                            error.set_visible(true);
+                        }
+                    }
+                });
+            });
+        }
+    });
 }
 
 impl Kith {
@@ -217,6 +267,7 @@ impl Kith {
 
         // The agent's own menu: clear the conversation, or remove the agent.
         let menu = gtk::gio::Menu::new();
+        menu.append(Some("Memory…"), Some("kith.memory"));
         menu.append(Some("Clear conversation"), Some("kith.clear"));
         menu.append(Some("Delete agent"), Some("kith.delete"));
         more.set_menu_model(Some(&menu));
@@ -225,6 +276,10 @@ impl Kith {
         let kith = self.clone();
         clear.connect_activate(move |_, _| kith.clear());
         actions.add_action(&clear);
+        let memory = gtk::gio::SimpleAction::new("memory", None);
+        let kith = self.clone();
+        memory.connect_activate(move |_, _| kith.memory());
+        actions.add_action(&memory);
         let delete = gtk::gio::SimpleAction::new("delete", None);
         let kith = self.clone();
         delete.connect_activate(move |_, _| kith.confirm_delete());
@@ -327,7 +382,7 @@ impl Kith {
         };
         let kith = self.clone();
         glib::spawn_future_local(async move {
-            let json = async { ai::proxy().await?.agent_history(&id).await }.await;
+            let json = async { ai::proxy().await?.history(&id).await }.await;
             if kith.current.borrow().as_deref() != Some(id.as_str()) {
                 return;
             }
@@ -416,7 +471,7 @@ impl Kith {
         self.entry.set_text("");
         let kith = self.clone();
         glib::spawn_future_local(async move {
-            match async { ai::proxy().await?.agent_say(&id, &text).await }.await {
+            match async { ai::proxy().await?.say(&id, &text).await }.await {
                 Ok(_) => kith.fail(""),
                 Err(err) => kith.fail(&ai::said(&err)),
             }
@@ -429,7 +484,7 @@ impl Kith {
         };
         let kith = self.clone();
         glib::spawn_future_local(async move {
-            if let Err(err) = async { ai::proxy().await?.clear_agent(&id).await }.await {
+            if let Err(err) = async { ai::proxy().await?.clear(&id).await }.await {
                 kith.fail(&ai::said(&err));
             }
         });
@@ -444,7 +499,8 @@ impl Kith {
             return;
         }
         let name = self.title.label();
-        let dialog = gtk::AlertDialog::builder().message(format!("Delete {name}?")).detail("Its conversation goes with it.").buttons(["Cancel", "Delete"]).cancel_button(0).default_button(0).build();
+        let dialog =
+            gtk::AlertDialog::builder().message(format!("Delete {name}?")).detail("Its conversation and memory go with it.").buttons(["Cancel", "Delete"]).cancel_button(0).default_button(0).build();
         let kith = self.clone();
         let window = self.window.clone();
         glib::spawn_future_local(async move {
@@ -455,6 +511,76 @@ impl Kith {
                 kith.fail(&ai::said(&err));
             }
         });
+    }
+
+    /// A small window with what the agent remembers: forget a fact, or add one. The memory is small on purpose, and
+    /// when it is full the backend says so rather than dropping a fact.
+    fn memory(self: &Rc<Self>) {
+        let Some(id) = self.current.borrow().clone() else {
+            return;
+        };
+        if id == "kith" {
+            self.fail("Kith's memory is kept in the launcher's panel.");
+            return;
+        }
+        let name = self.title.label();
+        let dialog = gtk::Window::builder()
+            .application(&self.window.application().expect("the window belongs to the app"))
+            .transient_for(&self.window)
+            .modal(true)
+            .title(format!("{name}'s memory"))
+            .default_width(420)
+            .build();
+        dialog.add_css_class("new-agent");
+        let form = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        form.add_css_class("form");
+        let about = gtk::Label::builder().label("What it remembers is only its own: no other agent sees it. Up to 12 short facts.").xalign(0.0).wrap(true).build();
+        about.add_css_class("field-label");
+        let facts = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let error = gtk::Label::builder().xalign(0.0).wrap(true).visible(false).build();
+        error.add_css_class("note");
+        let entry = gtk::Entry::builder().placeholder_text("Prefers short answers").max_length(300).hexpand(true).build();
+        let add = gtk::Button::builder().label("Add").sensitive(false).build();
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.set_margin_top(8);
+        row.append(&entry);
+        row.append(&add);
+        form.append(&about);
+        form.append(&facts);
+        form.append(&row);
+        form.append(&error);
+        dialog.set_child(Some(&form));
+        entry.connect_changed({
+            let add = add.clone();
+            move |entry| add.set_sensitive(!entry.text().trim().is_empty())
+        });
+        let adding = {
+            let (facts, error, entry, id) = (facts.clone(), error.clone(), entry.clone(), id.clone());
+            move || {
+                let (facts, error, entry, id) = (facts.clone(), error.clone(), entry.clone(), id.clone());
+                glib::spawn_future_local(async move {
+                    let text = entry.text().to_string();
+                    match async { ai::proxy().await?.remember(&id, &text).await }.await {
+                        Ok(()) => {
+                            entry.set_text("");
+                            error.set_visible(false);
+                            fill_memory(&facts, &error, &id);
+                        }
+                        Err(err) => {
+                            error.set_label(&ai::said(&err));
+                            error.set_visible(true);
+                        }
+                    }
+                });
+            }
+        };
+        add.connect_clicked({
+            let adding = adding.clone();
+            move |_| adding()
+        });
+        entry.connect_activate(move |_| adding());
+        fill_memory(&facts, &error, &id);
+        dialog.present();
     }
 
     /// A small window to name an agent, say what it is for and how it sounds.
@@ -517,7 +643,7 @@ impl Kith {
             let can: Vec<&'static str> = boxes.iter().filter(|(_, check)| check.is_active()).map(|(key, _)| *key).collect();
             let (kith, window, error) = (kith.clone(), window.clone(), error.clone());
             glib::spawn_future_local(async move {
-                match async { ai::proxy().await?.create_agent(&name, &job, &soul, &can, &skills.iter().map(String::as_str).collect::<Vec<_>>()).await }.await {
+                match async { ai::proxy().await?.create_agent(&name, &job, &soul, &can, &skills.iter().map(String::as_str).collect::<Vec<_>>(), &[]).await }.await {
                     Ok(id) => {
                         window.close();
                         *kith.current.borrow_mut() = Some(id);
@@ -532,8 +658,8 @@ impl Kith {
         dialog.present();
     }
 
-    /// Follows `autark-ai` while the window is open: an agent's words as they're written, and changes to the team.
-    /// Tries again every few seconds when `autark-ai` isn't running, so starting it brings the team in.
+    /// Follows `autark-agentd` while the window is open: an agent's words as they're written, and changes to the team.
+    /// Tries again every few seconds when it isn't running, so starting it brings the team in.
     fn listen(self: &Rc<Self>) {
         let kith = self.clone();
         glib::spawn_future_local(async move {
@@ -541,10 +667,9 @@ impl Kith {
                 let result = async {
                     let proxy = ai::proxy().await?;
                     let changed = proxy.receive_agent_changed().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Event::Agent(args.id))));
-                    let kiths = proxy.receive_history_changed().await?.map(|_| Event::Agent("kith".to_owned()));
                     let team = proxy.receive_agents_changed().await?.map(|_| Event::Team);
-                    let pieces = proxy.receive_answer_piece().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Event::Piece(args.id, args.offset, args.text))));
-                    let mut events = futures_util::stream::select(futures_util::stream::select(changed, kiths), futures_util::stream::select(team, pieces));
+                    let pieces = proxy.receive_answer_piece().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Event::Piece(args.answer, args.offset, args.text))));
+                    let mut events = futures_util::stream::select(changed, futures_util::stream::select(team, pieces));
                     while let Some(event) = events.next().await {
                         match event {
                             Event::Agent(id) => {

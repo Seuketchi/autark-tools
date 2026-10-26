@@ -1,0 +1,15 @@
+[package]
+name = "autark-agentd"
+description = "The team's backend (org.autark.Agents1): Kith's agents, their conversations, memory and event log."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-io = "2.6.0"
+futures-util = "0.3.34"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+zbus = "6.0.0"

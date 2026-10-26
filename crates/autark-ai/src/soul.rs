@@ -18,8 +18,7 @@ pub fn voice() -> String {
     with(&text)
 }
 
-/// `text` as the addition to a system prompt.
-pub fn with(text: &str) -> String {
+fn with(text: &str) -> String {
     let text = text.trim();
     if text.is_empty() {
         return String::new();
