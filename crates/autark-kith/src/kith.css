@@ -150,6 +150,18 @@ window.kith .titlebar {
   color: @danger;
 }
 
+.fact {
+  margin: 4px 20px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid @border;
+}
+
+.fact .fact-state {
+  color: @text3;
+  font-size: 12px;
+}
+
 .empty,
 .empty-fact {
   color: @text3;

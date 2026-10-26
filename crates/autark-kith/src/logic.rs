@@ -30,6 +30,15 @@ pub enum Who {
     Agent,
 }
 
+/// A fact the agent proposes to keep, as a card under its answer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Card {
+    /// The entry to answer it by.
+    pub entry: u64,
+    /// `proposed` until you save it or not, then `saved` or `dismissed`.
+    pub state: String,
+}
+
 /// One bubble in a conversation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
@@ -39,10 +48,12 @@ pub struct Message {
     /// The answer streaming into it, while it is being written.
     pub writing: Option<u32>,
     pub error: String,
+    /// Set when the bubble is a proposed fact, whose text is the fact.
+    pub card: Option<Card>,
 }
 
 /// A conversation's messages from its entries: what you said and what the agent answered. Other entries (Kith's
-/// action cards, proposed facts) belong to the launcher's panel and aren't shown here. An answer with nothing in
+/// action cards and proposed facts) belong to the launcher's panel and aren't shown here. An answer with nothing in
 /// it, no error and no writing under way is left out.
 pub fn messages(json: &str) -> Vec<Message> {
     let entries: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
@@ -51,12 +62,16 @@ pub fn messages(json: &str) -> Vec<Message> {
         .filter_map(|entry| {
             let time = entry["time"].as_i64().unwrap_or(0);
             match entry["kind"].as_str()? {
-                "you" => Some(Message { who: Who::You, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new() }),
+                "you" => Some(Message { who: Who::You, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new(), card: None }),
                 "answer" => {
                     let text = entry["text"].as_str().unwrap_or_default().to_owned();
                     let error = entry["error"].as_str().unwrap_or_default().to_owned();
                     let writing = entry["writing"].as_bool().unwrap_or(false).then(|| entry["answer"].as_u64().unwrap_or(0) as u32);
-                    (!text.is_empty() || !error.is_empty() || writing.is_some()).then_some(Message { who: Who::Agent, text, time, writing, error })
+                    (!text.is_empty() || !error.is_empty() || writing.is_some()).then_some(Message { who: Who::Agent, text, time, writing, error, card: None })
+                }
+                "fact" => {
+                    let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
+                    Some(Message { who: Who::Agent, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new(), card: Some(Card { entry: entry["id"].as_u64()?, state }) })
                 }
                 _ => None,
             }
@@ -158,6 +173,16 @@ mod tests {
         assert!(matches(&member, "inbox zero"));
         assert!(!matches(&member, "inbox sales"));
         assert!(matches(&member, ""));
+    }
+
+    #[test]
+    fn a_proposed_fact_is_a_card_with_its_entry_and_state() {
+        let json = r#"[{"id":4,"time":1,"kind":"you","text":"remember that I like oat milk"},{"id":5,"time":1,"kind":"fact","text":"I like oat milk","state":"proposed"},{"id":6,"time":1,"kind":"fact","text":"x","state":"saved"}]"#;
+        let messages = messages(json);
+        assert_eq!(messages[1].card, Some(Card { entry: 5, state: "proposed".to_owned() }));
+        assert_eq!(messages[1].text, "I like oat milk");
+        assert_eq!(messages[2].card.as_ref().map(|card| card.state.as_str()), Some("saved"));
+        assert_eq!(messages[0].card, None);
     }
 
     #[test]

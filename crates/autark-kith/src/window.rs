@@ -396,7 +396,7 @@ impl Kith {
         });
     }
 
-    fn show(&self, messages: &[Message]) {
+    fn show(self: &Rc<Self>, messages: &[Message]) {
         while let Some(child) = self.messages.first_child() {
             self.messages.remove(&child);
         }
@@ -416,6 +416,10 @@ impl Kith {
                 self.messages.append(&stamp);
             }
             before = Some(message.time);
+            if let Some(card) = &message.card {
+                self.messages.append(&self.fact_card(&message.text, card));
+                continue;
+            }
             let text = if message.error.is_empty() { message.text.clone() } else { message.error.clone() };
             let shown = if message.writing.is_some() { format!("{text}▍") } else { text.clone() };
             let bubble = gtk::Label::builder()
@@ -438,6 +442,41 @@ impl Kith {
             self.messages.append(&bubble);
         }
         self.follow_bottom();
+    }
+
+    /// The card for a fact the agent proposes to keep: Save and Don't save, then what you chose.
+    fn fact_card(self: &Rc<Self>, text: &str, card: &logic::Card) -> gtk::Box {
+        let shell = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        shell.add_css_class("fact");
+        shell.set_halign(gtk::Align::Start);
+        let said = gtk::Label::builder().label(format!("Remember: {text}")).wrap(true).wrap_mode(pango::WrapMode::WordChar).max_width_chars(56).xalign(0.0).selectable(true).build();
+        shell.append(&said);
+        if card.state == "proposed" {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            for (label, save) in [("Save", true), ("Don't save", false)] {
+                let button = gtk::Button::with_label(label);
+                if save {
+                    button.add_css_class("suggested-action");
+                }
+                let (kith, entry) = (self.clone(), card.entry);
+                button.connect_clicked(move |_| {
+                    let (kith, Some(id)) = (kith.clone(), kith.current.borrow().clone()) else { return };
+                    glib::spawn_future_local(async move {
+                        match async { ai::proxy().await?.answer_fact(&id, entry, save).await }.await {
+                            Ok(()) => kith.fail(""),
+                            Err(err) => kith.fail(&ai::said(&err)),
+                        }
+                    });
+                });
+                row.append(&button);
+            }
+            shell.append(&row);
+        } else {
+            let done = gtk::Label::builder().label(if card.state == "saved" { "Saved to memory" } else { "Not saved" }).xalign(0.0).build();
+            done.add_css_class("fact-state");
+            shell.append(&done);
+        }
+        shell
     }
 
     /// Scrolls to the newest message once the window has laid it out.

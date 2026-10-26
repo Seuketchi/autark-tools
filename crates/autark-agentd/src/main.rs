@@ -7,6 +7,7 @@ mod chat;
 mod events;
 mod memory;
 mod prompt;
+mod remember;
 mod service;
 
 use std::sync::Arc;

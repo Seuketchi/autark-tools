@@ -24,6 +24,8 @@ pub struct Entry {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum What {
+    /// A fact the agent proposes to keep in its memory because you asked it to remember something, for you to save or not.
+    Fact { text: String, state: FactState },
     /// What you said.
     You { text: String },
     /// The agent's answer, its text growing while `writing`. `answer` is the model's answer id, 0 until it starts.
@@ -35,6 +37,14 @@ pub enum What {
         #[serde(default)]
         error: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FactState {
+    Proposed,
+    Saved,
+    Dismissed,
 }
 
 pub struct Chat {
@@ -94,6 +104,14 @@ impl Chat {
 
     pub fn get_mut(&mut self, id: u64) -> Option<&mut What> {
         self.entries.iter_mut().find(|entry| entry.id == id).map(|entry| &mut entry.what)
+    }
+
+    /// The proposed fact at `entry`, if it is one.
+    pub fn fact_mut(&mut self, entry: u64) -> Option<(&str, &mut FactState)> {
+        match self.get_mut(entry)? {
+            What::Fact { text, state } => Some((text.as_str(), state)),
+            _ => None,
+        }
     }
 
     /// The answer being written under model answer `answer`.
@@ -203,6 +221,18 @@ mod tests {
         assert!(!again.writing());
         assert!(matches!(&again.entries()[0].what, What::Answer { error, text, .. } if error.contains("cut off") && text == "Par"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_proposed_fact_is_an_entry_but_not_part_of_what_was_said() {
+        let mut chat = Chat::in_memory("A");
+        chat.push(What::You { text: "remember that I like oat milk".into() });
+        let entry = chat.push(What::Fact { text: "I like oat milk".into(), state: FactState::Proposed });
+        assert_eq!(chat.transcript(), "User: remember that I like oat milk");
+        assert_eq!(chat.last_said().0, "remember that I like oat milk");
+        let json = serde_json::to_value(chat.entries()).unwrap();
+        assert_eq!((json[1]["kind"].as_str(), json[1]["state"].as_str()), (Some("fact"), Some("proposed")));
+        assert!(chat.fact_mut(entry).is_some() && chat.fact_mut(1).is_none());
     }
 
     #[test]

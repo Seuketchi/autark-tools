@@ -12,10 +12,11 @@ use zbus::object_server::SignalEmitter;
 
 use crate::agents::{self, Agent, KITH};
 use crate::ai::{self, AiProxy};
-use crate::chat::{self, Chat, What};
+use crate::chat::{self, Chat, FactState, What};
 use crate::events::Events;
 use crate::memory;
 use crate::prompt;
+use crate::remember;
 
 pub const PATH: &str = "/org/autark/Agents1";
 
@@ -305,6 +306,24 @@ impl Agents {
             let (answer, entry, _) = proxy.chat_answer(&question, &files).await.map_err(engine)?;
             return Ok((answer, entry));
         }
+        // Asked to remember something: code proposes the fact for you to save, and no model is asked, so nothing is
+        // claimed that wasn't done.
+        if let Some(fact) = remember::fact(&text) {
+            let entry = {
+                let mut core = self.shared.core();
+                let chat = core.chat(&agent);
+                if chat.writing() {
+                    return failed(format!("{} is still answering", agent.name));
+                }
+                chat.push(What::You { text: text.clone() });
+                chat.push(What::Answer { answer: 0, text: "I can keep that in my memory if you say so.".to_owned(), writing: false, error: String::new() });
+                let entry = chat.push(What::Fact { text: fact, state: FactState::Proposed });
+                chat.save();
+                entry
+            };
+            Self::agent_changed(&emitter, &agent.id).await?;
+            return Ok((0, entry));
+        }
         // Your words and an answer begun go in the conversation first, so the roster shows it is being written.
         let (entry, conversation) = {
             let mut core = self.shared.core();
@@ -394,6 +413,29 @@ impl Agents {
     async fn forget(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
         memory::forget(&memory_of(&id)?, n as usize).map_err(Error::Failed)?;
         self.shared.events.record(chat::now(), "forgot", &id, "");
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Answers a fact an agent proposed (the entry of a `fact` in its conversation): saves it to its memory, or not. A fact
+    /// that can't be saved, because the memory is full, says why and stays to be answered again.
+    async fn answer_fact(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, entry: u64, save: bool) -> Result<(), Error> {
+        let agent = find(&id)?;
+        let path = memory_of(&id)?;
+        {
+            let mut core = self.shared.core();
+            let chat = core.chat(&agent);
+            let Some((text, state)) = chat.fact_mut(entry) else { return failed("there is no such fact") };
+            if *state != FactState::Proposed {
+                return failed("that fact has been answered already");
+            }
+            if save {
+                memory::add(&path, text, chat::now()).map_err(Error::Failed)?;
+            }
+            *state = if save { FactState::Saved } else { FactState::Dismissed };
+            chat.save();
+        }
+        self.shared.events.record(chat::now(), if save { "remembered" } else { "not-remembered" }, &id, "");
         Self::agent_changed(&emitter, &id).await?;
         Ok(())
     }

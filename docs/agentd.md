@@ -50,9 +50,11 @@ Each agent has a memory of its own, `memory.toml`, a `[[fact]]` for each, and it
 small on purpose, as Hermes's and Kitchen's are: at most 12 facts and 2,000 characters in all. A fact that would go
 past either limit is refused with the reason, not dropped to make room; you (or the agent's own proposal, which you
 accept) forget one first. Facts are put in the agent's instructions each time it answers, so a fact forgotten is gone
-at once. For now you add and forget facts yourself, from the roster's **⋯ › Memory…**; an agent told to remember
-something says so and points you there, since a small model can't be trusted to claim a save it didn't make. Facts an
-agent proposes, kept only when you accept them as with Kith's own memory, come later.
+at once. You add and forget facts from the roster's **⋯ › Memory…**, and an agent proposes one when a sentence starts by asking
+it to remember ("remember that my wife's birthday is May 3", "please remember: …", "don't forget …"). Code reads the
+sentence, not the model, so a small model can't claim a save it didn't make: the agent answers that it can keep it if
+you say so, and a card under it offers **Save** or **Don't save**. Nothing is kept unless you save it, as with Kith's
+own memory. A question ("do you remember my name?") isn't a fact, and a fact that won't fit says why and waits.
 
 ## Mailbox: agents handing work to each other
 
