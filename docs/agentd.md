@@ -75,18 +75,23 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
 
 - **Identity comes from the daemon.** A message says who sent it because `autark-agentd` wrote it on that agent's
   behalf, never because a model claimed it. A message from you says so.
-- **Only linked agents.** An agent's `links` names the agents it may hand work to. No link, no delivery, and the
-  refusal is shown in the sender's chat so you can see why.
-- **A depth limit.** A handoff carries how many handoffs led to it; at three, the next is refused, so two agents can't
-  keep passing a question back and forth.
-- **Visible.** Every handoff and every reply is an entry in both agents' conversations, marked with who it is from. You
-  can follow a chain by reading the chats, and each is an event in the log.
-- **Read-only.** (Apart from the tapped additions to a note above.) A message can ask an agent to look something up and answer. It can't make an agent send, change or run
-  anything: nothing an agent can do goes beyond what its `can` list lets it read, and anything that would change
-  something comes to you first, as Kitchen's front of house does.
-- **Code routes, not the model.** An agent hands work on by ending its reply with a line `HANDOFF <agent>: <brief>`.
-  The daemon reads that line itself, checks the link and the depth, and delivers. A model that gets the line wrong
-  hands nothing on.
+- **Only linked agents.** An agent's `links` names the agents it may hand work to ("Hands work to…" in the roster's
+  **⋯**, or when making an agent). No link, no handoff, and the refusal is shown in the sender's chat so you can see why.
+  Kith can't be linked: it takes requests in the launcher's panel, where it asks first. A new install links ATLAS to
+  PIPER, RAVEN and QUILL, and LEDGER and LEVY to each other, once.
+- **A depth limit, and no loops.** A handoff carries how many handoffs led to it; an answer three deep can't hand on,
+  and a chain never returns to an agent already in it, so two agents can't keep passing a question back and forth. An
+  agent that is busy answering isn't handed work: the refusal says so.
+- **Visible.** A handoff is a line in the sender's conversation ("Asked RAVEN: …") and a message "ATLAS asked" in the
+  receiver's, which answers like any other; its answer goes back to the sender's conversation as "RAVEN replied". Each is
+  an event in the log. The sender doesn't answer again: you read the reply where it lands, and may follow up.
+- **Read-only.** What is handed over is a request to look something up and answer. The receiver looks at no more than
+  its own `can` list, and nothing it can do goes beyond reading, apart from the additions to a note you tap Add on.
+- **Code routes, not the model.** An agent with links is told who they are and to end its reply with a line
+  `HANDOFF <id>: <what to ask>`. The daemon reads that line itself (only the last line, only when well formed), takes it
+  out of what is shown, checks the link, the depth, the chain and whether the other agent is busy, and delivers. A model
+  that gets the line wrong hands nothing on, and one that claims it handed something without the line is wrong in a way
+  you can see: there is no "Asked …" line.
 
 ## Schedule
 
@@ -101,7 +106,7 @@ the model get called. This is what makes a 4B model usable for standing work.
 | Call | Does |
 |---|---|
 | `Agents()` | The team as JSON: each agent, its last words and time, whether it is writing |
-| `CreateAgent(name, job, soul, can, skills, links)` / `DeleteAgent(id)` / `SetAgent(id, json)` | Make, remove, change |
+| `CreateAgent(name, job, soul, can, skills, links)` / `DeleteAgent(id)` / `SetAgent(id, json)` | Make, remove, change (`links` too) |
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation |
 | `Memory(id)` / `Remember(id, text)` / `Forget(id, n)` | Its memory |
 | `Events(since)` | What happened, as JSON lines |
@@ -121,6 +126,6 @@ agent's whole answer.
    agents on the team, never the agent itself) but does nothing until step 2, so the roster has no field for it yet.
    Kith stays `autark-ai`'s: a message to it from the roster goes through its own `Chat` and `ChatAnswer`, and what it
    would do as an action is left to the launcher's panel, where it asks first.
-2. **The mailbox:** `links`, `HANDOFF`, depth limit, both chats showing it.
+2. **The mailbox** (stacked on the first): `links`, `HANDOFF`, depth limit, both chats showing it.
 3. **The schedule and heartbeat.**
 4. **Clients:** the launcher and the bar show a waiting agent; a Kitchen agent that reads `kitchend`.

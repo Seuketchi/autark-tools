@@ -24,6 +24,11 @@ pub struct Entry {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum What {
+    /// A handoff this agent made: work it asked another agent to do, or why it couldn't (`refused`, empty when it went).
+    Handoff { to: String, name: String, brief: String, refused: String },
+    /// A message from another agent, written here by the daemon: what it asked this agent to do, or (`reply`) its answer
+    /// to what this agent asked it.
+    From { from: String, name: String, text: String, reply: bool },
     /// Lines the agent proposes to add to the end of one of your notes because you asked it to, for you to add or not.
     Add { note: String, items: Vec<String>, state: FactState },
     /// A fact the agent proposes to keep in its memory because you asked it to remember something, for you to save or not.
@@ -141,7 +146,7 @@ impl Chat {
             .rev()
             .find_map(|entry| match &entry.what {
                 What::You { text } => Some((text.clone(), entry.time)),
-                What::Answer { text, .. } if !text.is_empty() => Some((text.clone(), entry.time)),
+                What::Answer { text, .. } | What::From { text, .. } if !text.is_empty() => Some((text.clone(), entry.time)),
                 _ => None,
             })
             .unwrap_or_default()
@@ -160,6 +165,7 @@ impl Chat {
             match &entry.what {
                 What::You { text } => lines.push(format!("User: {text}")),
                 What::Answer { text, .. } if !text.is_empty() => lines.push(format!("{}: {text}", self.speaker)),
+                What::From { name, text, reply, .. } => lines.push(if *reply { format!("{name} replied: {text}") } else { format!("{name} (an agent, not the user): {text}") }),
                 _ => {}
             }
         }
@@ -243,6 +249,18 @@ mod tests {
         let json = serde_json::to_value(chat.entries()).unwrap();
         assert_eq!((json[1]["kind"].as_str(), json[1]["state"].as_str()), (Some("fact"), Some("proposed")));
         assert!(chat.fact_mut(entry).is_some() && chat.fact_mut(1).is_none());
+    }
+
+    #[test]
+    fn what_agents_say_to_each_other_is_in_the_conversation_and_the_transcript() {
+        let mut chat = Chat::in_memory("RAVEN");
+        chat.push(What::From { from: "atlas".into(), name: "ATLAS".into(), text: "Forecast for Cebu?".into(), reply: false });
+        chat.push(What::Answer { answer: 1, text: "Rain.".into(), writing: false, error: String::new() });
+        chat.push(What::Handoff { to: "quill".into(), name: "QUILL".into(), brief: "x".into(), refused: String::new() });
+        assert_eq!(chat.transcript(), "ATLAS (an agent, not the user): Forecast for Cebu?\nRAVEN: Rain.");
+        assert_eq!(chat.last_said().0, "Rain.");
+        let json = serde_json::to_value(chat.entries()).unwrap();
+        assert_eq!((json[0]["kind"].as_str(), json[0]["reply"].as_bool(), json[2]["kind"].as_str()), (Some("from"), Some(false), Some("handoff")));
     }
 
     #[test]

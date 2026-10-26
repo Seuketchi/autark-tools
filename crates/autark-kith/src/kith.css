@@ -150,6 +150,22 @@ window.kith .titlebar {
   color: @danger;
 }
 
+.handoff {
+  margin: 4px 20px;
+  color: @text3;
+  font-size: 12px;
+}
+
+.from-label {
+  margin: 8px 20px 0;
+  color: @text3;
+  font-size: 12px;
+}
+
+.bubble.from {
+  border-left: 3px solid @text3;
+}
+
 .fact {
   margin: 4px 20px;
   padding: 10px 12px;

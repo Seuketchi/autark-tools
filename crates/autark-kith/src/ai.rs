@@ -7,6 +7,7 @@ pub trait Agents {
     fn agents(&self) -> zbus::Result<String>;
     fn create_agent(&self, name: &str, job: &str, soul: &str, can: &[&str], skills: &[&str], links: &[&str]) -> zbus::Result<String>;
     fn delete_agent(&self, id: &str) -> zbus::Result<()>;
+    fn set_agent(&self, id: &str, patch: &str) -> zbus::Result<()>;
     fn history(&self, id: &str) -> zbus::Result<String>;
     fn say(&self, id: &str, text: &str) -> zbus::Result<(u32, u64)>;
     fn clear(&self, id: &str) -> zbus::Result<()>;
