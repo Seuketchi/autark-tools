@@ -81,6 +81,9 @@ pub fn build(config: &Config, recipe: &Recipe, sources: &[PathBuf], owners: &Has
     } else if recipe.mode == Mode::Staged {
         std::fs::create_dir_all(&dest).ctx(&dest)?;
     }
+    // A build can keep every core busy for an hour; it shouldn't take the desktop with it.
+    // SAFETY: lower_priority makes only async-signal-safe calls, as is required between fork and exec.
+    unsafe { command.pre_exec(lower_priority) };
     command.arg(&driver).args(sources.first().filter(|first| is_archive(first)).map(|first| first.file_name().unwrap_or_default().to_owned()));
     command
         .env_clear()
@@ -183,6 +186,19 @@ pub fn drop_to(uid: u32, gid: u32) -> std::io::Result<()> {
         check(libc::setresuid(uid, uid, uid))?;
         check(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
     }
+}
+
+/// Makes the calling process, and what it starts, yield to everything else: CPU niceness 10 and the idle I/O class.
+pub fn lower_priority() -> std::io::Result<()> {
+    // IOPRIO_WHO_PROCESS = 1, class IDLE = 3, in the top bits of the value.
+    const IOPRIO_WHO_PROCESS: libc::c_long = 1;
+    const IOPRIO_CLASS_IDLE: libc::c_long = 3 << 13;
+    // SAFETY: plain system calls with valid arguments. Failing to lower the priority is not worth failing the build.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+        libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0 as libc::c_long, IOPRIO_CLASS_IDLE);
+    }
+    Ok(())
 }
 
 /// The uid and gid of a user in this system's passwd.
@@ -297,5 +313,17 @@ mod tests {
         let doubled = ["/var/".to_owned(), "/var/tmp/autark-pkg/hexedit-1.6-3/dest/usr/bin/hexedit".to_owned()];
         assert_eq!(inside_itself(&fine, dest), None);
         assert_eq!(inside_itself(&doubled, dest), Some("/var/tmp/autark-pkg/hexedit-1.6-3/dest/usr/bin/hexedit"));
+    }
+
+    #[test]
+    fn a_build_runs_niced() {
+        let mut command = Command::new("cat");
+        command.arg("/proc/self/stat");
+        // SAFETY: lower_priority makes only async-signal-safe calls.
+        unsafe { command.pre_exec(lower_priority) };
+        let stat = String::from_utf8(command.output().unwrap().stdout).unwrap();
+        // After the `(name)`: state is the first field and nice is the seventeenth. A runner already nicer than 10 stays so.
+        let fields: Vec<&str> = stat[stat.rfind(')').unwrap() + 1..].split_whitespace().collect();
+        assert!(fields[16].parse::<i32>().unwrap() >= 10, "nice was {}", fields[16]);
     }
 }
