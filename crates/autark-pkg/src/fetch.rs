@@ -19,7 +19,14 @@ fn one(config: &Config, recipe: &Recipe, source: &Source) -> Result<PathBuf> {
     if source.checksum == "-" {
         return fail(format!("{}: no checksum recorded for {}; add one to {}.sh before building", recipe.name, source.file, recipe.name));
     }
-    let path = config.sources.join(&source.file);
+    let mut path = config.sources.join(&source.file);
+    // Recipes of different packages can name different files alike (Arch's `license-from-upstream`): a file there that
+    // isn't this recipe's goes beside it, in a folder named by the checksum, rather than failing or replacing the other's.
+    if path.exists() && checksum(&path, &source.checksum)? != source.checksum {
+        let sum = source.checksum.split(':').next_back().unwrap_or_default();
+        path = config.sources.join(&sum[..sum.len().min(16)]).join(&source.file);
+        std::fs::create_dir_all(path.parent().unwrap_or(&config.sources)).ctx(&path)?;
+    }
     if !path.exists() {
         println!("   downloading {}", source.url);
         download(&source.url, &path)?;
