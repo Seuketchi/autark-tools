@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
 use zbus::object_server::SignalEmitter;
 
@@ -14,6 +15,7 @@ use crate::agents::{self, Agent, KITH};
 use crate::ai::{self, AiProxy};
 use crate::chat::{self, Chat, FactState, What};
 use crate::events::Events;
+use crate::mailbox;
 use crate::memory;
 use crate::notes;
 use crate::prompt;
@@ -39,10 +41,53 @@ fn failed<T>(why: impl Into<String>) -> Result<T, Error> {
     Err(Error::Failed(why.into()))
 }
 
+/// Where an answer comes from in a chain of handoffs.
+#[derive(Clone, Default)]
+struct Meta {
+    /// How many handoffs led to it: 0 for an answer to you.
+    depth: u8,
+    /// The agents in the chain so far, itself last.
+    chain: Vec<String>,
+    /// The agent that asked for it, which gets the answer back.
+    origin: Option<String>,
+}
+
 /// An answer being written by an agent here.
 struct Pending {
     agent: String,
     heard: Instant,
+    meta: Meta,
+}
+
+/// Work handed to an agent, put in its conversation and waiting to be started.
+struct Delivery {
+    from: Agent,
+    to: Agent,
+    /// The answer begun in the receiver's conversation.
+    entry: u64,
+    brief: String,
+    /// What the receiver had said before, for its context.
+    conversation: String,
+    meta: Meta,
+}
+
+/// How an answer ended, and what follows from it.
+pub struct Ended {
+    agent: String,
+    /// What to log for the answer: `answered` or `failed`; empty when nothing is to be logged.
+    kind: &'static str,
+    said: String,
+    /// The other agents whose conversations changed: the one given work, the one that asked.
+    changed: Vec<String>,
+    /// Further events: kind, agent and what.
+    logged: Vec<(&'static str, String, String)>,
+    delivery: Option<Delivery>,
+}
+
+impl Ended {
+    fn of(agent: &str, kind: &'static str, said: String) -> Self {
+        Self { agent: agent.to_owned(), kind, said, changed: Vec::new(), logged: Vec::new(), delivery: None }
+    }
 }
 
 enum Heard {
@@ -91,11 +136,11 @@ impl Core {
     }
 
     /// Gives an answer its id, and applies what was heard of it already. Returns how it ended, if that was heard.
-    fn register(&mut self, answer: u32, agent: &Agent, entry: u64) -> Option<(String, &'static str, String)> {
+    fn register(&mut self, answer: u32, agent: &Agent, entry: u64, meta: Meta, team: &[Agent]) -> Option<Ended> {
         if let Some(What::Answer { answer: id, .. }) = self.chat(agent).get_mut(entry) {
             *id = answer;
         }
-        self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now() });
+        self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now(), meta });
         let mut finished = None;
         let early = std::mem::take(&mut self.early);
         for (id, heard) in early {
@@ -105,7 +150,7 @@ impl Core {
             }
             match heard {
                 Heard::Piece(text) => self.append(answer, &text),
-                Heard::Done(error) => finished = self.finish(answer, &error),
+                Heard::Done(error) => finished = self.finish(answer, &error, team),
             }
         }
         finished
@@ -122,12 +167,15 @@ impl Core {
         }
     }
 
-    /// Ends an answer, with `error` empty when it went well, and returns the agent it was for and what to log.
-    fn finish(&mut self, answer: u32, error: &str) -> Option<(String, &'static str, String)> {
+    /// Ends an answer, with `error` empty when it went well. A handoff its last line asks for is taken out of it and made
+    /// (or refused, with the reason, in the asker's conversation), and an answer to work handed over goes back to the agent
+    /// that asked.
+    fn finish(&mut self, answer: u32, error: &str, team: &[Agent]) -> Option<Ended> {
         let pending = self.pending.remove(&answer)?;
         let chat = self.chats.get_mut(&pending.agent)?;
         let mut said = String::new();
         let mut well = false;
+        let mut asked = None;
         if let Some(What::Answer { text, writing, error: why, .. }) = chat.answer_mut(answer) {
             *writing = false;
             if !error.is_empty() {
@@ -136,13 +184,77 @@ impl Core {
                 *why = "No answer came back.".to_owned();
             }
             well = why.is_empty();
+            if well {
+                // A handoff the last line asks for is not part of what is said.
+                let (visible, handoff) = mailbox::split(text);
+                if handoff.is_some() {
+                    *text = visible;
+                }
+                asked = handoff;
+            }
             said = if well { text.clone() } else { why.clone() };
         }
-        chat.save();
-        Some((pending.agent, if well { "answered" } else { "failed" }, said))
+        let mut ended = Ended::of(&pending.agent, if well { "answered" } else { "failed" }, String::new());
+        let from = team.iter().find(|agent| agent.id == pending.agent).cloned();
+        if let (Some(asked), Some(from)) = (asked, &from) {
+            self.hand_on(from, asked, &pending.meta, team, &mut ended);
+        }
+        if let Some(chat) = self.chats.get_mut(&pending.agent) {
+            chat.save();
+        }
+        if let (Some(origin), Some(from)) = (&pending.meta.origin, &from)
+            && let Some(asker) = team.iter().find(|agent| &agent.id == origin)
+        {
+            let text = if well { said.clone() } else { format!("(couldn't answer: {said})") };
+            let chat = self.chat(asker);
+            chat.push(What::From { from: from.id.clone(), name: from.name.clone(), text, reply: true });
+            chat.save();
+            ended.changed.push(asker.id.clone());
+            ended.logged.push(("replied", from.id.clone(), format!("to {}", asker.id)));
+        }
+        ended.said = said;
+        Some(ended)
     }
 
-    fn hear(&mut self, answer: u32, heard: Heard) -> Option<(String, &'static str, String)> {
+    /// Makes the handoff `from` asked for, or records why not: its entry in the asker's conversation, and, if it goes,
+    /// a message and an answer begun in the receiver's.
+    fn hand_on(&mut self, from: &Agent, asked: mailbox::Asked, meta: &Meta, team: &[Agent], ended: &mut Ended) {
+        let target = mailbox::resolve(&asked.to, from, team).and_then(|to| {
+            let busy = self.chat(&to).writing();
+            mailbox::check(from, &to, meta.depth, &meta.chain, busy).map(|()| to)
+        });
+        match target {
+            Ok(to) => {
+                self.chat(from).push(What::Handoff { to: to.id.clone(), name: to.name.clone(), brief: asked.brief.clone(), refused: String::new() });
+                let conversation = self.chat(&to).transcript();
+                let chat = self.chat(&to);
+                chat.push(What::From { from: from.id.clone(), name: from.name.clone(), text: asked.brief.clone(), reply: false });
+                let entry = chat.push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+                chat.save();
+                let mut chain = meta.chain.clone();
+                chain.push(to.id.clone());
+                ended.changed.push(to.id.clone());
+                ended.logged.push(("handoff", from.id.clone(), format!("to {}: {}", to.id, asked.brief)));
+                ended.delivery = Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()) } });
+            }
+            Err(why) => {
+                self.chat(from).push(What::Handoff { to: asked.to.clone(), name: asked.to.clone(), brief: asked.brief, refused: why.clone() });
+                ended.logged.push(("handoff-refused", from.id.clone(), why));
+            }
+        }
+    }
+
+    /// An answer that couldn't be started: its entry says why.
+    fn fail(&mut self, agent: &Agent, entry: u64, why: &str) {
+        let chat = self.chat(agent);
+        if let Some(What::Answer { writing, error, .. }) = chat.get_mut(entry) {
+            *writing = false;
+            *error = why.to_owned();
+        }
+        chat.save();
+    }
+
+    fn hear(&mut self, answer: u32, heard: Heard, team: &[Agent]) -> Option<Ended> {
         if !self.pending.contains_key(&answer) {
             self.early.push_back((answer, heard));
             while self.early.len() > EARLY {
@@ -155,7 +267,7 @@ impl Core {
                 self.append(answer, &text);
                 None
             }
-            Heard::Done(error) => self.finish(answer, &error),
+            Heard::Done(error) => self.finish(answer, &error, team),
         }
     }
 }
@@ -350,35 +462,15 @@ impl Agents {
             (entry, conversation)
         };
         Self::agent_changed(&emitter, &agent.id).await?;
-        let started = async {
-            // What the agent may look at that the question is about, read now by `autark-ai` and only from `can`.
-            let can: Vec<&str> = agent.can.iter().map(String::as_str).collect();
-            let seen = match proxy.look(&text, &can).await {
-                Ok(seen) => seen,
-                Err(err) => {
-                    eprintln!("agentd: looking for {}: {}", agent.name, ai::said(&err));
-                    String::new()
-                }
-            };
-            let facts = agents::memory_path(&agent.id).map(|path| memory::load(&path)).unwrap_or_default();
-            let skills: Vec<(String, String)> = agent.skills.iter().filter_map(|name| agents::skill_text(name).map(|text| (name.clone(), text))).collect();
-            proxy.complete(&prompt::system(&agent, &skills, &facts), &prompt::context(&conversation, &seen), &text).await
-        }
-        .await;
-        match started {
-            Ok(answer) => {
+        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+        match start_answer(&self.shared, connection, &agent, entry, &text, &conversation, None, meta).await {
+            Ok((answer, ended)) => {
                 // An answer that failed at once has ended by now.
-                let ended = self.shared.core().register(answer, &agent, entry);
-                announce(&self.shared, &emitter, ended).await;
+                settle(self.shared.clone(), connection.clone(), emitter.into_owned(), ended).await;
                 Ok((answer, entry))
             }
-            Err(err) => {
-                let why = ai::said(&err);
-                if let Some(What::Answer { writing, error, .. }) = self.shared.core().chat(&agent).get_mut(entry) {
-                    *writing = false;
-                    *error = why.clone();
-                }
-                self.shared.core().chat(&agent).save();
+            Err(why) => {
+                self.shared.core().fail(&agent, entry, &why);
                 self.shared.events.record(chat::now(), "failed", &agent.id, &why);
                 Self::agent_changed(&emitter, &agent.id).await?;
                 Err(Error::Failed(why))
@@ -521,8 +613,9 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 if let Ok(proxy) = AiProxy::new(&connection).await {
                     let _ = proxy.stop(answer).await;
                 }
-                let done = shared.core().finish(answer, "The model didn't answer in time.");
-                announce(&shared, &emitter, done).await;
+                let team = agents::all();
+                let ended = shared.core().finish(answer, "The model didn't answer in time.", &team);
+                settle(shared.clone(), connection.clone(), emitter.clone(), ended).await;
             }
         }
     };
@@ -541,12 +634,13 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                             if let Err(err) = Agents::answer_piece(&emitter, id, offset, &text).await {
                                 eprintln!("agentd: sending a piece: {err}");
                             }
-                            shared.core().hear(id, Heard::Piece(text));
+                            shared.core().hear(id, Heard::Piece(text), &[]);
                         }
-                        Told::Kith => announce(&shared, &emitter, Some((KITH.to_owned(), "", String::new()))).await,
+                        Told::Kith => settle(shared.clone(), connection.clone(), emitter.clone(), Some(Ended::of(KITH, "", String::new()))).await,
                         Told::Done(id, error) => {
-                            let ended = shared.core().hear(id, Heard::Done(error));
-                            announce(&shared, &emitter, ended).await;
+                            let team = agents::all();
+                            let ended = shared.core().hear(id, Heard::Done(error), &team);
+                            settle(shared.clone(), connection.clone(), emitter.clone(), ended).await;
                         }
                     }
                 }
@@ -561,15 +655,100 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
     futures_util::future::join(watch, listen).await;
 }
 
-async fn announce(shared: &Shared, emitter: &SignalEmitter<'_>, ended: Option<(String, &'static str, String)>) {
-    if let Some((agent, kind, said)) = ended {
-        if !kind.is_empty() {
-            shared.events.record(chat::now(), kind, &agent, &said);
+/// Asks `autark-ai` for an agent's answer: what it may look at that the question is about, then the answer itself under the
+/// agent's instructions. Registers the answer, and returns its id and how it ended if that was already heard. `from` is who
+/// handed the work over, when it was not you.
+#[allow(clippy::too_many_arguments)] // What an answer needs, from where it is asked.
+async fn start_answer(
+    shared: &Shared,
+    connection: &zbus::Connection,
+    agent: &Agent,
+    entry: u64,
+    prompt: &str,
+    conversation: &str,
+    from: Option<&str>,
+    meta: Meta,
+) -> Result<(u32, Option<Ended>), String> {
+    let proxy = AiProxy::new(connection).await.map_err(|err| ai::said(&err))?;
+    // What the agent may look at that the question is about, read now by `autark-ai` and only from `can`.
+    let can: Vec<&str> = agent.can.iter().map(String::as_str).collect();
+    // Work another agent handed over says "the user's notes" where you would say "my notes", which is what is looked for.
+    let asked = if from.is_some() { as_mine(prompt) } else { prompt.to_owned() };
+    let seen = match proxy.look(&asked, &can).await {
+        Ok(seen) => seen,
+        Err(err) => {
+            eprintln!("agentd: looking for {}: {}", agent.name, ai::said(&err));
+            String::new()
         }
-        if let Err(err) = Agents::agent_changed(emitter, &agent).await {
-            eprintln!("agentd: sending a change: {err}");
+    };
+    let facts = agents::memory_path(&agent.id).map(|path| memory::load(&path)).unwrap_or_default();
+    let skills: Vec<(String, String)> = agent.skills.iter().filter_map(|name| agents::skill_text(name).map(|text| (name.clone(), text))).collect();
+    let team = agents::all();
+    let links: Vec<Agent> = agent.links.iter().filter_map(|link| team.iter().find(|other| &other.id == link).cloned()).collect();
+    let mut context = prompt::context(conversation, &seen);
+    if let Some(name) = from {
+        context.push_str(&format!("\n\nThis message is from the agent {name}, not from the user, who can see it. Answer it for them, briefly."));
+    }
+    let answer = proxy.complete(&prompt::system(agent, &skills, &facts, &links), context.trim_start(), prompt).await.map_err(|err| ai::said(&err))?;
+    let ended = shared.core().register(answer, agent, entry, meta, &team);
+    Ok((answer, ended))
+}
+
+/// A request from another agent as you would have said it: "the user's notes", "your notes" and "their notes" as "my
+/// notes", which is how what to look at is told.
+fn as_mine(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let core = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '’');
+        let (lead, tail) = (&word[..word.find(core).unwrap_or(0)], &word[word.find(core).unwrap_or(0) + core.len()..]);
+        let mine = match core.to_lowercase().as_str() {
+            "user's" | "user’s" | "your" | "their" => Some("my"),
+            "user" if out.last().is_some_and(|before| before.eq_ignore_ascii_case("the")) => Some("I"),
+            _ => None,
+        };
+        match mine {
+            Some(mine) => {
+                if out.last().is_some_and(|before| before.eq_ignore_ascii_case("the")) {
+                    out.pop();
+                }
+                out.push(format!("{lead}{mine}{tail}"));
+            }
+            None => out.push(word.to_owned()),
         }
     }
+    out.join(" ")
+}
+
+/// What follows an answer's end: it is logged, clients are told which conversations changed, and work it handed on is
+/// started.
+fn settle(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmitter<'static>, ended: Option<Ended>) -> BoxFuture<'static, ()> {
+    Box::pin(async move {
+        let Some(ended) = ended else { return };
+        if !ended.kind.is_empty() {
+            shared.events.record(chat::now(), ended.kind, &ended.agent, &ended.said);
+        }
+        for (kind, agent, what) in &ended.logged {
+            shared.events.record(chat::now(), kind, agent, what);
+        }
+        for id in std::iter::once(&ended.agent).chain(&ended.changed) {
+            if let Err(err) = Agents::agent_changed(&emitter, id).await {
+                eprintln!("agentd: sending a change: {err}");
+            }
+        }
+        if let Some(delivery) = ended.delivery {
+            let Delivery { from, to, entry, brief, conversation, meta } = delivery;
+            match start_answer(&shared, &connection, &to, entry, &brief, &conversation, Some(&from.name), meta).await {
+                Ok((_, ended)) => settle(shared, connection, emitter, ended).await,
+                Err(why) => {
+                    shared.core().fail(&to, entry, &why);
+                    shared.events.record(chat::now(), "failed", &to.id, &why);
+                    if let Err(err) = Agents::agent_changed(&emitter, &to.id).await {
+                        eprintln!("agentd: sending a change: {err}");
+                    }
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -598,11 +777,11 @@ mod tests {
     fn pieces_grow_the_answer_and_done_ends_it() {
         let a = agent("piper");
         let (mut core, entry) = core_with(&a);
-        assert!(core.register(7, &a, entry).is_none());
-        assert!(core.hear(7, Heard::Piece("Hel".into())).is_none());
-        core.hear(7, Heard::Piece("lo.".into()));
-        let ended = core.hear(7, Heard::Done(String::new())).unwrap();
-        assert_eq!((ended.0.as_str(), ended.1, ended.2.as_str()), ("piper", "answered", "Hello."));
+        assert!(core.register(7, &a, entry, Meta::default(), &[]).is_none());
+        assert!(core.hear(7, Heard::Piece("Hel".into()), &[]).is_none());
+        core.hear(7, Heard::Piece("lo.".into()), &[]);
+        let ended = core.hear(7, Heard::Done(String::new()), &[]).unwrap();
+        assert_eq!((ended.agent.as_str(), ended.kind, ended.said.as_str()), ("piper", "answered", "Hello."));
         assert_eq!(text_of(&mut core, &a), ("Hello.".to_owned(), false, String::new()));
         assert!(core.pending.is_empty());
     }
@@ -611,10 +790,10 @@ mod tests {
     fn words_heard_before_the_answer_is_known_are_matched_after() {
         let a = agent("piper");
         let (mut core, entry) = core_with(&a);
-        core.hear(9, Heard::Piece("Early".into()));
-        core.hear(4, Heard::Piece("not ours".into()));
-        core.hear(9, Heard::Done(String::new()));
-        assert_eq!(core.register(9, &a, entry).map(|ended| ended.1), Some("answered"));
+        core.hear(9, Heard::Piece("Early".into()), &[]);
+        core.hear(4, Heard::Piece("not ours".into()), &[]);
+        core.hear(9, Heard::Done(String::new()), &[]);
+        assert_eq!(core.register(9, &a, entry, Meta::default(), &[]).map(|ended| ended.kind), Some("answered"));
         assert_eq!(text_of(&mut core, &a), ("Early".to_owned(), false, String::new()));
         // What belongs to others stays to be matched.
         assert_eq!(core.early.len(), 1);
@@ -624,9 +803,9 @@ mod tests {
     fn an_answer_that_fails_says_why_and_logs_a_failure() {
         let a = agent("piper");
         let (mut core, entry) = core_with(&a);
-        core.register(3, &a, entry);
-        let ended = core.hear(3, Heard::Done("Ollama isn't running".into())).unwrap();
-        assert_eq!(ended.1, "failed");
+        core.register(3, &a, entry, Meta::default(), &[]);
+        let ended = core.hear(3, Heard::Done("Ollama isn't running".into()), &[]).unwrap();
+        assert_eq!(ended.kind, "failed");
         assert_eq!(text_of(&mut core, &a), (String::new(), false, "Ollama isn't running".to_owned()));
     }
 
@@ -634,9 +813,18 @@ mod tests {
     fn an_empty_answer_without_an_error_is_a_failure_too() {
         let a = agent("piper");
         let (mut core, entry) = core_with(&a);
-        core.register(3, &a, entry);
-        assert_eq!(core.hear(3, Heard::Done(String::new())).unwrap().1, "failed");
+        core.register(3, &a, entry, Meta::default(), &[]);
+        assert_eq!(core.hear(3, Heard::Done(String::new()), &[]).unwrap().kind, "failed");
         assert_eq!(text_of(&mut core, &a).2, "No answer came back.");
+    }
+
+    #[test]
+    fn work_handed_over_is_looked_up_as_if_you_had_asked_it() {
+        assert_eq!(as_mine("What do the user's notes say about the budget?"), "What do my notes say about the budget?");
+        assert_eq!(as_mine("What do your notes say about the budget?"), "What do my notes say about the budget?");
+        assert_eq!(as_mine("what has the user written in their notes?"), "what has I written in my notes?");
+        assert_eq!(as_mine("Find the User’s calendar for Friday"), "Find my calendar for Friday");
+        assert_eq!(as_mine("Plain request"), "Plain request");
     }
 
     #[test]
@@ -652,5 +840,104 @@ mod tests {
         let history = r#"[{"kind":"you","text":"hi","time":5},{"kind":"actions","time":6},{"kind":"answer","text":"","writing":true,"time":7}]"#;
         assert_eq!(kith_last(history), ("hi".to_owned(), 5, true));
         assert_eq!(kith_last("[]"), (String::new(), 0, false));
+    }
+
+    fn linked(id: &str, links: &[&str]) -> Agent {
+        Agent { links: links.iter().map(|link| (*link).to_owned()).collect(), ..agent(id) }
+    }
+
+    /// A conversation for each of `team`, with `who`'s answer under way, as `said`.
+    fn handoff_core(team: &[Agent], who: &str, said: &str, meta: Meta) -> Core {
+        let mut core = Core::default();
+        for agent in team {
+            core.chats.insert(agent.id.clone(), Chat::in_memory(&agent.name));
+        }
+        let agent = team.iter().find(|agent| agent.id == who).unwrap();
+        let entry = core.chat(agent).push(What::Answer { answer: 0, text: said.to_owned(), writing: true, error: String::new() });
+        core.register(5, agent, entry, meta, team);
+        core
+    }
+
+    fn in_chain(ids: &[&str], depth: u8) -> Meta {
+        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None }
+    }
+
+    #[test]
+    fn a_handoff_is_taken_out_of_the_answer_and_given_to_the_other_agent() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let mut core = handoff_core(&team, "atlas", "Rain is likely.\nHANDOFF raven: forecast for Cebu tomorrow?", in_chain(&["atlas"], 0));
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert_eq!(ended.said, "Rain is likely.");
+        let delivery = ended.delivery.unwrap();
+        assert_eq!((delivery.to.id.as_str(), delivery.brief.as_str(), delivery.meta.depth), ("raven", "forecast for Cebu tomorrow?", 1));
+        assert_eq!(delivery.meta.chain, ["atlas", "raven"]);
+        assert_eq!(delivery.meta.origin.as_deref(), Some("atlas"));
+        assert_eq!(ended.changed, ["raven"]);
+        // Both conversations show it, and the receiver's answer is begun, written by the daemon in the sender's name.
+        let atlas = core.chat(&team[0]).entries().to_vec();
+        assert!(matches!(&atlas[0].what, What::Answer { text, .. } if text == "Rain is likely."));
+        assert!(matches!(&atlas[1].what, What::Handoff { to, refused, .. } if to == "raven" && refused.is_empty()));
+        let raven = core.chat(&team[1]).entries().to_vec();
+        assert!(matches!(&raven[0].what, What::From { from, name, reply: false, .. } if from == "atlas" && name == "ATLAS"));
+        assert!(matches!(&raven[1].what, What::Answer { writing: true, .. }));
+        assert_eq!(delivery.entry, raven[1].id);
+    }
+
+    #[test]
+    fn a_handoff_to_an_agent_that_isnt_linked_is_refused_and_says_so() {
+        let team = [linked("atlas", &[]), linked("raven", &[])];
+        let mut core = handoff_core(&team, "atlas", "HANDOFF raven: look it up", in_chain(&["atlas"], 0));
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert!(ended.delivery.is_none() && ended.changed.is_empty());
+        assert!(matches!(&core.chat(&team[0]).entries().last().unwrap().what, What::Handoff { refused, .. } if refused.contains("isn't linked")));
+        assert!(core.chat(&team[1]).entries().is_empty());
+        assert_eq!(ended.logged[0].0, "handoff-refused");
+    }
+
+    #[test]
+    fn a_chain_three_deep_cannot_hand_on_and_one_never_returns_to_an_agent_in_it() {
+        let team = [linked("a", &["b"]), linked("b", &["a", "c"]), linked("c", &[])];
+        let mut deep = handoff_core(&team, "b", "HANDOFF c: x", in_chain(&["a", "b"], 3));
+        assert!(deep.hear(5, Heard::Done(String::new()), &team).unwrap().delivery.is_none());
+        assert!(matches!(&deep.chat(&team[1]).entries().last().unwrap().what, What::Handoff { refused, .. } if refused.contains("3 deep")));
+        let mut back = handoff_core(&team, "b", "HANDOFF a: x", in_chain(&["a", "b"], 1));
+        assert!(back.hear(5, Heard::Done(String::new()), &team).unwrap().delivery.is_none());
+        assert!(matches!(&back.chat(&team[1]).entries().last().unwrap().what, What::Handoff { refused, .. } if refused.contains("already in this chain")));
+    }
+
+    #[test]
+    fn work_isnt_handed_to_an_agent_that_is_busy_answering() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let mut core = handoff_core(&team, "atlas", "HANDOFF raven: x", in_chain(&["atlas"], 0));
+        core.chat(&team[1]).push(What::Answer { answer: 9, text: String::new(), writing: true, error: String::new() });
+        assert!(core.hear(5, Heard::Done(String::new()), &team).unwrap().delivery.is_none());
+        assert!(matches!(&core.chat(&team[0]).entries().last().unwrap().what, What::Handoff { refused, .. } if refused.contains("busy")));
+    }
+
+    #[test]
+    fn an_answer_to_handed_over_work_goes_back_to_the_agent_that_asked() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let mut core = handoff_core(&team, "raven", "", meta.clone());
+        core.hear(5, Heard::Piece("Rain, 28 degrees.".into()), &team);
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert_eq!(ended.changed, ["atlas"]);
+        assert!(matches!(&core.chat(&team[0]).entries()[0].what, What::From { from, text, reply: true, .. } if from == "raven" && text == "Rain, 28 degrees."));
+        // A failure goes back too, so the asker's conversation says it didn't work.
+        let mut failed = handoff_core(&team, "raven", "", meta);
+        failed.hear(5, Heard::Done("Ollama isn't running".into()), &team);
+        assert!(matches!(&failed.chat(&team[0]).entries()[0].what, What::From { text, reply: true, .. } if text.contains("Ollama isn't running")));
+    }
+
+    #[test]
+    fn an_answer_that_hands_on_after_being_handed_work_does_both() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &["quill"]), linked("quill", &[])];
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let mut core = handoff_core(&team, "raven", "Ask QUILL too.\nHANDOFF quill: find my trip notes", meta);
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert_eq!(ended.delivery.as_ref().map(|delivery| delivery.meta.depth), Some(2));
+        assert_eq!(ended.delivery.as_ref().map(|delivery| delivery.meta.chain.clone()), Some(vec!["atlas".to_owned(), "raven".to_owned(), "quill".to_owned()]));
+        assert!(ended.changed.contains(&"quill".to_owned()) && ended.changed.contains(&"atlas".to_owned()));
+        assert!(matches!(&core.chat(&team[0]).entries()[0].what, What::From { text, reply: true, .. } if text == "Ask QUILL too."));
     }
 }

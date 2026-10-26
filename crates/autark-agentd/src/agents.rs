@@ -190,13 +190,17 @@ fn slugs(skills: &[String]) -> Vec<String> {
     skills.iter().map(|skill| skill.trim().to_owned()).filter(|skill| valid(skill)).take(MAX_SKILLS).collect()
 }
 
-/// The agents to link to: ones on the team that are not `own`, each once. Kith can be handed work too.
+/// The agents to link to: ones on the team that are not `own`, each once. Kith isn't one: it takes requests in the
+/// launcher's panel, where it asks first.
 fn linked(links: &[String], existing: &[Agent], own: &str) -> Result<Vec<String>, String> {
     let mut found: Vec<String> = Vec::new();
     for link in links {
         let link = link.trim();
         if link == own {
             return Err("an agent can't be linked to itself".to_owned());
+        }
+        if link == KITH {
+            return Err("work can't be handed to Kith: ask it in the launcher's panel".to_owned());
         }
         if !existing.iter().any(|agent| agent.id == link) {
             return Err(format!("there is no agent {link} to link to"));
@@ -283,6 +287,32 @@ fn seed_lenses_in(root: &Path, dirs: &[PathBuf]) {
     }
     if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
         eprintln!("agentd: marking the lens agents as made in {}", root.display());
+    }
+}
+
+/// Who the starter team may hand work to: the planner to the ones that read mail, the web and notes, and the accountant and
+/// the tax advisor to each other. Given once, to an agent that has no links yet, so what you set yourself stays.
+const STARTER_LINKS: [(&str, &[&str]); 3] = [("atlas", &["piper", "raven", "quill"]), ("ledger", &["levy"]), ("levy", &["ledger"])];
+
+pub fn seed_links() {
+    seed_links_in(&config_root());
+}
+
+fn seed_links_in(root: &Path) {
+    let marker = root.join(".seeded-links");
+    if marker.exists() {
+        return;
+    }
+    let team = all_in(root);
+    for (id, links) in STARTER_LINKS {
+        let Some(agent) = team.iter().find(|agent| agent.id == id).filter(|agent| agent.links.is_empty()) else { continue };
+        let links: Vec<String> = links.iter().filter(|link| team.iter().any(|other| other.id == **link)).map(|link| (*link).to_owned()).collect();
+        if let Err(err) = update_in(root, &agent.id, &Patch { links: Some(links), ..Patch::default() }) {
+            eprintln!("agentd: linking {}: {err}", agent.name);
+        }
+    }
+    if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
+        eprintln!("agentd: marking the starter links as made in {}", root.display());
     }
 }
 
@@ -543,11 +573,13 @@ mod tests {
     fn links_name_agents_on_the_team_and_never_the_agent_itself() {
         let root = folder("links");
         create_in(&root, "Piper", "", "", &[], &[], &[]).unwrap();
-        let atlas = create_in(&root, "Atlas", "", "", &[], &[], &["piper".to_owned(), "kith".to_owned(), "piper".to_owned()]).unwrap();
-        assert_eq!(atlas.links, ["piper", "kith"]);
-        assert!(create_in(&root, "Raven", "", "", &[], &[], &["nobody".to_owned()]).is_err());
+        let raven = create_in(&root, "Raven", "", "", &[], &[], &[]).unwrap();
+        let atlas = create_in(&root, "Atlas", "", "", &[], &[], &["piper".to_owned(), raven.id.clone(), "piper".to_owned()]).unwrap();
+        assert_eq!(atlas.links, ["piper", "raven"]);
+        assert!(create_in(&root, "Quill", "", "", &[], &[], &["kith".to_owned()]).unwrap_err().contains("Kith"));
+        assert!(create_in(&root, "Scout", "", "", &[], &[], &["nobody".to_owned()]).is_err());
         assert!(update_in(&root, "atlas", &Patch { links: Some(vec!["atlas".to_owned()]), ..Patch::default() }).is_err());
-        assert_eq!(all_in(&root).iter().find(|agent| agent.id == "atlas").unwrap().links, ["piper", "kith"]);
+        assert_eq!(all_in(&root).iter().find(|agent| agent.id == "atlas").unwrap().links, ["piper", "raven"]);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -567,6 +599,24 @@ mod tests {
         assert!(update_in(&root, KITH, &Patch::default()).is_err());
         assert!(update_in(&root, "nobody", &Patch::default()).is_err());
         assert!(update_in(&root, "piper", &Patch { soul: Some("x".repeat(SOUL + 1)), ..Patch::default() }).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_starter_links_are_given_once_to_agents_without_any() {
+        let root = folder("starter-links");
+        seed_in(&root);
+        create_in(&root, "Ledger", "", "", &[], &[], &[]).unwrap();
+        create_in(&root, "Levy", "", "", &[], &[], &["ledger".to_owned()]).unwrap();
+        seed_links_in(&root);
+        let links = |id: &str| all_in(&root).into_iter().find(|agent| agent.id == id).unwrap().links;
+        assert_eq!(links("atlas"), ["piper", "raven", "quill"]);
+        assert_eq!(links("ledger"), ["levy"]);
+        // One that had links of its own keeps them, and nothing is given a second time.
+        assert_eq!(links("levy"), ["ledger"]);
+        update_in(&root, "atlas", &Patch { links: Some(vec![]), ..Patch::default() }).unwrap();
+        seed_links_in(&root);
+        assert!(links("atlas").is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -5,6 +5,7 @@ mod agents;
 mod ai;
 mod chat;
 mod events;
+mod mailbox;
 mod memory;
 mod notes;
 mod prompt;
@@ -20,6 +21,7 @@ const CALLS: Duration = Duration::from_secs(10 * 60);
 fn main() {
     agents::seed();
     agents::seed_lenses();
+    agents::seed_links();
     let shared = Arc::new(service::Shared::new(events::Events::new(agents::state_base().join("events.jsonl"))));
     shared.prune();
     let result = async_io::block_on(async {
