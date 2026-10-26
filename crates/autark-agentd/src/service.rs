@@ -15,11 +15,13 @@ use crate::agents::{self, Agent, KITH};
 use crate::ai::{self, AiProxy};
 use crate::chat::{self, Chat, FactState, What};
 use crate::events::Events;
+use crate::jobs;
 use crate::mailbox;
 use crate::memory;
 use crate::notes;
 use crate::prompt;
 use crate::remember;
+use crate::when::{self, When};
 
 pub const PATH: &str = "/org/autark/Agents1";
 
@@ -423,14 +425,14 @@ impl Agents {
         // nothing is claimed that wasn't done.
         let proposal = if let Some(fact) = remember::fact(&text) {
             Some(("I can keep that in my memory if you say so.", Some(What::Fact { text: fact, state: FactState::Proposed })))
-        } else {
-            notes::parse(&text).map(|add| {
-                if agent.can.iter().any(|can| can == "notes") {
-                    ("I can add that to your note if you say so.", Some(What::Add { note: add.note, items: add.items, state: FactState::Proposed }))
-                } else {
-                    ("I'm not set up to look at your notes, so I can't add to them.", None)
-                }
+        } else if let Some(add) = notes::parse(&text) {
+            Some(if agent.can.iter().any(|can| can == "notes") {
+                ("I can add that to your note if you say so.", Some(What::Add { note: add.note, items: add.items, state: FactState::Proposed }))
+            } else {
+                ("I'm not set up to look at your notes, so I can't add to them.", None)
             })
+        } else {
+            when::request(&text).map(|(when, prompt)| ("I can do that on a schedule if you say so.", Some(What::Job { when: when.describe(), prompt, state: FactState::Proposed })))
         };
         if let Some((said, card)) = proposal {
             let entry = {
@@ -571,6 +573,69 @@ impl Agents {
         Ok(())
     }
 
+    /// An agent's scheduled jobs as JSON: `[{"n","when","prompt","enabled","next","last"}]`, times as local time.
+    async fn jobs(&self, id: String) -> Result<String, Error> {
+        let path = jobs_of(&id)?;
+        Ok(jobs::view(&path, now_local()).to_string())
+    }
+
+    /// Gives an agent a job: `when` in words (every day at 8, weekdays at 17:30, every monday at 9, the 1st of every month at
+    /// 9, every morning), and what it is to do, which it does as if you had said it. A time that can't be read says what can.
+    async fn add_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, when: String, prompt: String) -> Result<(), Error> {
+        let path = jobs_of(&id)?;
+        let when = When::parse(&when).map_err(Error::Failed)?;
+        jobs::add(&path, &when, &prompt, now_local()).map_err(Error::Failed)?;
+        self.shared.events.record(chat::now(), "job-added", &id, &prompt);
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Removes the `n`th job of an agent, counting from 0.
+    async fn remove_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
+        jobs::remove(&jobs_of(&id)?, n as usize).map_err(Error::Failed)?;
+        self.shared.events.record(chat::now(), "job-removed", &id, "");
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Turns the `n`th job of an agent on or off.
+    async fn set_job_enabled(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32, on: bool) -> Result<(), Error> {
+        jobs::set_enabled(&jobs_of(&id)?, n as usize, on, now_local()).map_err(Error::Failed)?;
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Runs the `n`th job of an agent now, once, without changing when it is next due.
+    async fn run_job(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
+        let agent = find(&id)?;
+        let job = jobs::load(&jobs_of(&id)?).into_iter().nth(n as usize).ok_or_else(|| Error::Failed("there is no such job".to_owned()))?;
+        run_scheduled(self.shared.clone(), connection.clone(), emitter.into_owned(), agent, job.when, job.prompt).await.map_err(Error::Failed)
+    }
+
+    /// Answers a job an agent proposed (the entry of a `job` in its conversation): schedules it, or not. A job that can't be
+    /// scheduled says why and stays to be answered again.
+    async fn answer_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, entry: u64, schedule: bool) -> Result<(), Error> {
+        let agent = find(&id)?;
+        let path = jobs_of(&id)?;
+        {
+            let mut core = self.shared.core();
+            let chat = core.chat(&agent);
+            let Some((words, prompt, state)) = chat.job_mut(entry) else { return failed("there is no such job") };
+            if *state != FactState::Proposed {
+                return failed("that has been answered already");
+            }
+            if schedule {
+                let when = When::parse(words).map_err(Error::Failed)?;
+                jobs::add(&path, &when, prompt, now_local()).map_err(Error::Failed)?;
+            }
+            *state = if schedule { FactState::Saved } else { FactState::Dismissed };
+            chat.save();
+        }
+        self.shared.events.record(chat::now(), if schedule { "job-added" } else { "job-declined" }, &id, "");
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
     /// What happened since `since` (seconds since the epoch), as a JSON array of `{"time","kind","agent","text"}`.
     async fn events(&self, since: u64) -> String {
         self.shared.events.since(since)
@@ -585,6 +650,66 @@ impl Agents {
     /// A piece of answer `answer`, which starts at byte `offset` of the answer's text.
     #[zbus(signal)]
     async fn answer_piece(emitter: &SignalEmitter<'_>, answer: u32, offset: u32, text: &str) -> zbus::Result<()>;
+}
+
+fn now_local() -> chrono::NaiveDateTime {
+    chrono::Local::now().naive_local()
+}
+
+fn jobs_of(id: &str) -> Result<std::path::PathBuf, Error> {
+    if id == KITH {
+        return failed("Kith's jobs are its tasks, in the launcher's panel");
+    }
+    find(id)?;
+    agents::jobs_path(id).ok_or_else(|| Error::Failed(format!("there is no agent {id}")))
+}
+
+/// Runs a job: what it asks goes in the agent's conversation as if you had said it, and the agent answers. Refused when the
+/// agent is busy answering, which a scheduled run waits out and `RunJob` reports.
+async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmitter<'static>, agent: Agent, when: String, prompt: String) -> Result<(), String> {
+    let (entry, conversation) = {
+        let mut core = shared.core();
+        let chat = core.chat(&agent);
+        if chat.writing() {
+            return Err(format!("{} is still answering", agent.name));
+        }
+        let conversation = chat.transcript();
+        chat.push(What::Scheduled { when, prompt: prompt.clone() });
+        let entry = chat.push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+        chat.save();
+        (entry, conversation)
+    };
+    shared.events.record(chat::now(), "scheduled-run", &agent.id, &prompt);
+    if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
+        eprintln!("agentd: sending a change: {err}");
+    }
+    let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+    match start_answer(&shared, &connection, &agent, entry, &prompt, &conversation, None, meta).await {
+        Ok((_, ended)) => settle(shared, connection, emitter, ended).await,
+        Err(why) => {
+            shared.core().fail(&agent, entry, &why);
+            shared.events.record(chat::now(), "failed", &agent.id, &why);
+            if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
+                eprintln!("agentd: sending a change: {err}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Runs the jobs that are due: those an agent has that were due after they last ran, once each, however long the laptop
+/// slept. One whose agent is busy waits for the next look.
+async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &SignalEmitter<'static>) {
+    let now = now_local();
+    for agent in agents::all() {
+        let Some(path) = agents::jobs_path(&agent.id) else { continue };
+        for (n, due) in jobs::due(&path, now) {
+            let Some(job) = jobs::load(&path).into_iter().nth(n) else { continue };
+            if run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await.is_ok() {
+                jobs::ran(&path, n, due);
+            }
+        }
+    }
 }
 
 fn memory_of(id: &str) -> Result<std::path::PathBuf, Error> {
@@ -603,6 +728,14 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
         Err(err) => {
             eprintln!("agentd: {err}");
             return;
+        }
+    };
+    let schedule = async {
+        // A look soon after start, so what was missed while the laptop was off is made up, then every half minute.
+        async_io::Timer::after(Duration::from_secs(5)).await;
+        loop {
+            run_due(&shared, &connection, &emitter).await;
+            async_io::Timer::after(Duration::from_secs(30)).await;
         }
     };
     let watch = async {
@@ -652,7 +785,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
             async_io::Timer::after(Duration::from_secs(3)).await;
         }
     };
-    futures_util::future::join(watch, listen).await;
+    futures_util::future::join3(watch, listen, schedule).await;
 }
 
 /// Asks `autark-ai` for an agent's answer: what it may look at that the question is about, then the answer itself under the

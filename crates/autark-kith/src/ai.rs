@@ -16,6 +16,12 @@ pub trait Agents {
     fn forget(&self, id: &str, n: u32) -> zbus::Result<()>;
     fn answer_fact(&self, id: &str, entry: u64, save: bool) -> zbus::Result<()>;
     fn answer_add(&self, id: &str, entry: u64, add: bool) -> zbus::Result<()>;
+    fn answer_job(&self, id: &str, entry: u64, schedule: bool) -> zbus::Result<()>;
+    fn jobs(&self, id: &str) -> zbus::Result<String>;
+    fn add_job(&self, id: &str, when: &str, prompt: &str) -> zbus::Result<()>;
+    fn remove_job(&self, id: &str, n: u32) -> zbus::Result<()>;
+    fn set_job_enabled(&self, id: &str, n: u32, on: bool) -> zbus::Result<()>;
+    fn run_job(&self, id: &str, n: u32) -> zbus::Result<()>;
     #[zbus(signal)]
     fn answer_piece(&self, answer: u32, offset: u32, text: String) -> zbus::Result<()>;
     #[zbus(signal)]

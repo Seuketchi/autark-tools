@@ -36,7 +36,7 @@ pub enum Who {
 /// A fact the agent proposes to keep, or lines to add to a note, as a card under its answer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Card {
-    /// What it proposes: `fact` to remember, or `add` to put lines at the end of a note.
+    /// What it proposes: `fact` to remember, `add` to put lines at the end of a note, or `job` to run on a schedule.
     pub kind: String,
     /// The entry to answer it by.
     pub entry: u64,
@@ -91,6 +91,30 @@ pub fn messages(json: &str) -> Vec<Message> {
                         note: false,
                     })
                 }
+                "job" => {
+                    let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
+                    let text = format!("{}: {}", entry["when"].as_str()?, entry["prompt"].as_str()?);
+                    Some(Message {
+                        who: Who::Agent,
+                        text,
+                        time,
+                        writing: None,
+                        error: String::new(),
+                        card: Some(Card { kind: "job".to_owned(), entry: entry["id"].as_u64()?, state }),
+                        from: String::new(),
+                        note: false,
+                    })
+                }
+                "scheduled" => Some(Message {
+                    who: Who::You,
+                    text: entry["prompt"].as_str()?.to_owned(),
+                    time,
+                    writing: None,
+                    error: String::new(),
+                    card: None,
+                    from: format!("Scheduled · {}", entry["when"].as_str().unwrap_or_default()),
+                    note: false,
+                }),
                 "add" => {
                     let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
                     let items: Vec<&str> = entry["items"].as_array().into_iter().flatten().filter_map(|item| item.as_str()).collect();
@@ -142,6 +166,23 @@ pub fn matches(member: &Member, query: &str) -> bool {
 
 /// The avatar colours, as `autark-ai` numbers them.
 pub const COLOURS: [&str; 8] = ["#48B5A0", "#F2A33A", "#6C63E8", "#9B6FE0", "#3D8BF2", "#E8743B", "#E5527D", "#5DB85C"];
+
+/// A job of an agent, for the schedule window.
+#[derive(serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct Job {
+    pub n: u32,
+    pub when: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub enabled: bool,
+    /// When it is next due, as local time; empty when it is off.
+    #[serde(default)]
+    pub next: String,
+}
+
+pub fn jobs(json: &str) -> Vec<Job> {
+    serde_json::from_str(json).unwrap_or_default()
+}
 
 /// The facts of an agent's memory, as the backend sends them.
 pub fn facts(json: &str) -> Vec<String> {
@@ -236,6 +277,23 @@ mod tests {
         let messages = messages(json);
         assert_eq!(messages[0].text, "Grocery list: milk, eggs");
         assert_eq!(messages[0].card, Some(Card { kind: "add".to_owned(), entry: 7, state: "proposed".to_owned() }));
+    }
+
+    #[test]
+    fn a_scheduled_request_is_what_you_asked_with_when_it_ran_and_a_proposed_job_is_a_card() {
+        let json = r#"[{"id":1,"time":1,"kind":"scheduled","when":"weekdays at 8:00","prompt":"Summarise my calendar"},
+            {"id":2,"time":2,"kind":"job","when":"every day at 9:00","prompt":"List my mail","state":"proposed"}]"#;
+        let messages = messages(json);
+        assert_eq!((messages[0].who.clone(), messages[0].text.as_str(), messages[0].from.as_str()), (Who::You, "Summarise my calendar", "Scheduled · weekdays at 8:00"));
+        assert_eq!(messages[1].card, Some(Card { kind: "job".to_owned(), entry: 2, state: "proposed".to_owned() }));
+        assert_eq!(messages[1].text, "every day at 9:00: List my mail");
+    }
+
+    #[test]
+    fn jobs_are_read_for_the_schedule_window() {
+        let jobs = jobs(r#"[{"n":0,"when":"weekdays at 8:00","prompt":"Summarise","enabled":true,"next":"2026-10-27 08:00","last":""}]"#);
+        assert_eq!((jobs[0].n, jobs[0].when.as_str(), jobs[0].enabled, jobs[0].next.as_str()), (0, "weekdays at 8:00", true, "2026-10-27 08:00"));
+        assert!(super::jobs("nonsense").is_empty());
     }
 
     #[test]

@@ -24,6 +24,11 @@ pub struct Entry {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum What {
+    /// A job the agent proposes to run on a schedule because you asked for something every day or week, for you to
+    /// schedule or not.
+    Job { when: String, prompt: String, state: FactState },
+    /// What a scheduled job asked, as if you had said it: `when` is the job's words.
+    Scheduled { when: String, prompt: String },
     /// A handoff this agent made: work it asked another agent to do, or why it couldn't (`refused`, empty when it went).
     Handoff { to: String, name: String, brief: String, refused: String },
     /// A message from another agent, written here by the daemon: what it asked this agent to do, or (`reply`) its answer
@@ -113,6 +118,14 @@ impl Chat {
         self.entries.iter_mut().find(|entry| entry.id == id).map(|entry| &mut entry.what)
     }
 
+    /// The proposed job at `entry`, if it is one.
+    pub fn job_mut(&mut self, entry: u64) -> Option<(&str, &str, &mut FactState)> {
+        match self.get_mut(entry)? {
+            What::Job { when, prompt, state } => Some((when.as_str(), prompt.as_str(), state)),
+            _ => None,
+        }
+    }
+
     /// The proposed addition to a note at `entry`, if it is one.
     pub fn add_mut(&mut self, entry: u64) -> Option<(&str, &[String], &mut FactState)> {
         match self.get_mut(entry)? {
@@ -145,7 +158,7 @@ impl Chat {
             .iter()
             .rev()
             .find_map(|entry| match &entry.what {
-                What::You { text } => Some((text.clone(), entry.time)),
+                What::You { text } | What::Scheduled { prompt: text, .. } => Some((text.clone(), entry.time)),
                 What::Answer { text, .. } | What::From { text, .. } if !text.is_empty() => Some((text.clone(), entry.time)),
                 _ => None,
             })
@@ -164,6 +177,7 @@ impl Chat {
         for entry in &self.entries[start..] {
             match &entry.what {
                 What::You { text } => lines.push(format!("User: {text}")),
+                What::Scheduled { prompt, .. } => lines.push(format!("User (a standing request, run on a schedule): {prompt}")),
                 What::Answer { text, .. } if !text.is_empty() => lines.push(format!("{}: {text}", self.speaker)),
                 What::From { name, text, reply, .. } => lines.push(if *reply { format!("{name} replied: {text}") } else { format!("{name} (an agent, not the user): {text}") }),
                 _ => {}
@@ -261,6 +275,19 @@ mod tests {
         assert_eq!(chat.last_said().0, "Rain.");
         let json = serde_json::to_value(chat.entries()).unwrap();
         assert_eq!((json[0]["kind"].as_str(), json[0]["reply"].as_bool(), json[2]["kind"].as_str()), (Some("from"), Some(false), Some("handoff")));
+    }
+
+    #[test]
+    fn a_scheduled_request_reads_as_the_user_asking() {
+        let mut chat = Chat::in_memory("ATLAS");
+        chat.push(What::Scheduled { when: "weekdays at 8:00".into(), prompt: "Summarise my calendar".into() });
+        chat.push(What::Answer { answer: 1, text: "Nothing today.".into(), writing: false, error: String::new() });
+        chat.push(What::Job { when: "every day at 9:00".into(), prompt: "x".into(), state: FactState::Proposed });
+        assert_eq!(chat.transcript(), "User (a standing request, run on a schedule): Summarise my calendar\nATLAS: Nothing today.");
+        assert_eq!(chat.last_said().0, "Nothing today.");
+        let json = serde_json::to_value(chat.entries()).unwrap();
+        assert_eq!((json[0]["kind"].as_str(), json[2]["kind"].as_str(), json[2]["state"].as_str()), (Some("scheduled"), Some("job"), Some("proposed")));
+        assert!(chat.job_mut(3).is_some() && chat.job_mut(1).is_none());
     }
 
     #[test]

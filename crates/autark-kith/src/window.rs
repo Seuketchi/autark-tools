@@ -162,6 +162,114 @@ fn link_boxes(members: &[Member], own: Option<&str>, selected: &[String]) -> (gt
     (flow, boxes)
 }
 
+/// Shows an agent's jobs in `list`: each with when it runs next, what it does, a switch, Run now and a button to remove it.
+fn fill_jobs(list: &gtk::Box, error: &gtk::Label, id: &str) {
+    let (list, error, id) = (list.clone(), error.clone(), id.to_owned());
+    glib::spawn_future_local(async move {
+        let json = async { ai::proxy().await?.jobs(&id).await }.await;
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        let json = match json {
+            Ok(json) => json,
+            Err(err) => {
+                error.set_label(&ai::said(&err));
+                error.set_visible(true);
+                return;
+            }
+        };
+        let jobs = logic::jobs(&json);
+        if jobs.is_empty() {
+            let none = gtk::Label::builder().label("No jobs yet.").xalign(0.0).build();
+            none.add_css_class("empty-fact");
+            list.append(&none);
+        }
+        for job in jobs {
+            let words = if job.enabled && !job.next.is_empty() { format!("{}\nNext: {}", job.when, job.next) } else { format!("{}\nOff", job.when) };
+            let when = gtk::Label::builder().label(words).xalign(0.0).valign(gtk::Align::Start).build();
+            when.add_css_class("job-when");
+            let what = gtk::Label::builder().label(&job.prompt).wrap(true).wrap_mode(pango::WrapMode::WordChar).xalign(0.0).hexpand(true).selectable(true).build();
+            let on = gtk::Switch::builder().active(job.enabled).valign(gtk::Align::Start).tooltip_text("On or off").build();
+            let run = gtk::Button::builder().icon_name("media-playback-start-symbolic").tooltip_text("Run now").valign(gtk::Align::Start).build();
+            let remove = gtk::Button::builder().icon_name("edit-delete-symbolic").tooltip_text("Remove this job").valign(gtk::Align::Start).build();
+            for button in [&run, &remove] {
+                button.add_css_class("flat");
+            }
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.append(&when);
+            row.append(&what);
+            row.append(&on);
+            row.append(&run);
+            row.append(&remove);
+            list.append(&row);
+            let call = {
+                let (list, error, id) = (list.clone(), error.clone(), id.clone());
+                move |step: Box<dyn Fn(ai::AgentsProxy<'static>) -> futures_util::future::LocalBoxFuture<'static, zbus::Result<()>>>, refill: bool| {
+                    let (list, error, id) = (list.clone(), error.clone(), id.clone());
+                    let step = std::rc::Rc::new(step);
+                    glib::spawn_future_local(async move {
+                        let result = async { step(ai::proxy().await?).await }.await;
+                        match result {
+                            Ok(()) => {
+                                error.set_visible(false);
+                                if refill {
+                                    fill_jobs(&list, &error, &id);
+                                }
+                            }
+                            Err(err) => {
+                                error.set_label(&ai::said(&err));
+                                error.set_visible(true);
+                                fill_jobs(&list, &error, &id);
+                            }
+                        }
+                    });
+                }
+            };
+            let (n, id_on) = (job.n, id.clone());
+            let call_on = call.clone();
+            on.connect_state_set(move |_, state| {
+                let id = id_on.clone();
+                call_on(
+                    Box::new(move |proxy| {
+                        Box::pin({
+                            let id = id.clone();
+                            async move { proxy.set_job_enabled(&id, n, state).await }
+                        })
+                    }),
+                    true,
+                );
+                glib::Propagation::Proceed
+            });
+            let (id_run, call_run) = (id.clone(), call.clone());
+            run.connect_clicked(move |_| {
+                let id = id_run.clone();
+                call_run(
+                    Box::new(move |proxy| {
+                        Box::pin({
+                            let id = id.clone();
+                            async move { proxy.run_job(&id, n).await }
+                        })
+                    }),
+                    false,
+                );
+            });
+            let (id_remove, call_remove) = (id.clone(), call.clone());
+            remove.connect_clicked(move |_| {
+                let id = id_remove.clone();
+                call_remove(
+                    Box::new(move |proxy| {
+                        Box::pin({
+                            let id = id.clone();
+                            async move { proxy.remove_job(&id, n).await }
+                        })
+                    }),
+                    true,
+                );
+            });
+        }
+    });
+}
+
 impl Kith {
     pub fn new(app: &gtk::Application) -> Rc<Self> {
         let window = gtk::ApplicationWindow::builder().application(app).title("Kith").default_width(1000).default_height(700).build();
@@ -285,6 +393,7 @@ impl Kith {
         // The agent's own menu: clear the conversation, or remove the agent.
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Memory…"), Some("kith.memory"));
+        menu.append(Some("Schedule…"), Some("kith.schedule"));
         menu.append(Some("Hands work to…"), Some("kith.links"));
         menu.append(Some("Clear conversation"), Some("kith.clear"));
         menu.append(Some("Delete agent"), Some("kith.delete"));
@@ -294,6 +403,10 @@ impl Kith {
         let kith = self.clone();
         clear.connect_activate(move |_, _| kith.clear());
         actions.add_action(&clear);
+        let schedule = gtk::gio::SimpleAction::new("schedule", None);
+        let kith = self.clone();
+        schedule.connect_activate(move |_, _| kith.schedule());
+        actions.add_action(&schedule);
         let links = gtk::gio::SimpleAction::new("links", None);
         let kith = self.clone();
         links.connect_activate(move |_, _| kith.links());
@@ -452,7 +565,7 @@ impl Kith {
                 continue;
             }
             if !message.from.is_empty() {
-                let from = gtk::Label::builder().label(&message.from).xalign(0.0).halign(gtk::Align::Start).build();
+                let from = gtk::Label::builder().label(&message.from).xalign(0.0).halign(if message.who == Who::You { gtk::Align::End } else { gtk::Align::Start }).build();
                 from.add_css_class("from-label");
                 self.messages.append(&from);
             }
@@ -469,7 +582,7 @@ impl Kith {
                 .build();
             bubble.add_css_class("bubble");
             bubble.add_css_class(if message.who == Who::You { "you" } else { "agent" });
-            if !message.from.is_empty() {
+            if !message.from.is_empty() && message.who == Who::Agent {
                 bubble.add_css_class("from");
             }
             if !message.error.is_empty() {
@@ -489,8 +602,15 @@ impl Kith {
         shell.add_css_class("fact");
         shell.set_halign(gtk::Align::Start);
         let adds = card.kind == "add";
+        let jobs = card.kind == "job";
         let said = gtk::Label::builder()
-            .label(if adds { format!("Add to {text}") } else { format!("Remember: {text}") })
+            .label(if adds {
+                format!("Add to {text}")
+            } else if jobs {
+                format!("Schedule, {text}")
+            } else {
+                format!("Remember: {text}")
+            })
             .wrap(true)
             .wrap_mode(pango::WrapMode::WordChar)
             .max_width_chars(56)
@@ -500,7 +620,13 @@ impl Kith {
         shell.append(&said);
         if card.state == "proposed" {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            for (label, save) in if adds { [("Add", true), ("Don't add", false)] } else { [("Save", true), ("Don't save", false)] } {
+            for (label, save) in if adds {
+                [("Add", true), ("Don't add", false)]
+            } else if jobs {
+                [("Schedule", true), ("Don't schedule", false)]
+            } else {
+                [("Save", true), ("Don't save", false)]
+            } {
                 let button = gtk::Button::with_label(label);
                 if save {
                     button.add_css_class("suggested-action");
@@ -511,7 +637,13 @@ impl Kith {
                     glib::spawn_future_local(async move {
                         let sent = async {
                             let proxy = ai::proxy().await?;
-                            if adds { proxy.answer_add(&id, entry, save).await } else { proxy.answer_fact(&id, entry, save).await }
+                            if adds {
+                                proxy.answer_add(&id, entry, save).await
+                            } else if jobs {
+                                proxy.answer_job(&id, entry, save).await
+                            } else {
+                                proxy.answer_fact(&id, entry, save).await
+                            }
                         };
                         match sent.await {
                             Ok(()) => kith.fail(""),
@@ -524,7 +656,9 @@ impl Kith {
             shell.append(&row);
         } else {
             let done = gtk::Label::builder()
-                .label(match (adds, card.state == "saved") {
+                .label(match (adds || jobs, card.state == "saved") {
+                    (true, true) if jobs => "Scheduled",
+                    (true, false) if jobs => "Not scheduled",
                     (true, true) => "Added",
                     (true, false) => "Not added",
                     (false, true) => "Saved to memory",
@@ -609,6 +743,75 @@ impl Kith {
                 kith.fail(&ai::said(&err));
             }
         });
+    }
+
+    /// A small window for the agent's jobs: what it does on a schedule, each with a switch, Run now and remove, and a form for
+    /// a new one. A time is said in words (every day at 8, weekdays at 17:30, every monday at 9).
+    fn schedule(self: &Rc<Self>) {
+        let Some(id) = self.current.borrow().clone() else {
+            return;
+        };
+        if id == "kith" {
+            self.fail("Kith's scheduled work is its tasks, in the launcher's panel.");
+            return;
+        }
+        let name = self.title.label();
+        let dialog = gtk::Window::builder()
+            .application(&self.window.application().expect("the window belongs to the app"))
+            .transient_for(&self.window)
+            .modal(true)
+            .title(format!("{name}'s schedule"))
+            .default_width(520)
+            .build();
+        dialog.add_css_class("new-agent");
+        let form = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        form.add_css_class("form");
+        let about = gtk::Label::builder()
+            .label("What it does on a schedule, as if you had said it: the answer waits in its conversation. A run missed while the laptop slept is made up once when it wakes. Up to 5 jobs.")
+            .xalign(0.0)
+            .wrap(true)
+            .build();
+        about.add_css_class("field-label");
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let error = gtk::Label::builder().xalign(0.0).wrap(true).visible(false).build();
+        error.add_css_class("note");
+        let when = gtk::Entry::builder().placeholder_text("weekdays at 8").hexpand(true).build();
+        let what = gtk::Entry::builder().placeholder_text("Summarise my calendar for today").hexpand(true).max_length(400).build();
+        let add = gtk::Button::builder().label("Add").build();
+        add.add_css_class("suggested-action");
+        let fields = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        fields.set_margin_top(8);
+        fields.append(&when);
+        fields.append(&what);
+        fields.append(&add);
+        form.append(&about);
+        form.append(&list);
+        form.append(&fields);
+        form.append(&error);
+        dialog.set_child(Some(&form));
+        add.connect_clicked({
+            let (list, error, id, when, what) = (list.clone(), error.clone(), id.clone(), when.clone(), what.clone());
+            move |_| {
+                let (list, error, id, when, what) = (list.clone(), error.clone(), id.clone(), when.clone(), what.clone());
+                glib::spawn_future_local(async move {
+                    let (words, prompt) = (when.text().to_string(), what.text().to_string());
+                    match async { ai::proxy().await?.add_job(&id, &words, &prompt).await }.await {
+                        Ok(()) => {
+                            when.set_text("");
+                            what.set_text("");
+                            error.set_visible(false);
+                            fill_jobs(&list, &error, &id);
+                        }
+                        Err(err) => {
+                            error.set_label(&ai::said(&err));
+                            error.set_visible(true);
+                        }
+                    }
+                });
+            }
+        });
+        fill_jobs(&list, &error, &id);
+        dialog.present();
     }
 
     /// A small window to choose which agents this one may hand work to. A handoff goes only to a linked agent, shows in
