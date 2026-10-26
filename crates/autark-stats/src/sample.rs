@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use autark_common::stats::{App, Battery, Cpu, Memory, Power, Process, Rate, Snapshot};
+use autark_common::stats::{App, Battery, Cpu, Memory, Power, Process, Rate, Snapshot, Thread};
 
 /// `/proc` reports CPU time in these ticks on every architecture Autark runs on.
 const TICKS_PER_SECOND: f64 = 100.0;
@@ -31,6 +31,7 @@ struct Previous {
     energy_uj: Option<u64>,
     apps: HashMap<String, AppCounters>,
     processes: HashMap<u32, u64>,
+    threads: HashMap<u32, u64>,
 }
 
 pub struct Sampler {
@@ -96,28 +97,43 @@ impl Sampler {
         let mut apps: Vec<App> = Vec::new();
         let mut app_counters = HashMap::new();
         let mut process_ticks = HashMap::new();
+        let mut thread_ticks = HashMap::new();
         for cgroup in cgroups {
             let then = previous.as_ref().and_then(|previous| previous.apps.get(&cgroup.id)).copied();
             let usage = then.map_or(0, |then| cgroup.counters.usage_usec.saturating_sub(then.usage_usec));
             let cpu = if seconds > 0.0 && then.is_some() { usage as f64 / 1e4 / seconds } else { 0.0 };
             let watts = power.as_ref().filter(|_| busy_usec > 0.0).map(|power| power.watts * (usage as f64 / busy_usec).min(1.0));
             let mut processes = Vec::new();
-            for (pid, name, ticks, rss) in cgroup.processes {
+            for (pid, name, ticks, memory) in cgroup.processes {
                 let cpu = match previous.as_ref().and_then(|previous| previous.processes.get(&pid)) {
                     Some(&then) if seconds > 0.0 => ticks.saturating_sub(then) as f64 * 100.0 / TICKS_PER_SECOND / seconds,
                     _ => 0.0,
                 };
                 process_ticks.insert(pid, ticks);
-                processes.push(Process { pid, name, cpu, memory: rss });
+                let mut threads = Vec::new();
+                // A process at rest has nothing to explain; only look inside the ones that work.
+                for (tid, name, ticks) in if cpu >= BUSY_THREAD { threads_of(pid) } else { Vec::new() } {
+                    thread_ticks.insert(tid, ticks);
+                    let cpu = match previous.as_ref().and_then(|previous| previous.threads.get(&tid)) {
+                        Some(&then) if seconds > 0.0 => ticks.saturating_sub(then) as f64 * 100.0 / TICKS_PER_SECOND / seconds,
+                        _ => 0.0,
+                    };
+                    if cpu >= BUSY_THREAD {
+                        threads.push(Thread { tid, name, cpu });
+                    }
+                }
+                threads.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
+                processes.push(Process { pid, name, cpu, memory, threads });
             }
             processes.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory)));
             app_counters.insert(cgroup.id.clone(), cgroup.counters);
+            let memory = processes.iter().map(|process| process.memory).sum();
             let app = App {
                 id: cgroup.id,
                 name: cgroup.name,
                 desktop_id: cgroup.desktop_id,
                 cpu,
-                memory: cgroup.memory,
+                memory,
                 disk: rate(cgroup.counters.disk, then.map(|then| then.disk)),
                 watts,
                 processes,
@@ -140,7 +156,7 @@ impl Sampler {
         }
         apps.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory)));
 
-        self.previous = Some(Previous { at, cpu: cpu.clone(), disk, network, energy_uj, apps: app_counters, processes: process_ticks });
+        self.previous = Some(Previous { at, cpu: cpu.clone(), disk, network, energy_uj, apps: app_counters, processes: process_ticks, threads: thread_ticks });
         Snapshot {
             time: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_millis() as u64),
             cpu: Cpu { total: cpu_percent.first().copied().unwrap_or(0.0), cores: cpu_percent.iter().skip(1).copied().collect() },
@@ -169,7 +185,6 @@ impl Sampler {
                 let leaf = dir.file_name()?.to_string_lossy().into_owned();
                 let (name, desktop_id) = self.names.entry(id.clone()).or_insert_with(|| name_for(&leaf)).clone();
                 let usage_usec = read(dir.join("cpu.stat")).and_then(|text| parse_cpu_stat(&text)).unwrap_or(0);
-                let memory = read(dir.join("memory.current")).and_then(|text| text.trim().parse().ok()).unwrap_or(0);
                 let disk = read(dir.join("io.stat")).map(|text| parse_io_stat(&text)).unwrap_or_default();
                 let processes: Vec<(u32, String, u64, u64)> = pids.into_iter().filter_map(process).collect();
                 // Terminal tabs and the like get random unit names; their first process says more.
@@ -177,7 +192,7 @@ impl Sampler {
                     Some(_) => processes.iter().min_by_key(|(pid, ..)| *pid).map_or(name.clone(), |(_, comm, ..)| comm.clone()),
                     None => name,
                 };
-                Some(Cgroup { id, name, desktop_id, counters: AppCounters { usage_usec, disk }, memory, processes })
+                Some(Cgroup { id, name, desktop_id, counters: AppCounters { usage_usec, disk }, processes })
             })
             .collect()
     }
@@ -188,8 +203,7 @@ struct Cgroup {
     name: String,
     desktop_id: Option<String>,
     counters: AppCounters,
-    memory: u64,
-    /// pid, name, CPU ticks so far, resident memory.
+    /// pid, name, CPU ticks so far, memory (PSS).
     processes: Vec<(u32, String, u64, u64)>,
 }
 
@@ -223,7 +237,34 @@ fn process(pid: u32) -> Option<(u32, String, u64, u64)> {
     let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
     let ticks = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
     let rss = fields.get(21)?.parse::<u64>().ok()? * PAGE_SIZE;
-    Some((pid, name, ticks, rss))
+    // Resident size counts every shared library in full for every process that maps it, which
+    // made the desktop look four times heavier than it is.
+    let memory = read(format!("/proc/{pid}/smaps_rollup")).and_then(|text| parse_pss(&text)).unwrap_or(rss);
+    Some((pid, name, ticks, memory))
+}
+
+/// A thread using less than this much of a core (in percent) is not worth listing.
+const BUSY_THREAD: f64 = 1.0;
+
+/// tid, name and CPU ticks so far, for each thread of a process.
+fn threads_of(pid: u32) -> Vec<(u32, String, u64)> {
+    let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/task")) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let tid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let stat = read(entry.path().join("stat"))?;
+            let name = stat[stat.find('(')? + 1..stat.rfind(')')?].to_owned();
+            let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+            Some((tid, name, fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?))
+        })
+        .collect()
+}
+
+/// The `Pss:` line of `/proc/<pid>/smaps_rollup`, in bytes.
+fn parse_pss(text: &str) -> Option<u64> {
+    let line = text.lines().find(|line| line.starts_with("Pss:"))?;
+    Some(line.split_whitespace().nth(1)?.parse::<u64>().ok()? * 1024)
 }
 
 /// Marks a name made from a random unit name, to be replaced by its first process's name.
@@ -425,6 +466,12 @@ mod tests {
     fn cgroup_files() {
         assert_eq!(parse_cpu_stat("usage_usec 123456\nuser_usec 1\n"), Some(123456));
         assert_eq!(parse_io_stat("259:0 rbytes=100 wbytes=50 rios=1\n8:0 rbytes=1 wbytes=2"), Rate { read: 101, write: 52 });
+    }
+
+    #[test]
+    fn pss_line() {
+        assert_eq!(parse_pss("00400000-ff Rss: 5 kB\nRss:        900 kB\nPss:        300 kB\nPss_Anon: 1 kB\n"), Some(300 * 1024));
+        assert_eq!(parse_pss("Rss: 1 kB\n"), None);
     }
 
     #[test]
