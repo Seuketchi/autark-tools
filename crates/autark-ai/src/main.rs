@@ -7,6 +7,7 @@
 
 mod act;
 mod agent;
+mod agents;
 mod board;
 mod calendar;
 mod chat;
@@ -45,6 +46,7 @@ fn main() {
         return;
     }
     let config: config::Ai = autark_common::config::load("ai");
+    agents::seed();
     // `autark-ai mcp` serves an MCP client on stdin and stdout, as the client starts it.
     if args == ["mcp"] {
         mcp::serve(&config);

@@ -1,6 +1,6 @@
 //! `org.autark.AI1` on the session bus.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
@@ -11,7 +11,7 @@ use zbus::object_server::SignalEmitter;
 use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, board, calendar, chat, check, events, files, jev, log, mail, memory, recall, route, senses, skills, soul, suggest, tasks, web};
+use crate::{act, agent, agents, board, calendar, chat, check, events, files, jev, log, mail, memory, recall, route, senses, skills, soul, suggest, tasks, web};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -34,6 +34,8 @@ pub struct Ai {
     /// Answers to stop at their next piece.
     stopped: Arc<Mutex<HashSet<u32>>>,
     chat: Arc<Mutex<Chat>>,
+    /// The other agents' conversations, read when first needed.
+    chats: Mutex<HashMap<String, Arc<Mutex<Chat>>>>,
     suggestions: Mutex<suggest::Policy>,
     busy: Arc<Busy>,
 }
@@ -80,6 +82,7 @@ impl Ai {
             next_answer: AtomicU32::new(1),
             stopped: Arc::default(),
             chat: Arc::new(Mutex::new(Chat::load())),
+            chats: Mutex::default(),
             suggestions: Mutex::new(suggest::Policy::load()),
             busy: Arc::new(Busy { said: Mutex::new("idle"), ..Default::default() }),
         }
@@ -123,8 +126,20 @@ impl Ai {
     /// numbers for a system question, search results for a look-up when search is on, and for anything Kith has no
     /// source for, a line saying so. Empty when the question is about none of these.
     async fn senses(&self, connection: &zbus::Connection, question: &str) -> String {
+        self.senses_for(connection, question, None).await
+    }
+
+    /// `senses`, for an agent that may look at only what its job needs: a subject it may not look at is
+    /// answered with a line saying so, so it doesn't guess.
+    async fn senses_for(&self, connection: &zbus::Connection, question: &str, agent: Option<&agents::Agent>) -> String {
         let mut seen: Vec<String> = Vec::new();
         for subject in senses::subjects(question) {
+            if let Some(agent) = agent
+                && !agent.allows(subject.ability())
+            {
+                seen.push(format!("You are not set up to look at the user's {}. Say so in one sentence, and that Kith itself can; do not guess.", subject.ability()));
+                continue;
+            }
             seen.push(match subject {
                 senses::Subject::System => senses::system(),
                 senses::Subject::Web => self.looked_up(connection, question).await,
@@ -290,7 +305,8 @@ impl Ai {
         let ollama = self.ollama();
         let stopped = self.stopped.clone();
         let busy = self.busy.clone();
-        let chat = ask.entry.map(|entry| (self.chat.clone(), entry));
+        let chat = ask.entry.map(|entry| (ask.chat.clone().unwrap_or_else(|| self.chat.clone()), entry));
+        let owner = ask.owner.clone();
         if let Some((chat, entry)) = &chat {
             let mut chat = lock(chat);
             if let Some(What::Answer { answer, .. }) = chat.get_mut(*entry) {
@@ -394,10 +410,17 @@ impl Ai {
             if let Err(err) = async_io::block_on(Ai::answer_done(&emitter, id, &error)) {
                 eprintln!("ai: sending an answer: {err}");
             }
-            if chat.is_some()
-                && let Err(err) = async_io::block_on(Ai::history_changed(&emitter))
-            {
-                eprintln!("ai: sending a conversation change: {err}");
+            if chat.is_some() {
+                if !owner.is_empty()
+                    && let Err(err) = async_io::block_on(Ai::agent_changed(&emitter, &owner))
+                {
+                    eprintln!("ai: sending an agent's conversation change: {err}");
+                }
+                if (owner.is_empty() || owner == agents::KITH)
+                    && let Err(err) = async_io::block_on(Ai::history_changed(&emitter))
+                {
+                    eprintln!("ai: sending a conversation change: {err}");
+                }
             }
         });
         id
@@ -507,6 +530,55 @@ impl Ai {
         }
     }
 
+    /// An agent's conversation: Kith's own, or the agent's, read when first needed.
+    fn chat_of(&self, agent: &agents::Agent) -> Option<Arc<Mutex<Chat>>> {
+        if agent.id == agents::KITH {
+            return Some(self.chat.clone());
+        }
+        let mut chats = self.chats.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(chat) = chats.get(&agent.id) {
+            return Some(chat.clone());
+        }
+        let chat = Arc::new(Mutex::new(Chat::of(agents::chat_path(&agent.id)?, &agent.name)));
+        chats.insert(agent.id.clone(), chat.clone());
+        Some(chat)
+    }
+
+    /// The instructions for an agent's answer: the rules, its job, how it sounds, then its soul. Kith's own are
+    /// the launcher's, with what it remembers.
+    fn agent_system(&self, agent: &agents::Agent, question: &str) -> String {
+        if agent.id == agents::KITH {
+            let mut system = self.ask_system(question, true);
+            let facts = memory::facts();
+            if !facts.is_empty() {
+                let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
+                system.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
+            }
+            return system;
+        }
+        let job = if agent.job.is_empty() { String::new() } else { format!(" Your job: {}", agent.job) };
+        format!("You are {}, one of the agents on the user's Autark desktop, in a running conversation with the user.{job}{AGENT_RULES}{ASK_VOICE}{}", agent.name, soul::with(&agent.soul))
+    }
+
+    /// Changes an agent's conversation, saves it and says so.
+    async fn change_agent<T>(&self, emitter: &SignalEmitter<'_>, agent: &agents::Agent, chat: &Mutex<Chat>, change: impl FnOnce(&mut Chat) -> T) -> T {
+        let result = {
+            let mut chat = lock(chat);
+            let result = change(&mut chat);
+            chat.save();
+            result
+        };
+        if let Err(err) = Ai::agent_changed(emitter, &agent.id).await {
+            eprintln!("ai: sending an agent's conversation change: {err}");
+        }
+        if agent.id == agents::KITH
+            && let Err(err) = Ai::history_changed(emitter).await
+        {
+            eprintln!("ai: sending a conversation change: {err}");
+        }
+        result
+    }
+
     /// Changes the conversation, saves it and says so.
     async fn change<T>(&self, emitter: &SignalEmitter<'_>, change: impl FnOnce(&mut Chat) -> T) -> T {
         let result = {
@@ -535,6 +607,9 @@ struct Ask {
     agent: Option<bool>,
     /// A saved skill the question calls for, whose steps are the loop's first looks.
     skill: Option<skills::Skill>,
+    /// The conversation the entry is in, when it isn't Kith's own, and whose it is: an agent's id, or empty.
+    chat: Option<Arc<Mutex<Chat>>>,
+    owner: String,
 }
 
 const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer the question that was asked, in one or two plain sentences, unless the user asks for a list or more detail: then give it, \
@@ -542,6 +617,13 @@ const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desk
                           You know only what is given with the question and what you remember about the user. When something asked for isn't \
                           given, say so in one sentence and what you would need. Never invent events, names, numbers, links or news, and never \
                           claim an ability you haven't been told you have.";
+
+/// What every agent but Kith is told it can and can't do, so a small model doesn't claim a power it hasn't got.
+const AGENT_RULES: &str = " Answer what is asked in one or two plain sentences, unless the user asks for a list or more detail: then give it, \
+                            one item to a line, each starting with \"- \". \
+                            You know only what the user and the conversation so far have told you. When something asked for isn't \
+                            given, say so in one sentence and what you would need. Never invent events, names, numbers, links or news. \
+                            You can't send, change or run anything. You see only what you are given with the question: if asked about something you were not given, say so and say what you can do instead.";
 
 /// How Kith sounds, kept apart from the soul so a small model gets the same few rules whatever the soul says. It
 /// never names "Done.": the panel marks an action done itself, and a small model repeats whatever it is told not to say.
@@ -725,7 +807,7 @@ impl Ai {
             }
         }
         let logged = json!({ "files": outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>() });
-        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim, agent, skill }, logged);
+        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim, agent, skill, chat: None, owner: String::new() }, logged);
         Ok((id, entry, outcome))
     }
 
@@ -867,6 +949,92 @@ impl Ai {
         self.policy().again(&key);
     }
 
+    /// The team, as JSON, Kith first: `[{"id","name","colour","job","last","time","writing"}]`. `last` is what was
+    /// said last in its conversation and `time` when, in seconds since the epoch (0 for nothing yet).
+    async fn agents(&self) -> Result<String, Error> {
+        let rows: Vec<Value> = agents::all()
+            .into_iter()
+            .map(|agent| {
+                let (last, time, writing) = match self.chat_of(&agent) {
+                    Some(chat) => {
+                        let mut chat = lock(&chat);
+                        let (last, time) = chat.last_said();
+                        (last, time, chat.writing())
+                    }
+                    None => (String::new(), 0, false),
+                };
+                json!({ "id": agent.id, "name": agent.name, "colour": agent.colour, "job": agent.job, "last": last, "time": time, "writing": writing })
+            })
+            .collect();
+        serde_json::to_string(&rows).map_err(|err| Error::Engine(err.to_string()))
+    }
+
+    /// Adds an agent to the team, and returns its id. `can` is what it may look at: any of mail, calendar, tasks,
+    /// notes, web and laptop. Everything it looks at is read-only.
+    async fn create_agent(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, name: String, job: String, soul: String, can: Vec<String>) -> Result<String, Error> {
+        let agent = agents::create(&name, &job, &soul, &can).map_err(Error::Engine)?;
+        if let Err(err) = Ai::agents_changed(&emitter).await {
+            eprintln!("ai: sending a team change: {err}");
+        }
+        Ok(agent.id)
+    }
+
+    /// Removes an agent and its conversation.
+    async fn delete_agent(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String) -> Result<(), Error> {
+        agents::delete(&id).map_err(Error::Engine)?;
+        self.chats.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&id);
+        if let Err(err) = Ai::agents_changed(&emitter).await {
+            eprintln!("ai: sending a team change: {err}");
+        }
+        Ok(())
+    }
+
+    /// An agent's conversation, as `History` gives Kith's.
+    async fn agent_history(&self, id: String) -> Result<String, Error> {
+        let agent = agents::get(&id).ok_or_else(|| Error::Engine(format!("there is no agent {id}")))?;
+        let chat = self.chat_of(&agent).ok_or_else(|| Error::Engine(format!("there is no agent {id}")))?;
+        serde_json::to_string(lock(&chat).entries()).map_err(|err| Error::Engine(err.to_string()))
+    }
+
+    /// Says something to an agent. The answer is kept in its conversation as an entry that grows as it's written,
+    /// and comes as `AnswerPiece` signals too. Returns the answer's id and its entry.
+    async fn agent_say(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, text: String) -> Result<(u32, u64), Error> {
+        self.allowed(self.config().features.ask, "ask")?;
+        let agent = agents::get(&id).ok_or_else(|| Error::Engine(format!("there is no agent {id}")))?;
+        let chat = self.chat_of(&agent).ok_or_else(|| Error::Engine(format!("there is no agent {id}")))?;
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return Err(Error::Engine("there is nothing to say".to_owned()));
+        }
+        let conversation = lock(&chat).transcript();
+        let entry = self
+            .change_agent(&emitter, &agent, &chat, |chat| {
+                chat.said(&text);
+                chat.push(What::Answer { answer: 0, text: String::new(), files: Vec::new(), writing: true, error: String::new() })
+            })
+            .await;
+        let system = self.agent_system(&agent, &text);
+        let mut context = if conversation.is_empty() { String::new() } else { format!("Conversation so far:\n{conversation}") };
+        // What the agent may look at that the question is about, read now.
+        if agent.id != agents::KITH {
+            let seen = self.senses_for(connection, &text, Some(&agent)).await;
+            if !seen.is_empty() {
+                context.push_str(&format!("\n\n{seen}"));
+            }
+        }
+        let answer =
+            self.answer(emitter, Ask { system, prompt: text, context, entry: Some(entry), verbatim: None, agent: None, skill: None, chat: Some(chat), owner: agent.id }, json!({ "agent": id }));
+        Ok((answer, entry))
+    }
+
+    /// Clears an agent's conversation.
+    async fn clear_agent(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String) -> Result<(), Error> {
+        let agent = agents::get(&id).ok_or_else(|| Error::Engine(format!("there is no agent {id}")))?;
+        let chat = self.chat_of(&agent).ok_or_else(|| Error::Engine(format!("there is no agent {id}")))?;
+        self.change_agent(&emitter, &agent, &chat, Chat::clear).await;
+        Ok(())
+    }
+
     /// The conversation, as a JSON array of entries.
     async fn history(&self) -> Result<String, Error> {
         serde_json::to_string(lock(&self.chat).entries()).map_err(|err| Error::Engine(err.to_string()))
@@ -983,7 +1151,21 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok(self.answer(emitter, Ask { system: self.ask_system(&prompt, false), verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())), prompt, context, entry: None, agent: None, skill: None }, json!({})))
+        Ok(self.answer(
+            emitter,
+            Ask {
+                system: self.ask_system(&prompt, false),
+                verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())),
+                prompt,
+                context,
+                entry: None,
+                agent: None,
+                skill: None,
+                chat: None,
+                owner: String::new(),
+            },
+            json!({}),
+        ))
     }
 
     /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
@@ -995,7 +1177,24 @@ impl Ai {
         let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
         let seen = self.senses(connection, &prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok((self.answer(emitter, Ask { system: self.ask_system(&prompt, false), verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())), prompt, context, entry: None, agent: None, skill: None }, json!({ "files": read })), outcome))
+        Ok((
+            self.answer(
+                emitter,
+                Ask {
+                    system: self.ask_system(&prompt, false),
+                    verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())),
+                    prompt,
+                    context,
+                    entry: None,
+                    agent: None,
+                    skill: None,
+                    chat: None,
+                    owner: String::new(),
+                },
+                json!({ "files": read }),
+            ),
+            outcome,
+        ))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.
@@ -1042,6 +1241,14 @@ impl Ai {
     /// A new suggestion, as conversation entry `entry`.
     #[zbus(signal)]
     pub async fn suggestion(emitter: &SignalEmitter<'_>, entry: u64, text: &str) -> zbus::Result<()>;
+
+    /// An agent's conversation changed: an entry came, or an answer finished.
+    #[zbus(signal)]
+    async fn agent_changed(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
+
+    /// An agent was added or removed.
+    #[zbus(signal)]
+    async fn agents_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     /// The conversation changed: read it again with `History`.
     #[zbus(signal)]

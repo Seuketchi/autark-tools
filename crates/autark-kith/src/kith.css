@@ -1,0 +1,218 @@
+window.kith {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 14px;
+}
+
+window.kith .titlebar {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.roster {
+  background-color: @sidebar;
+  border-right: 1px solid @border;
+}
+
+.roster-head {
+  padding: 16px 14px 8px 18px;
+}
+
+.roster-head .heading {
+  color: @heading;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.roster-head button.add {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 9px;
+  border: none;
+  box-shadow: none;
+  background: none;
+  color: @text2;
+}
+
+.roster-head button.add:hover {
+  background-color: alpha(@text, 0.08);
+  color: @text;
+}
+
+.roster searchentry {
+  margin: 4px 14px 10px;
+  min-height: 34px;
+  border-radius: 10px;
+  border: 1px solid @border;
+  background-color: @surface;
+  box-shadow: none;
+}
+
+.roster list {
+  background: none;
+  padding: 0 8px;
+}
+
+.roster row.member {
+  padding: 9px 10px;
+  margin: 1px 0;
+  border-radius: 12px;
+  background: none;
+}
+
+.roster row.member:hover {
+  background-color: alpha(@text, 0.05);
+}
+
+.roster row.member:selected {
+  background-color: alpha(@text, 0.10);
+  color: @text;
+}
+
+.member .name {
+  font-weight: 600;
+  color: @text;
+}
+
+.member .when,
+.member .preview {
+  color: @text3;
+  font-size: 13px;
+}
+
+.member .preview.typing {
+  color: @accent_text;
+}
+
+.chat-head {
+  padding: 14px 8px 12px 20px;
+  border-bottom: 1px solid @border;
+}
+
+.chat-head .title {
+  font-weight: 600;
+  font-size: 15px;
+  color: @heading;
+}
+
+.chat-head .job {
+  color: @text3;
+  font-size: 13px;
+}
+
+.chat-head button.more {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 9px;
+  border: none;
+  box-shadow: none;
+  background: none;
+  color: @text2;
+}
+
+.chat-head button.more:hover {
+  background-color: alpha(@text, 0.08);
+}
+
+.messages {
+  padding: 14px 24px 8px;
+}
+
+.stamp {
+  color: @text3;
+  font-size: 12px;
+  margin: 12px 0 6px;
+}
+
+.bubble {
+  padding: 9px 14px;
+  border-radius: 16px;
+  margin: 2px 0;
+}
+
+.bubble.agent {
+  background-color: @raised;
+  color: @text;
+}
+
+.bubble.you {
+  background-color: @accent_soft;
+  color: @accent_text;
+}
+
+.bubble.failed {
+  color: @danger;
+}
+
+.empty {
+  color: @text3;
+  font-size: 14px;
+}
+
+.compose {
+  margin: 8px 20px 18px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 22px;
+  border: 1px solid @border;
+  background-color: @raised;
+}
+
+.compose entry {
+  min-height: 34px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: @text;
+  padding: 0 6px;
+}
+
+.compose button.send {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 17px;
+  border: none;
+  box-shadow: none;
+  background-color: @accent;
+  color: @on_accent;
+}
+
+.compose button.send:disabled {
+  background-color: alpha(@text, 0.12);
+  color: @text3;
+}
+
+.note {
+  color: @danger;
+  font-size: 13px;
+  margin: 0 24px;
+}
+
+window.new-agent {
+  background-color: @surface;
+  color: @text;
+}
+
+window.new-agent .form {
+  padding: 20px;
+}
+
+window.new-agent .field-label {
+  color: @text2;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+window.new-agent textview {
+  background-color: @raised;
+  color: @text;
+  border-radius: 10px;
+  padding: 6px;
+}

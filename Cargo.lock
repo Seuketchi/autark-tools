@@ -356,6 +356,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-kith"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "futures-util",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "zbus",
+]
+
+[[package]]
 name = "autark-launcher"
 version = "0.0.0"
 dependencies = [

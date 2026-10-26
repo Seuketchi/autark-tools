@@ -117,6 +117,10 @@ pub enum Proposal {
 pub struct Chat {
     entries: Vec<Entry>,
     next: u64,
+    /// Where it is kept, when it isn't Kith's own conversation.
+    path: Option<PathBuf>,
+    /// Who answers in it, empty for Kith.
+    speaker: String,
 }
 
 fn now() -> u64 {
@@ -130,9 +134,18 @@ fn path() -> PathBuf {
 
 impl Chat {
     pub fn load() -> Self {
-        let entries: Vec<Entry> = std::fs::read(path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
+        Self::load_from(None, "")
+    }
+
+    /// An agent's conversation, kept at `path`, with `speaker` answering.
+    pub fn of(path: PathBuf, speaker: &str) -> Self {
+        Self::load_from(Some(path), speaker)
+    }
+
+    fn load_from(at: Option<PathBuf>, speaker: &str) -> Self {
+        let entries: Vec<Entry> = std::fs::read(at.clone().unwrap_or_else(path)).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
         let next = entries.iter().map(|entry| entry.id + 1).max().unwrap_or(1);
-        let mut chat = Self { entries, next };
+        let mut chat = Self { entries, next, path: at, speaker: speaker.to_owned() };
         // An answer cut off by a restart won't grow any more.
         for entry in &mut chat.entries {
             if let What::Answer { writing, .. } = &mut entry.what {
@@ -185,6 +198,29 @@ impl Chat {
         self.entries.iter_mut().rev().find(|entry| matches!(entry.what, What::Answer { answer: id, writing: true, .. } if id == answer)).map(|entry| &mut entry.what)
     }
 
+    /// What was said last, by you or the agent, and when: for the roster's preview.
+    pub fn last_said(&mut self) -> (String, u64) {
+        self.prune();
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.what {
+                What::You { text } => Some((text.clone(), entry.time)),
+                What::Answer { text, .. } if !text.is_empty() => Some((text.clone(), entry.time)),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether an answer is being written.
+    pub fn writing(&self) -> bool {
+        self.entries.iter().any(|entry| matches!(entry.what, What::Answer { writing: true, .. }))
+    }
+
+    fn speaker(&self) -> &str {
+        if self.speaker.is_empty() { "Kith" } else { &self.speaker }
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
     }
@@ -208,7 +244,7 @@ impl Chat {
         for entry in &self.entries[start..] {
             match &entry.what {
                 What::You { text } => lines.push(format!("User: {text}")),
-                What::Answer { text, .. } if !text.is_empty() => lines.push(format!("Kith: {text}")),
+                What::Answer { text, .. } if !text.is_empty() => lines.push(format!("{}: {text}", self.speaker())),
                 What::Actions { actions, results, .. } if !results.is_empty() => {
                     let ran: Vec<String> = actions.iter().zip(results).filter(|(_, result)| result.as_deref() == Some("")).map(|(action, _)| action.to_string()).collect();
                     if !ran.is_empty() {
@@ -232,7 +268,7 @@ impl Chat {
     /// Writes the conversation through a temporary file, only you able to read it.
     pub fn save(&mut self) {
         self.prune();
-        let path = path();
+        let path = self.path.clone().unwrap_or_else(path);
         let result = (|| {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
