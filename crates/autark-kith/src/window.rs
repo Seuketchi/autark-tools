@@ -366,6 +366,15 @@ impl Kith {
         kith.wire(&add, &more);
         kith.refresh();
         kith.listen();
+        {
+            // Coming back to the window is seeing the open conversation.
+            let weak = Rc::downgrade(&kith);
+            kith.window.connect_is_active_notify(move |_| {
+                if let Some(kith) = weak.upgrade() {
+                    kith.read_if_open();
+                }
+            });
+        }
         kith
     }
 
@@ -436,6 +445,7 @@ impl Kith {
                     *kith.members.borrow_mut() = logic::team(&json);
                     kith.fail("");
                     kith.fill();
+                    kith.read_if_open();
                     // The agent to show: the one picked or just made, else Kith, the first.
                     let wanted = {
                         let members = kith.members.borrow();
@@ -471,12 +481,19 @@ impl Kith {
             when.add_css_class("when");
             let top = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             top.append(&name);
+            if member.unread {
+                let dot = gtk::Label::new(Some("●"));
+                dot.add_css_class("unread-dot");
+                top.append(&dot);
+            }
             top.append(&when);
             let said = if member.writing { "Typing…".to_owned() } else { logic::preview(&member.last) };
             let preview = gtk::Label::builder().label(said).xalign(0.0).ellipsize(pango::EllipsizeMode::End).build();
             preview.add_css_class("preview");
             if member.writing {
                 preview.add_css_class("typing");
+            } else if member.unread {
+                preview.add_css_class("unread");
             }
             let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
             text.set_hexpand(true);
@@ -494,6 +511,19 @@ impl Kith {
         self.rebuilding.set(false);
     }
 
+    /// Tells the backend you have seen the open conversation, if it has an unread answer and you are looking at the window.
+    fn read_if_open(self: &Rc<Self>) {
+        let Some(id) = self.current.borrow().clone() else { return };
+        if !self.window.is_active() || !self.members.borrow().iter().any(|member| member.id == id && member.unread) {
+            return;
+        }
+        glib::spawn_future_local(async move {
+            if let Err(err) = async { ai::proxy().await?.mark_read(&id).await }.await {
+                eprintln!("kith: marking {id} read: {}", ai::said(&err));
+            }
+        });
+    }
+
     /// Shows an agent's conversation.
     fn pick(self: &Rc<Self>, id: &str) {
         let member = self.members.borrow().iter().find(|member| member.id == id).cloned();
@@ -507,6 +537,7 @@ impl Kith {
         self.entry.set_placeholder_text(Some(&format!("Message {}", member.name)));
         self.fill();
         self.reload();
+        self.read_if_open();
         self.entry.grab_focus();
     }
 

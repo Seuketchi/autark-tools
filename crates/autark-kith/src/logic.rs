@@ -18,6 +18,9 @@ pub struct Member {
     pub time: i64,
     #[serde(default)]
     pub writing: bool,
+    /// An answer arrived (a scheduled run, an agent's reply) that you haven't opened the conversation for.
+    #[serde(default)]
+    pub unread: bool,
     /// The agents it may hand work to, by id.
     #[serde(default)]
     pub links: Vec<String>,
@@ -309,6 +312,12 @@ mod tests {
         assert!(messages[3].note && messages[3].text.starts_with("Couldn't ask QUILL") && !messages[3].error.is_empty());
         assert_eq!(messages[4].from, "ATLAS asked");
         assert_eq!(messages[0].from, "");
+    }
+
+    #[test]
+    fn a_member_is_unread_only_when_the_backend_says_so() {
+        let team = team(r#"[{"id":"atlas","name":"ATLAS","unread":true},{"id":"raven","name":"RAVEN"}]"#);
+        assert!(team[0].unread && !team[1].unread);
     }
 
     #[test]

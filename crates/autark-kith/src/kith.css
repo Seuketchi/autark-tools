@@ -89,6 +89,16 @@ window.kith .titlebar {
   color: @accent_text;
 }
 
+.member .unread-dot {
+  color: @accent_text;
+  font-size: 10px;
+}
+
+.member .preview.unread {
+  color: @text;
+  font-weight: 600;
+}
+
 .chat-head {
   padding: 14px 8px 12px 20px;
   border-bottom: 1px solid @border;
