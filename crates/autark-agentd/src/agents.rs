@@ -78,6 +78,11 @@ fn state_root() -> PathBuf {
     state_base().join("agents")
 }
 
+/// Where an agent's scheduled jobs are kept, `None` for an id that isn't a slug.
+pub fn jobs_path(id: &str) -> Option<PathBuf> {
+    (id != KITH && valid(id)).then(|| config_root().join(id).join("jobs.toml"))
+}
+
 /// Where an agent's memory is kept, `None` for an id that isn't a slug.
 pub fn memory_path(id: &str) -> Option<PathBuf> {
     (id != KITH && valid(id)).then(|| config_root().join(id).join("memory.toml"))
