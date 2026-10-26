@@ -1,6 +1,6 @@
 //! `autark-cursors install [DIR]` draws the Autark cursor theme and writes it as an icon theme (default
 //! `~/.local/share/icons/Autark`); `autark-cursors sheet FILE` draws every shape onto a PNG to look at. The shapes are
-//! kept plain: near-black with a thin white edge, so they read on light and dark alike. Anything not drawn here falls
+//! kept plain: the theme's blue with a thin white edge, so they stay solid on light and dark alike. Anything not drawn here falls
 //! back to Adwaita, which the theme inherits.
 
 mod draw;
