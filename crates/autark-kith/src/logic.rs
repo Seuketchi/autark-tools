@@ -30,9 +30,11 @@ pub enum Who {
     Agent,
 }
 
-/// A fact the agent proposes to keep, as a card under its answer.
+/// A fact the agent proposes to keep, or lines to add to a note, as a card under its answer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Card {
+    /// What it proposes: `fact` to remember, or `add` to put lines at the end of a note.
+    pub kind: String,
     /// The entry to answer it by.
     pub entry: u64,
     /// `proposed` until you save it or not, then `saved` or `dismissed`.
@@ -71,7 +73,20 @@ pub fn messages(json: &str) -> Vec<Message> {
                 }
                 "fact" => {
                     let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
-                    Some(Message { who: Who::Agent, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new(), card: Some(Card { entry: entry["id"].as_u64()?, state }) })
+                    Some(Message {
+                        who: Who::Agent,
+                        text: entry["text"].as_str()?.to_owned(),
+                        time,
+                        writing: None,
+                        error: String::new(),
+                        card: Some(Card { kind: "fact".to_owned(), entry: entry["id"].as_u64()?, state }),
+                    })
+                }
+                "add" => {
+                    let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
+                    let items: Vec<&str> = entry["items"].as_array().into_iter().flatten().filter_map(|item| item.as_str()).collect();
+                    let text = format!("{}: {}", entry["note"].as_str()?, items.join(", "));
+                    Some(Message { who: Who::Agent, text, time, writing: None, error: String::new(), card: Some(Card { kind: "add".to_owned(), entry: entry["id"].as_u64()?, state }) })
                 }
                 _ => None,
             }
@@ -179,10 +194,18 @@ mod tests {
     fn a_proposed_fact_is_a_card_with_its_entry_and_state() {
         let json = r#"[{"id":4,"time":1,"kind":"you","text":"remember that I like oat milk"},{"id":5,"time":1,"kind":"fact","text":"I like oat milk","state":"proposed"},{"id":6,"time":1,"kind":"fact","text":"x","state":"saved"}]"#;
         let messages = messages(json);
-        assert_eq!(messages[1].card, Some(Card { entry: 5, state: "proposed".to_owned() }));
+        assert_eq!(messages[1].card, Some(Card { kind: "fact".to_owned(), entry: 5, state: "proposed".to_owned() }));
         assert_eq!(messages[1].text, "I like oat milk");
         assert_eq!(messages[2].card.as_ref().map(|card| card.state.as_str()), Some("saved"));
         assert_eq!(messages[0].card, None);
+    }
+
+    #[test]
+    fn lines_to_add_to_a_note_are_a_card_that_names_the_note() {
+        let json = r#"[{"id":7,"time":1,"kind":"add","note":"Grocery list","items":["milk","eggs"],"state":"proposed"}]"#;
+        let messages = messages(json);
+        assert_eq!(messages[0].text, "Grocery list: milk, eggs");
+        assert_eq!(messages[0].card, Some(Card { kind: "add".to_owned(), entry: 7, state: "proposed".to_owned() }));
     }
 
     #[test]

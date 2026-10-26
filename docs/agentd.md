@@ -56,6 +56,19 @@ sentence, not the model, so a small model can't claim a save it didn't make: the
 you say so, and a card under it offers **Save** or **Don't save**. Nothing is kept unless you save it, as with Kith's
 own memory. A question ("do you remember my name?") isn't a fact, and a fact that won't fit says why and waits.
 
+## Adding to a note
+
+"Add milk, eggs and bread to my grocery list" (or "put … on the shopping list", "add … to my work notes") is read by
+code, as "remember that" is. An agent that may look at notes (`can` has `notes`) answers that it can add it if you say
+so, and a card names the note and the lines with **Add** and **Don't add**. An agent that may not says so and does
+nothing. Only when you tap Add is anything written, and what is written is only lines (`- [ ] milk`) added at the end
+of a Markdown note in your Notes vault, the one Notes opens: a note of that name anywhere in the vault (three folders
+down, dot-folders skipped, case ignored), else a new one in its top folder. It never changes or removes what is in a
+note, never leaves the vault, refuses a note named for a secret (password, token, …) or over 256 KB, and takes at most
+10 lines of 200 characters from one sentence. A sentence that isn't about a list or a note ("add a meeting to my
+calendar") is not taken for one. This is the first thing an agent does beyond reading, and the tap is its gate, as
+Kitchen's front of house gates a change.
+
 ## Mailbox: agents handing work to each other
 
 The rules are Kitchen's, because they are the ones that keep a team from tying itself in knots:
@@ -68,7 +81,7 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
   keep passing a question back and forth.
 - **Visible.** Every handoff and every reply is an entry in both agents' conversations, marked with who it is from. You
   can follow a chain by reading the chats, and each is an event in the log.
-- **Read-only.** A message can ask an agent to look something up and answer. It can't make an agent send, change or run
+- **Read-only.** (Apart from the tapped additions to a note above.) A message can ask an agent to look something up and answer. It can't make an agent send, change or run
   anything: nothing an agent can do goes beyond what its `can` list lets it read, and anything that would change
   something comes to you first, as Kitchen's front of house does.
 - **Code routes, not the model.** An agent hands work on by ending its reply with a line `HANDOFF <agent>: <brief>`.

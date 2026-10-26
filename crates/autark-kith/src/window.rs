@@ -449,11 +449,19 @@ impl Kith {
         let shell = gtk::Box::new(gtk::Orientation::Vertical, 6);
         shell.add_css_class("fact");
         shell.set_halign(gtk::Align::Start);
-        let said = gtk::Label::builder().label(format!("Remember: {text}")).wrap(true).wrap_mode(pango::WrapMode::WordChar).max_width_chars(56).xalign(0.0).selectable(true).build();
+        let adds = card.kind == "add";
+        let said = gtk::Label::builder()
+            .label(if adds { format!("Add to {text}") } else { format!("Remember: {text}") })
+            .wrap(true)
+            .wrap_mode(pango::WrapMode::WordChar)
+            .max_width_chars(56)
+            .xalign(0.0)
+            .selectable(true)
+            .build();
         shell.append(&said);
         if card.state == "proposed" {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            for (label, save) in [("Save", true), ("Don't save", false)] {
+            for (label, save) in if adds { [("Add", true), ("Don't add", false)] } else { [("Save", true), ("Don't save", false)] } {
                 let button = gtk::Button::with_label(label);
                 if save {
                     button.add_css_class("suggested-action");
@@ -462,7 +470,11 @@ impl Kith {
                 button.connect_clicked(move |_| {
                     let (kith, Some(id)) = (kith.clone(), kith.current.borrow().clone()) else { return };
                     glib::spawn_future_local(async move {
-                        match async { ai::proxy().await?.answer_fact(&id, entry, save).await }.await {
+                        let sent = async {
+                            let proxy = ai::proxy().await?;
+                            if adds { proxy.answer_add(&id, entry, save).await } else { proxy.answer_fact(&id, entry, save).await }
+                        };
+                        match sent.await {
                             Ok(()) => kith.fail(""),
                             Err(err) => kith.fail(&ai::said(&err)),
                         }
@@ -472,7 +484,15 @@ impl Kith {
             }
             shell.append(&row);
         } else {
-            let done = gtk::Label::builder().label(if card.state == "saved" { "Saved to memory" } else { "Not saved" }).xalign(0.0).build();
+            let done = gtk::Label::builder()
+                .label(match (adds, card.state == "saved") {
+                    (true, true) => "Added",
+                    (true, false) => "Not added",
+                    (false, true) => "Saved to memory",
+                    (false, false) => "Not saved",
+                })
+                .xalign(0.0)
+                .build();
             done.add_css_class("fact-state");
             shell.append(&done);
         }

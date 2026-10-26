@@ -24,6 +24,8 @@ pub struct Entry {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum What {
+    /// Lines the agent proposes to add to the end of one of your notes because you asked it to, for you to add or not.
+    Add { note: String, items: Vec<String>, state: FactState },
     /// A fact the agent proposes to keep in its memory because you asked it to remember something, for you to save or not.
     Fact { text: String, state: FactState },
     /// What you said.
@@ -104,6 +106,14 @@ impl Chat {
 
     pub fn get_mut(&mut self, id: u64) -> Option<&mut What> {
         self.entries.iter_mut().find(|entry| entry.id == id).map(|entry| &mut entry.what)
+    }
+
+    /// The proposed addition to a note at `entry`, if it is one.
+    pub fn add_mut(&mut self, entry: u64) -> Option<(&str, &[String], &mut FactState)> {
+        match self.get_mut(entry)? {
+            What::Add { note, items, state } => Some((note.as_str(), items.as_slice(), state)),
+            _ => None,
+        }
     }
 
     /// The proposed fact at `entry`, if it is one.

@@ -15,6 +15,7 @@ use crate::ai::{self, AiProxy};
 use crate::chat::{self, Chat, FactState, What};
 use crate::events::Events;
 use crate::memory;
+use crate::notes;
 use crate::prompt;
 use crate::remember;
 
@@ -306,9 +307,20 @@ impl Agents {
             let (answer, entry, _) = proxy.chat_answer(&question, &files).await.map_err(engine)?;
             return Ok((answer, entry));
         }
-        // Asked to remember something: code proposes the fact for you to save, and no model is asked, so nothing is
-        // claimed that wasn't done.
-        if let Some(fact) = remember::fact(&text) {
+        // Asked to remember something or to add to a note: code proposes it for you to confirm, and no model is asked, so
+        // nothing is claimed that wasn't done.
+        let proposal = if let Some(fact) = remember::fact(&text) {
+            Some(("I can keep that in my memory if you say so.", Some(What::Fact { text: fact, state: FactState::Proposed })))
+        } else {
+            notes::parse(&text).map(|add| {
+                if agent.can.iter().any(|can| can == "notes") {
+                    ("I can add that to your note if you say so.", Some(What::Add { note: add.note, items: add.items, state: FactState::Proposed }))
+                } else {
+                    ("I'm not set up to look at your notes, so I can't add to them.", None)
+                }
+            })
+        };
+        if let Some((said, card)) = proposal {
             let entry = {
                 let mut core = self.shared.core();
                 let chat = core.chat(&agent);
@@ -316,8 +328,8 @@ impl Agents {
                     return failed(format!("{} is still answering", agent.name));
                 }
                 chat.push(What::You { text: text.clone() });
-                chat.push(What::Answer { answer: 0, text: "I can keep that in my memory if you say so.".to_owned(), writing: false, error: String::new() });
-                let entry = chat.push(What::Fact { text: fact, state: FactState::Proposed });
+                let entry = chat.push(What::Answer { answer: 0, text: said.to_owned(), writing: false, error: String::new() });
+                let entry = card.map_or(entry, |card| chat.push(card));
                 chat.save();
                 entry
             };
@@ -436,6 +448,33 @@ impl Agents {
             chat.save();
         }
         self.shared.events.record(chat::now(), if save { "remembered" } else { "not-remembered" }, &id, "");
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Answers an addition to a note an agent proposed (the entry of an `add` in its conversation): adds the lines at the
+    /// end of the note, or not. When the note can't be written to it says why and the proposal stays to be answered again.
+    async fn answer_add(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, entry: u64, add: bool) -> Result<(), Error> {
+        let agent = find(&id)?;
+        let note = {
+            let mut core = self.shared.core();
+            let chat = core.chat(&agent);
+            let Some((note, items, state)) = chat.add_mut(entry) else { return failed("there is no such addition") };
+            if *state != FactState::Proposed {
+                return failed("that has been answered already");
+            }
+            if add {
+                if !agent.can.iter().any(|can| can == "notes") {
+                    return failed(format!("{} isn't set up to look at your notes", agent.name));
+                }
+                notes::append(&notes::vault(), &notes::Add { note: note.to_owned(), items: items.to_vec() }).map_err(Error::Failed)?;
+            }
+            let note = note.to_owned();
+            *state = if add { FactState::Saved } else { FactState::Dismissed };
+            chat.save();
+            note
+        };
+        self.shared.events.record(chat::now(), if add { "noted" } else { "not-noted" }, &id, &note);
         Self::agent_changed(&emitter, &id).await?;
         Ok(())
     }

@@ -6,6 +6,7 @@ mod ai;
 mod chat;
 mod events;
 mod memory;
+mod notes;
 mod prompt;
 mod remember;
 mod service;
