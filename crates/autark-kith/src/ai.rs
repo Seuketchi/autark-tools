@@ -5,7 +5,7 @@ use std::cell::RefCell;
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
 pub trait Ai {
     fn agents(&self) -> zbus::Result<String>;
-    fn create_agent(&self, name: &str, job: &str, soul: &str, can: &[&str]) -> zbus::Result<String>;
+    fn create_agent(&self, name: &str, job: &str, soul: &str, can: &[&str], skills: &[&str]) -> zbus::Result<String>;
     fn delete_agent(&self, id: &str) -> zbus::Result<()>;
     fn agent_history(&self, id: &str) -> zbus::Result<String>;
     fn agent_say(&self, id: &str, text: &str) -> zbus::Result<(u32, u64)>;

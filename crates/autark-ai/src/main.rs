@@ -47,6 +47,7 @@ fn main() {
     }
     let config: config::Ai = autark_common::config::load("ai");
     agents::seed();
+    agents::seed_lenses();
     // `autark-ai mcp` serves an MCP client on stdin and stdout, as the client starts it.
     if args == ["mcp"] {
         mcp::serve(&config);

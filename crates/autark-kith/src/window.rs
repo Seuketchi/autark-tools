@@ -498,6 +498,9 @@ impl Kith {
             })
             .collect();
         form.append(&can);
+        form.append(&label("Skills it works by, by name and separated by commas. Optional."));
+        let skills = gtk::Entry::builder().placeholder_text("accountant").build();
+        form.append(&skills);
         form.append(&error);
         form.append(&create);
         dialog.set_child(Some(&form));
@@ -509,10 +512,12 @@ impl Kith {
         let window = dialog.clone();
         create.connect_clicked(move |_| {
             let (name, job, soul) = (name.text().to_string(), text(&job), text(&soul));
+            let skills_text = skills.text().to_string();
+            let skills: Vec<String> = skills_text.split(',').map(str::trim).filter(|skill| !skill.is_empty()).map(str::to_owned).collect();
             let can: Vec<&'static str> = boxes.iter().filter(|(_, check)| check.is_active()).map(|(key, _)| *key).collect();
             let (kith, window, error) = (kith.clone(), window.clone(), error.clone());
             glib::spawn_future_local(async move {
-                match async { ai::proxy().await?.create_agent(&name, &job, &soul, &can).await }.await {
+                match async { ai::proxy().await?.create_agent(&name, &job, &soul, &can, &skills.iter().map(String::as_str).collect::<Vec<_>>()).await }.await {
                     Ok(id) => {
                         window.close();
                         *kith.current.borrow_mut() = Some(id);

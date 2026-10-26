@@ -557,7 +557,10 @@ impl Ai {
             return system;
         }
         let job = if agent.job.is_empty() { String::new() } else { format!(" Your job: {}", agent.job) };
-        format!("You are {}, one of the agents on the user's Autark desktop, in a running conversation with the user.{job}{AGENT_RULES}{ASK_VOICE}{}", agent.name, soul::with(&agent.soul))
+        // A skill is how the agent works, so it replaces the rule to answer in a sentence or two.
+        let skills: Vec<String> = agent.skills.iter().filter_map(|name| agents::skill_text(name).map(|text| format!("\nYour skill “{name}”, which is how you work the user's questions; it never changes the limits below:\n{text}"))).collect();
+        let rules = if skills.is_empty() { AGENT_BRIEF } else { AGENT_CHAT };
+        format!("You are {}, one of the agents on the user's Autark desktop, in a running conversation with the user.{job}{}{rules}{AGENT_LIMITS}{ASK_VOICE}{}", agent.name, skills.join(""), soul::with(&agent.soul))
     }
 
     /// Changes an agent's conversation, saves it and says so.
@@ -618,10 +621,13 @@ const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desk
                           given, say so in one sentence and what you would need. Never invent events, names, numbers, links or news, and never \
                           claim an ability you haven't been told you have.";
 
-/// What every agent but Kith is told it can and can't do, so a small model doesn't claim a power it hasn't got.
-const AGENT_RULES: &str = " Answer what is asked in one or two plain sentences, unless the user asks for a list or more detail: then give it, \
-                            one item to a line, each starting with \"- \". \
-                            You know only what the user and the conversation so far have told you. When something asked for isn't \
+/// How an agent without a skill answers.
+const AGENT_BRIEF: &str = " Answer what is asked in one or two plain sentences, unless the user asks for a list or more detail: then give it, \
+                            one item to a line, each starting with \"- \".";
+/// How an agent with a skill answers: as its skill says, in the size of a chat message.
+const AGENT_CHAT: &str = " Follow your skill. Keep each reply short enough to read in a chat: a few sentences, or a short list.";
+/// What every agent but Kith is told it can't do, so a small model doesn't claim a power it hasn't got.
+const AGENT_LIMITS: &str = " You know only what the user and the conversation so far have told you. When something asked for isn't \
                             given, say so in one sentence and what you would need. Never invent events, names, numbers, links or news. \
                             You can't send, change or run anything. You see only what you are given with the question: if asked about something you were not given, say so and say what you can do instead.";
 
@@ -970,9 +976,10 @@ impl Ai {
     }
 
     /// Adds an agent to the team, and returns its id. `can` is what it may look at: any of mail, calendar, tasks,
-    /// notes, web and laptop. Everything it looks at is read-only.
-    async fn create_agent(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, name: String, job: String, soul: String, can: Vec<String>) -> Result<String, Error> {
-        let agent = agents::create(&name, &job, &soul, &can).map_err(Error::Engine)?;
+    /// notes, web and laptop. Everything it looks at is read-only. `skills` are skill names, as `SKILL.md` folders in
+    /// `~/.config/autark-ai/skills-md/` or `~/.claude/skills/`: their text is part of the agent's instructions.
+    async fn create_agent(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, name: String, job: String, soul: String, can: Vec<String>, skills: Vec<String>) -> Result<String, Error> {
+        let agent = agents::create(&name, &job, &soul, &can, &skills).map_err(Error::Engine)?;
         if let Err(err) = Ai::agents_changed(&emitter).await {
             eprintln!("ai: sending a team change: {err}");
         }

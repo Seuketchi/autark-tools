@@ -16,6 +16,9 @@ const MAX: usize = 24;
 const NAME: usize = 40;
 const JOB: usize = 600;
 const SOUL: usize = 4 * 1024;
+/// The most skills one agent works by, and how much of each is read.
+const MAX_SKILLS: usize = 4;
+const SKILL: usize = 10 * 1024;
 /// How many avatar colours the roster has.
 pub const COLOURS: u8 = 8;
 
@@ -32,6 +35,8 @@ pub struct Agent {
     /// What it may look at, of `ABILITIES`. Everything it looks at is read-only: it can't send, change or run
     /// anything. Kith itself may look at all of them.
     pub can: Vec<String>,
+    /// Skills it works by, as `SKILL.md` folders (see `skill_text`): their text is part of its instructions.
+    pub skills: Vec<String>,
 }
 
 /// What an agent can be allowed to look at, as `senses` names them.
@@ -54,6 +59,8 @@ struct File {
     soul: String,
     #[serde(default)]
     can: Vec<String>,
+    #[serde(default)]
+    skills: Vec<String>,
 }
 
 fn home() -> PathBuf {
@@ -86,6 +93,7 @@ fn kith() -> Agent {
         job: "Your assistant: it answers, does small things on the laptop and remembers what you tell it.".to_owned(),
         soul: String::new(),
         can: ABILITIES.map(str::to_owned).to_vec(),
+        skills: Vec::new(),
     }
 }
 
@@ -102,7 +110,7 @@ fn all_in(root: &Path) -> Vec<Agent> {
         .filter_map(|entry| {
             let id = entry.file_name().into_string().ok().filter(|id| valid(id) && id != KITH)?;
             let file: File = toml::from_str(&std::fs::read_to_string(entry.path().join("agent.toml")).ok()?).ok()?;
-            Some(Agent { id, name: file.name, colour: file.colour % COLOURS, job: file.job, soul: file.soul, can: file.can })
+            Some(Agent { id, name: file.name, colour: file.colour % COLOURS, job: file.job, soul: file.soul, can: file.can, skills: file.skills })
         })
         .collect();
     found.sort_by_key(|agent| agent.name.to_lowercase());
@@ -116,11 +124,11 @@ pub fn get(id: &str) -> Option<Agent> {
 }
 
 /// Makes an agent, and returns it. The id comes from the name.
-pub fn create(name: &str, job: &str, soul: &str, can: &[String]) -> Result<Agent, String> {
-    create_in(&config_root(), name, job, soul, can)
+pub fn create(name: &str, job: &str, soul: &str, can: &[String], skills: &[String]) -> Result<Agent, String> {
+    create_in(&config_root(), name, job, soul, can, skills)
 }
 
-fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String]) -> Result<Agent, String> {
+fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], skills: &[String]) -> Result<Agent, String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > NAME {
         return Err(format!("an agent's name is 1 to {NAME} characters"));
@@ -136,11 +144,12 @@ fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String]) -> 
         return Err(format!("there is an agent called {name} already"));
     }
     let can: Vec<String> = ABILITIES.iter().filter(|ability| can.iter().any(|asked| asked == *ability)).map(|ability| (*ability).to_owned()).collect();
+    let skills: Vec<String> = skills.iter().map(|skill| skill.trim().to_owned()).filter(|skill| valid(skill)).take(MAX_SKILLS).collect();
     let id = slug(name, &existing);
     // Each new agent takes the colour least used, so a team looks varied.
     let colour = (0..COLOURS).min_by_key(|colour| existing.iter().filter(|agent| agent.colour == *colour).count()).unwrap_or(0);
-    let agent = Agent { id: id.clone(), name: name.to_owned(), colour, job: job.trim().to_owned(), soul: soul.trim().to_owned(), can };
-    let file = File { name: agent.name.clone(), colour, job: agent.job.clone(), soul: agent.soul.clone(), can: agent.can.clone() };
+    let agent = Agent { id: id.clone(), name: name.to_owned(), colour, job: job.trim().to_owned(), soul: soul.trim().to_owned(), can, skills };
+    let file = File { name: agent.name.clone(), colour, job: agent.job.clone(), soul: agent.soul.clone(), can: agent.can.clone(), skills: agent.skills.clone() };
     let dir = root.join(&id);
     std::fs::create_dir_all(&dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
     let text = toml::to_string(&file).map_err(|err| err.to_string())?;
@@ -157,6 +166,68 @@ const STARTERS: [(&str, &str, &str, &[&str]); 4] = [
     ("Scribe", "Find what the user has written or said before in their notes and conversations, and bring it back word for word.", "Quiet and precise.", &["notes"]),
 ];
 
+/// The profession lenses: an agent for each skill that is on this machine, made once. They look at nothing of
+/// the user's: they work from what the user tells them.
+const LENSES: [(&str, &str, &str); 6] = [
+    ("Accountant", "accountant", "Work the user's books or financial-statements question the way an accountant does, by your skill."),
+    ("Tax", "tax-advisor", "Work the user's tax question the way a tax advisor does, by your skill."),
+    ("Counsel", "lawyer", "Think the user's legal question through the way a lawyer opens a matter, by your skill."),
+    ("Doctor", "doctor", "Work the user's health question the way a physician does, by your skill. You never diagnose."),
+    ("Therapist", "psychiatrist", "Work the user's mental-health question the way a psychiatrist opens an evaluation, by your skill."),
+    ("Engineer", "engineer", "Work the user's design or failure problem in a professional engineer's order, by your skill."),
+];
+
+/// Makes the lens agents whose skills are installed, once.
+pub fn seed_lenses() {
+    seed_lenses_in(&config_root(), &skill_dirs());
+}
+
+fn seed_lenses_in(root: &Path, dirs: &[PathBuf]) {
+    let marker = root.join(".seeded-lenses");
+    if marker.exists() {
+        return;
+    }
+    for (name, skill, job) in LENSES {
+        if skill_in(dirs, skill).is_none() {
+            continue;
+        }
+        if let Err(err) = create_in(root, name, job, "", &[], &[skill.to_owned()]) {
+            eprintln!("ai: making the agent {name}: {err}");
+        }
+    }
+    if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
+        eprintln!("ai: marking the lens agents as made in {}", root.display());
+    }
+}
+
+/// Where skills are looked for: a folder of your own for the agents, then Claude Code's.
+fn skill_dirs() -> Vec<PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
+    vec![config.join("autark-ai/skills-md"), home().join(".claude/skills")]
+}
+
+/// A skill's text: its `SKILL.md` without the front matter, at most 10 KB. `None` when it isn't there.
+pub fn skill_text(name: &str) -> Option<String> {
+    skill_in(&skill_dirs(), name)
+}
+
+fn skill_in(dirs: &[PathBuf], name: &str) -> Option<String> {
+    if !valid(name) {
+        return None;
+    }
+    let text = dirs.iter().find_map(|dir| std::fs::read_to_string(dir.join(name).join("SKILL.md")).ok())?;
+    let body = match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n")) {
+        Some((_, body)) => body,
+        None => &text,
+    };
+    let body = body.trim();
+    let mut end = body.len().min(SKILL);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(body[..end].to_owned())
+}
+
 /// Makes the starter team when this install hasn't had one.
 pub fn seed() {
     seed_in(&config_root());
@@ -169,7 +240,7 @@ fn seed_in(root: &Path) {
     }
     for (name, job, soul, can) in STARTERS {
         let can: Vec<String> = can.iter().map(|can| (*can).to_owned()).collect();
-        if let Err(err) = create_in(root, name, job, soul, &can) {
+        if let Err(err) = create_in(root, name, job, soul, &can, &[]) {
             eprintln!("ai: making the agent {name}: {err}");
         }
     }
@@ -233,8 +304,8 @@ mod tests {
     #[test]
     fn kith_is_first_and_the_rest_are_by_name() {
         let root = folder("order");
-        create_in(&root, "Sales Outbound", "Draft outreach.", "", &[]).unwrap();
-        create_in(&root, "Inbox Manager", "Keep the inbox at zero.", "Brisk.", &[]).unwrap();
+        create_in(&root, "Sales Outbound", "Draft outreach.", "", &[], &[]).unwrap();
+        create_in(&root, "Inbox Manager", "Keep the inbox at zero.", "Brisk.", &[], &[]).unwrap();
         let names: Vec<String> = all_in(&root).into_iter().map(|agent| agent.name).collect();
         assert_eq!(names, ["Kith", "Inbox Manager", "Sales Outbound"]);
         let _ = std::fs::remove_dir_all(root);
@@ -243,7 +314,7 @@ mod tests {
     #[test]
     fn an_agent_is_kept_with_its_job_and_soul() {
         let root = folder("kept");
-        create_in(&root, "Expense Manager", "File receipts.", "Short and exact.", &["mail".to_owned(), "bogus".to_owned()]).unwrap();
+        create_in(&root, "Expense Manager", "File receipts.", "Short and exact.", &["mail".to_owned(), "bogus".to_owned()], &[]).unwrap();
         let agent = all_in(&root).into_iter().find(|agent| agent.id == "expense-manager").unwrap();
         assert_eq!((agent.job.as_str(), agent.soul.as_str()), ("File receipts.", "Short and exact."));
         // Only a real ability is kept, and it is all the agent may look at.
@@ -255,10 +326,10 @@ mod tests {
     #[test]
     fn a_name_is_not_used_twice_and_never_takes_kiths_id() {
         let root = folder("names");
-        create_in(&root, "Scout", "", "", &[]).unwrap();
-        assert!(create_in(&root, "scout", "", "", &[]).is_err());
-        assert_eq!(create_in(&root, "Kith!", "", "", &[]).unwrap().id, "kith-2");
-        assert_eq!(create_in(&root, "Scout?", "", "", &[]).unwrap().id, "scout-2");
+        create_in(&root, "Scout", "", "", &[], &[]).unwrap();
+        assert!(create_in(&root, "scout", "", "", &[], &[]).is_err());
+        assert_eq!(create_in(&root, "Kith!", "", "", &[], &[]).unwrap().id, "kith-2");
+        assert_eq!(create_in(&root, "Scout?", "", "", &[], &[]).unwrap().id, "scout-2");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -275,7 +346,7 @@ mod tests {
     #[test]
     fn kith_cannot_be_deleted_and_others_can() {
         let root = folder("delete");
-        let agent = create_in(&root, "Talent Scout", "", "", &[]).unwrap();
+        let agent = create_in(&root, "Talent Scout", "", "", &[], &[]).unwrap();
         assert!(delete_in(&root, &root, KITH).is_err());
         delete_in(&root, &root, &agent.id).unwrap();
         assert_eq!(all_in(&root).len(), 1);
@@ -285,7 +356,7 @@ mod tests {
     #[test]
     fn new_agents_take_different_colours() {
         let root = folder("colours");
-        let colours: Vec<u8> = ["A", "B", "C"].iter().map(|name| create_in(&root, name, "", "", &[]).unwrap().colour).collect();
+        let colours: Vec<u8> = ["A", "B", "C"].iter().map(|name| create_in(&root, name, "", "", &[], &[]).unwrap().colour).collect();
         assert_eq!(colours.len(), 3);
         assert!(colours[0] != colours[1] && colours[1] != colours[2] && colours[0] != colours[2]);
         let _ = std::fs::remove_dir_all(root);
@@ -307,6 +378,52 @@ mod tests {
     fn every_starters_abilities_are_real_ones() {
         for (_, _, _, can) in STARTERS {
             assert!(can.iter().all(|can| ABILITIES.contains(can)));
+        }
+    }
+
+    #[test]
+    fn a_skill_is_read_without_its_front_matter_and_only_by_a_slug() {
+        let dir = folder("skill");
+        std::fs::create_dir_all(dir.join("lawyer")).unwrap();
+        std::fs::write(dir.join("lawyer/SKILL.md"), "---\nname: lawyer\ndescription: x\n---\n\n# Lawyer\nAsk first.\n").unwrap();
+        let dirs = [dir.clone()];
+        assert_eq!(skill_in(&dirs, "lawyer").as_deref(), Some("# Lawyer\nAsk first."));
+        assert_eq!(skill_in(&dirs, "missing"), None);
+        assert_eq!(skill_in(&dirs, "../lawyer"), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_long_skill_is_cut_at_a_character() {
+        let dir = folder("long");
+        std::fs::create_dir_all(dir.join("big")).unwrap();
+        std::fs::write(dir.join("big/SKILL.md"), "é".repeat(SKILL)).unwrap();
+        assert!(skill_in(std::slice::from_ref(&dir), "big").unwrap().len() <= SKILL);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lens_agents_are_made_only_for_skills_that_are_installed_and_only_once() {
+        let skills = folder("lenses-skills");
+        let root = folder("lenses");
+        for name in ["accountant", "lawyer"] {
+            std::fs::create_dir_all(skills.join(name)).unwrap();
+            std::fs::write(skills.join(name).join("SKILL.md"), "# x").unwrap();
+        }
+        seed_lenses_in(&root, std::slice::from_ref(&skills));
+        let made: Vec<(String, Vec<String>)> = all_in(&root).into_iter().skip(1).map(|agent| (agent.name, agent.skills)).collect();
+        assert_eq!(made, [("Accountant".to_owned(), vec!["accountant".to_owned()]), ("Counsel".to_owned(), vec!["lawyer".to_owned()])]);
+        delete_in(&root, &root, "counsel").unwrap();
+        seed_lenses_in(&root, std::slice::from_ref(&skills));
+        assert_eq!(all_in(&root).len(), 2);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(skills);
+    }
+
+    #[test]
+    fn every_lens_names_a_skill_slug() {
+        for (_, skill, _) in LENSES {
+            assert!(valid(skill));
         }
     }
 }
