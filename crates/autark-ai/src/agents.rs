@@ -220,12 +220,31 @@ fn skill_in(dirs: &[PathBuf], name: &str) -> Option<String> {
         Some((_, body)) => body,
         None => &text,
     };
+    let body = without_sources(body);
     let body = body.trim();
     let mut end = body.len().min(SKILL);
     while !body.is_char_boundary(end) {
         end -= 1;
     }
     Some(body[..end].to_owned())
+}
+
+/// The skill's own `[sourced C7, C8]` notes for its authors, which a small model would copy into its answers.
+fn without_sources(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(" [sourced ") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find(']') {
+            Some(end) => rest = &rest[start + end + 1..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Makes the starter team when this install hasn't had one.
@@ -425,5 +444,12 @@ mod tests {
         for (_, skill, _) in LENSES {
             assert!(valid(skill));
         }
+    }
+
+    #[test]
+    fn the_authors_source_notes_are_left_out_of_a_skill() {
+        assert_eq!(without_sources("Ask the country. [sourced C7, C8] Then the entity. [sourced C9]\nDone."), "Ask the country. Then the entity.\nDone.");
+        assert_eq!(without_sources("no notes"), "no notes");
+        assert_eq!(without_sources("open [sourced C1"), "open");
     }
 }
