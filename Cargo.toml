@@ -20,6 +20,7 @@ members = [
     "crates/autark-hw-helper",
     "crates/autark-init",
     "crates/autark-keys",
+    "crates/autark-kith",
     "crates/autark-launcher",
     "crates/autark-lock",
     "crates/autark-mail",

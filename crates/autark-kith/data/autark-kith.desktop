@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kith Team
+GenericName=Assistants
+Comment=Kith and the agents that work with it
+Exec=autark-kith
+Icon=autark-kith
+StartupWMClass=org.autark.Kith
+Terminal=false
+Categories=Utility;
+Keywords=kith;agents;assistant;team;chat;
