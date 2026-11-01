@@ -73,6 +73,8 @@ The distribution builds the system and installs it; these programs are what you 
 | `autark-player` | Player: video and audio through GStreamer, frames drawn by GTK, with controls that fade while a video plays |
 | `autark-hub` | Software: find, install, update, remove and roll back packages from a window; `autark-pkg` does the work, through a root helper that only knows those four verbs |
 | `autark-calc` | Calculator: type a sum or press keys, with the answer shown as you go |
+| `autark-budget` | Budget: what each payday leaves you to spend after your bills, goals and debts, an optional spending log, and the electricity meter's projected bill, in a window or from the terminal (`autark-budget plan`, `calendar`, `afford 1500`, `spend 120 Food`, `history`, `backup`, `remind`, `electric add 21.3`) |
+| `autark-finance` | The logic behind Budget, with no window: money as whole centavos, readings and bills, the billing cycle and the payday planner |
 | `autark-archive` | Archives: look inside a zip or tar, take things out, pack files up through `bsdtar`; extraction never overwrites anything |
 | `autark-keys` | Keyboard shortcuts: every key combination Wayfire answers, read from its own config so it is never out of date |
 | `autark-clock` | Clock: alarms, a timer and a stopwatch; alarms and timers ring through systemd user timers, with the window closed |

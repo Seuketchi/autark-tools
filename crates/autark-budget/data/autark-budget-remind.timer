@@ -1,0 +1,11 @@
+[Unit]
+Description=Budget: the daily payday and bills reminder
+
+[Timer]
+# Every morning; the command says nothing on a day with nothing to say.
+OnCalendar=*-*-* 08:00:00
+# Said on waking if the laptop was asleep at 8.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -10,7 +10,9 @@ windowcontrols.autark-controls {
   margin: 0;
 }
 
-windowcontrols.autark-controls button {
+/* The class is named twice on purpose: an app's own `window.x button` rule is as specific as one, and comes later,
+   so it would give these buttons its padding and stretch them. */
+windowcontrols.autark-controls.autark-controls button {
   min-width: 28px;
   min-height: 28px;
   margin: 0 0 0 2px;
@@ -22,22 +24,31 @@ windowcontrols.autark-controls button {
   color: @text2;
 }
 
-windowcontrols.autark-controls button:hover {
+windowcontrols.autark-controls.autark-controls button:hover {
   background-color: alpha(@text, 0.08);
   color: @text;
 }
 
-windowcontrols.autark-controls button:active {
+windowcontrols.autark-controls.autark-controls button:active {
   background-color: alpha(@text, 0.14);
 }
 
-windowcontrols.autark-controls button.close:hover {
+windowcontrols.autark-controls.autark-controls button.close:hover {
   background-color: @danger;
   color: #FFFFFF;
 }
 
-windowcontrols.autark-controls button image {
+/* The default theme draws a round plate behind the symbol itself; here the button is the only plate. */
+windowcontrols.autark-controls.autark-controls button image {
   -gtk-icon-size: 14px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
 }
 ";
 
