@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Budget
+GenericName=Budget
+Comment=Track your electricity and plan the bill
+Exec=autark-budget
+Icon=autark-budget
+StartupWMClass=org.autark.Budget
+Terminal=false
+Categories=Office;Finance;
+Keywords=budget;money;electricity;bill;meter;kwh;

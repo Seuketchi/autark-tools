@@ -1,0 +1,6 @@
+[Unit]
+Description=Budget: say what the payday leaves you, and what falls due tomorrow
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/autark-budget remind

@@ -192,6 +192,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-budget"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "autark-finance",
+ "chrono",
+ "gtk4",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "autark-calc"
 version = "0.0.0"
 dependencies = [
@@ -306,6 +318,16 @@ dependencies = [
  "serde",
  "toml",
  "zbus",
+]
+
+[[package]]
+name = "autark-finance"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -807,6 +829,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
