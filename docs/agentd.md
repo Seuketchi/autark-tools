@@ -42,7 +42,10 @@ of one.
 | Its conversation (a week) | `~/.local/state/autark-agentd/agents/<id>/chat.json` |
 | Its memory | `~/.config/autark-agentd/agents/<id>/memory.toml` |
 | The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
-| The mailbox (what is waiting to be delivered) | `~/.local/state/autark-agentd/mailbox.json` |
+
+The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
+each handoff in it starts within moments. One that a restart catches before its answer ends is lost; the receiver's
+conversation says its answer was cut off, and the agent that asked gets no reply.
 
 An id is a short slug, so it can't name a path outside the agents' folders. A folder keeps its id even when its
 `agent.toml` can't be read, so a new agent never moves in on another's memory.
