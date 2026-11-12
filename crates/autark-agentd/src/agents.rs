@@ -78,6 +78,13 @@ fn config_root() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("autark-agentd/agents")
 }
 
+/// Narrows the agents' folders and the daemon's state, as an earlier version left them, to you alone. The skills folder
+/// beside the agents' is yours to arrange and is left as it is.
+pub fn tighten() {
+    crate::files::tighten(&config_root());
+    crate::files::tighten(&state_base());
+}
+
 /// Where the daemon keeps what it writes as it runs: the event log, the mailbox and each agent's conversation.
 pub fn state_base() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state")).join("autark-agentd")
