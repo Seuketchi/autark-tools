@@ -71,16 +71,16 @@ impl Chat {
     /// A file that can't be understood is set aside and a new conversation begun; one that can't be read, or that a
     /// newer version wrote, is shown but never written over.
     pub fn load(path: PathBuf, speaker: &str) -> Self {
-        let (values, path) = match read(&path) {
-            Ok(Some((version, values))) if version > VERSION => {
-                eprintln!("agentd: {} is from a newer version (format {version}), so it is shown but not changed", path.display());
-                (values, None)
+        let ((values, saved_next), path) = match read(&path) {
+            Ok(Some(stored)) if stored.version > VERSION => {
+                eprintln!("agentd: {} is from a newer version (format {}), so it is shown but not changed", path.display(), stored.version);
+                ((stored.entries, stored.next), None)
             }
-            Ok(Some((_, values))) => (values, Some(path)),
-            Ok(None) => (Vec::new(), Some(path)),
+            Ok(Some(stored)) => ((stored.entries, stored.next), Some(path)),
+            Ok(None) => ((Vec::new(), 0), Some(path)),
             Err(Unread::Unreadable(err)) => {
                 eprintln!("agentd: reading {}: {err}; it is left as it is", path.display());
-                (Vec::new(), None)
+                ((Vec::new(), 0), None)
             }
             Err(Unread::NotUnderstood(err)) => {
                 match crate::files::set_aside(&path, now()) {
@@ -88,7 +88,7 @@ impl Chat {
                     Err(why) => eprintln!("agentd: {} can't be understood ({err}) or set aside ({why})", path.display()),
                 }
                 let saved = !path.exists();
-                (Vec::new(), saved.then_some(path))
+                ((Vec::new(), 0), saved.then_some(path))
             }
         };
         let mut entries = Vec::new();
@@ -99,7 +99,8 @@ impl Chat {
                 Err(_) => foreign.push(value),
             }
         }
-        let next = entries.iter().map(|entry| entry.id).chain(foreign.iter().filter_map(|value| value["id"].as_u64())).max().unwrap_or(0) + 1;
+        // An id is never given twice, even after a clear or a restart, so a client holding one never reaches another entry.
+        let next = (entries.iter().map(|entry| entry.id).chain(foreign.iter().filter_map(|value| value["id"].as_u64())).max().unwrap_or(0) + 1).max(saved_next);
         let mut chat = Self { entries, foreign, next, path, speaker: speaker.to_owned() };
         // An answer cut off by a restart won't grow any more.
         for entry in &mut chat.entries {
@@ -210,7 +211,7 @@ impl Chat {
             let mut entries = self.entries.iter().map(serde_json::to_value).collect::<Result<Vec<Value>, _>>()?;
             entries.extend(self.foreign.iter().cloned());
             entries.sort_by_key(|entry| entry["id"].as_u64().unwrap_or(0));
-            let bytes = serde_json::to_vec(&json!({ "version": VERSION, "entries": entries }))?;
+            let bytes = serde_json::to_vec(&json!({ "version": VERSION, "next": self.next, "entries": entries }))?;
             crate::files::write(&path, &bytes)
         })();
         if let Err(err) = result {
@@ -225,19 +226,28 @@ enum Unread {
     NotUnderstood(String),
 }
 
-/// The file's version and its entries, unparsed; `None` when there is no file. The first files were a bare array.
-fn read(path: &std::path::Path) -> Result<Option<(u32, Vec<Value>)>, Unread> {
+/// A conversation's file as it is kept: its entries unparsed.
+struct Stored {
+    version: u32,
+    /// The next entry's id, 0 when the file doesn't say.
+    next: u64,
+    entries: Vec<Value>,
+}
+
+/// The file, `None` when there is none. The first files were a bare array.
+fn read(path: &std::path::Path) -> Result<Option<Stored>, Unread> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(Unread::Unreadable(err)),
     };
     match serde_json::from_slice(&bytes).map_err(|err| Unread::NotUnderstood(err.to_string()))? {
-        Value::Array(entries) => Ok(Some((1, entries))),
+        Value::Array(entries) => Ok(Some(Stored { version: 1, next: 0, entries })),
         Value::Object(mut file) => {
             let version = file.get("version").and_then(Value::as_u64).unwrap_or(1).try_into().unwrap_or(u32::MAX);
+            let next = file.get("next").and_then(Value::as_u64).unwrap_or(0);
             match file.remove("entries") {
-                Some(Value::Array(entries)) => Ok(Some((version, entries))),
+                Some(Value::Array(entries)) => Ok(Some(Stored { version, next, entries })),
                 _ => Err(Unread::NotUnderstood("it has no entries".to_owned())),
             }
         }
@@ -316,6 +326,19 @@ mod tests {
         let kinds: Vec<&str> = saved["entries"].as_array().unwrap().iter().map(|entry| entry["kind"].as_str().unwrap()).collect();
         assert_eq!(kinds, ["you", "handoff", "you"]);
         assert_eq!(saved["entries"][1]["to"], "piper");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn an_entry_id_is_not_given_again_after_a_clear_and_a_restart() {
+        let path = place("ids");
+        let mut chat = Chat::load(path.clone(), "A");
+        for _ in 0..3 {
+            chat.push(What::You { text: "hi".into() });
+        }
+        chat.clear();
+        chat.save();
+        assert_eq!(Chat::load(path.clone(), "A").push(What::You { text: "again".into() }), 4);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
