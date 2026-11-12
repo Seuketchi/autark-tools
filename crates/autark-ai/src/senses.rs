@@ -17,6 +17,20 @@ pub enum Subject {
     Recall,
 }
 
+impl Subject {
+    /// What an agent's `can` list calls it.
+    pub fn ability(self) -> &'static str {
+        match self {
+            Subject::System => "laptop",
+            Subject::Calendar => "calendar",
+            Subject::Mail => "mail",
+            Subject::Tasks => "tasks",
+            Subject::Web => "web",
+            Subject::Recall => "notes",
+        }
+    }
+}
+
 /// What the question is about.
 pub fn subjects(question: &str) -> Vec<Subject> {
     let question = question.to_lowercase();

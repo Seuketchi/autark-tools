@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="kith-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5BC8B2"/><stop offset="1" stop-color="#2F8F7C"/></linearGradient>
+<linearGradient id="kith-gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+</defs>
+<rect x="4" y="4" width="56" height="56" rx="13" fill="url(#kith-bg)"/>
+<rect x="4" y="4" width="56" height="28" rx="13" fill="url(#kith-gl)"/>
+<ellipse cx="24" cy="29" rx="3.4" ry="6.2" fill="#14211E" fill-opacity=".85"/>
+<ellipse cx="40" cy="29" rx="3.4" ry="6.2" fill="#14211E" fill-opacity=".85"/>
+<circle cx="14" cy="50" r="4" fill="#F2A33A"/>
+<circle cx="50" cy="50" r="4" fill="#6C63E8"/>
+<circle cx="32" cy="52" r="4" fill="#E5527D"/>
+</svg>

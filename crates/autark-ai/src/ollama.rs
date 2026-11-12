@@ -7,8 +7,14 @@ use serde_json::{Value, json};
 
 use crate::config;
 
+/// The longest a streamed answer may take in all. The call's own timeout covers waiting for the first words, which
+/// is when the model is loading; an answer that is arriving, slowly on a busy laptop, is not cut off by it.
+const STREAMED: Duration = Duration::from_secs(10 * 60);
+
 pub struct Ollama {
     agent: ureq::Agent,
+    /// For `stream`: waits `timeout_seconds` for the reply to start, then up to `STREAMED` for the rest.
+    streaming: ureq::Agent,
     url: String,
     model: String,
     /// What `stream` writes with; `model` when none is set.
@@ -22,13 +28,20 @@ impl Ollama {
             .http_status_as_error(false)
             .build()
             .into();
-        Self { agent, url: config.url.trim_end_matches('/').to_owned(), model: config.model.clone(), answer_model: Some(config.answer_model.trim()).filter(|model| !model.is_empty()).unwrap_or(&config.model).to_owned() }
+        let streaming = ureq::Agent::config_builder()
+            .timeout_global(None)
+            .timeout_recv_response(Some(Duration::from_secs(config.timeout_seconds)))
+            .timeout_recv_body(Some(STREAMED))
+            .http_status_as_error(false)
+            .build()
+            .into();
+        Self { agent, streaming, url: config.url.trim_end_matches('/').to_owned(), model: config.model.clone(), answer_model: Some(config.answer_model.trim()).filter(|model| !model.is_empty()).unwrap_or(&config.model).to_owned() }
     }
 
     /// One answer that matches `schema`, at temperature 0 so the same input decides the same way. At most 400 tokens: a
     /// small model can run on inside a JSON string, and the caller would wait out the whole timeout.
     pub fn json(&self, system: &str, user: &str, schema: &Value) -> Result<Value, String> {
-        let body = self.request(&self.model, system, user, json!({ "stream": false, "format": schema, "options": { "temperature": 0, "num_predict": 400 } }))?;
+        let body = self.request(&self.agent, &self.model, system, user, json!({ "stream": false, "format": schema, "options": { "temperature": 0, "num_predict": 400 } }))?;
         let reply: Value = serde_json::from_reader(body).map_err(|err| format!("Ollama's reply: {err}"))?;
         let content = reply["message"]["content"].as_str().ok_or("Ollama's reply has no message")?;
         serde_json::from_str(content).map_err(|err| format!("the model's answer isn't the asked-for JSON: {err}"))
@@ -37,7 +50,7 @@ impl Ollama {
     /// Generated text, handed to `on_piece` as it arrives, until it returns false. A low temperature: a small model
     /// at the default one drifts into inventing things.
     pub fn stream(&self, system: &str, user: &str, mut on_piece: impl FnMut(&str) -> bool) -> Result<(), String> {
-        let body = self.request(&self.answer_model, system, user, json!({ "stream": true, "options": { "temperature": 0.3 } }))?;
+        let body = self.request(&self.streaming, &self.answer_model, system, user, json!({ "stream": true, "options": { "temperature": 0.3 } }))?;
         for line in BufReader::new(body).lines() {
             let line = line.map_err(|err| format!("reading from Ollama: {err}"))?;
             if line.is_empty() {
@@ -71,7 +84,7 @@ impl Ollama {
         Ok(names)
     }
 
-    fn request(&self, model: &str, system: &str, user: &str, extra: Value) -> Result<impl std::io::Read, String> {
+    fn request(&self, agent: &ureq::Agent, model: &str, system: &str, user: &str, extra: Value) -> Result<impl std::io::Read, String> {
         if model.is_empty() {
             return Err("no Ollama model chosen: set `model` under [ollama] in ai.toml".to_owned());
         }
@@ -84,8 +97,7 @@ impl Ollama {
         if let (Some(body), Value::Object(extra)) = (body.as_object_mut(), extra) {
             body.extend(extra);
         }
-        let response = self
-            .agent
+        let response = agent
             .post(format!("{}/api/chat", self.url))
             .header("Content-Type", "application/json")
             .send(body.to_string())
