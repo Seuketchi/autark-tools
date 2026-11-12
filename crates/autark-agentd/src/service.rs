@@ -254,18 +254,23 @@ impl Core {
         if let Some(chat) = self.chats.get_mut(&pending.agent) {
             chat.save();
         }
-        if let (Some(origin), Some(from)) = (&pending.meta.origin, &from)
-            && let Some(asker) = team.iter().find(|agent| &agent.id == origin)
-        {
-            let text = if well { reply } else { format!("(couldn't answer: {reply})") };
-            let chat = self.chat(asker);
-            chat.push(What::From { from: from.id.clone(), name: from.name.clone(), text, reply: true });
-            chat.save();
-            ended.changed.push(asker.id.clone());
-            ended.logged.push(("replied", from.id.clone(), format!("to {}", asker.id)));
+        if let Some(from) = &from {
+            self.reply_back(from, &pending.meta, well, reply, team, &mut ended);
         }
         ended.said = said;
         Some(ended)
+    }
+
+    /// An answer to work handed over goes back to the agent that asked, as a reply in its conversation: what was said
+    /// when `well`, otherwise why not.
+    fn reply_back(&mut self, from: &Agent, meta: &Meta, well: bool, reply: String, team: &[Agent], ended: &mut Ended) {
+        let Some(asker) = meta.origin.as_ref().and_then(|origin| team.iter().find(|agent| &agent.id == origin)) else { return };
+        let text = if well { reply } else { format!("(couldn't answer: {reply})") };
+        let chat = self.chat(asker);
+        chat.push(What::From { from: from.id.clone(), name: from.name.clone(), text, reply: true });
+        chat.save();
+        ended.changed.push(asker.id.clone());
+        ended.logged.push(("replied", from.id.clone(), format!("to {}", asker.id)));
     }
 
     /// Makes the handoff `from` asked for, or records why not: its entry in the asker's conversation, and, if it goes,
@@ -294,6 +299,14 @@ impl Core {
                 ended.logged.push(("handoff-refused", from.id.clone(), why));
             }
         }
+    }
+
+    /// Work handed to `to` whose answer couldn't be started: its entry says why, and so does a reply to the agent that asked.
+    fn undelivered(&mut self, to: &Agent, entry: u64, meta: &Meta, why: &str, team: &[Agent]) -> Ended {
+        self.fail(to, entry, why);
+        let mut ended = Ended::of(&to.id, "failed", why.to_owned());
+        self.reply_back(to, meta, false, why.to_owned(), team, &mut ended);
+        ended
     }
 
     /// An answer that couldn't be started: its entry says why, unless its agent has been deleted meanwhile.
@@ -848,14 +861,12 @@ async fn settle(shared: &Shared, emitter: &SignalEmitter<'_>, ended: Option<Ende
 /// Starts the answer to work handed on, and settles it if it has ended already.
 async fn deliver(shared: &Shared, connection: &zbus::Connection, emitter: &SignalEmitter<'_>, delivery: Delivery) {
     let Delivery { from, to, entry, brief, conversation, meta } = delivery;
-    match start_answer(shared, connection, &to, entry, &brief, &conversation, Some(&from.name), meta).await {
+    match start_answer(shared, connection, &to, entry, &brief, &conversation, Some(&from.name), meta.clone()).await {
         Ok((_, ended)) => settle(shared, emitter, ended).await,
         Err(why) => {
-            shared.core().fail(&to, entry, &why);
-            shared.events.record(chat::now(), "failed", &to.id, &why);
-            if let Err(err) = Agents::agent_changed(emitter, &to.id).await {
-                eprintln!("agentd: sending a change: {err}");
-            }
+            let team = agents::all();
+            let ended = shared.core().undelivered(&to, entry, &meta, &why, &team);
+            settle(shared, emitter, Some(ended)).await;
         }
     }
 }
@@ -1046,6 +1057,18 @@ mod tests {
             assert_eq!(shared.mailbox.lock().unwrap().0.len(), 1);
         });
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn work_whose_answer_cant_start_says_so_to_the_agent_that_asked() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let mut core = handoff_core(&team, "atlas", "Asking RAVEN.\nHANDOFF raven: forecast?", in_chain(&["atlas"], 0));
+        let delivery = core.hear(5, Heard::Done(String::new()), &team).unwrap().delivery.unwrap();
+        let ended = core.undelivered(&delivery.to, delivery.entry, &delivery.meta, "Kith isn't running.", &team);
+        assert_eq!((ended.agent.as_str(), ended.kind), ("raven", "failed"));
+        assert_eq!(ended.changed, ["atlas"]);
+        assert!(matches!(&core.chat(&team[1]).entries()[1].what, What::Answer { writing: false, error, .. } if error == "Kith isn't running."));
+        assert!(matches!(&core.chat(&team[0]).entries().last().unwrap().what, What::From { from, text, reply: true, .. } if from == "raven" && text.contains("Kith isn't running.")));
     }
 
     #[test]
