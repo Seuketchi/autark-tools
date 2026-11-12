@@ -61,6 +61,8 @@ struct Meta {
     chain: Vec<String>,
     /// The agent that asked for it, which gets the answer back.
     origin: Option<String>,
+    /// Whether a schedule started it, so you weren't there to see it arrive.
+    scheduled: bool,
 }
 
 /// An answer being written by an agent here.
@@ -300,7 +302,8 @@ impl Core {
                 chain.push(to.id.clone());
                 ended.changed.push(to.id.clone());
                 ended.logged.push(("handoff", from.id.clone(), format!("to {}: {}", to.id, asked.brief)));
-                ended.delivery = Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()) } });
+                ended.delivery =
+                    Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()), scheduled: false } });
             }
             Err(why) => {
                 self.chat(from).push(What::Handoff { to: asked.to.clone(), name: asked.to.clone(), brief: asked.brief, refused: why.clone() });
@@ -325,6 +328,11 @@ impl Core {
             *error = why.to_owned();
         }
         chat.save();
+    }
+
+    /// Whether an answer a schedule started is still being written: the next job waits for it.
+    fn scheduled_running(&self) -> bool {
+        self.pending.values().any(|pending| pending.meta.scheduled)
     }
 
     /// The answers to give up on: quiet for too long since their last word, or with no word long after they were started.
@@ -549,7 +557,7 @@ impl Agents {
             (entry, conversation)
         };
         Self::agent_changed(&emitter, &agent.id).await?;
-        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: false };
         match start_answer(&self.shared, connection, &agent, entry, &text, &conversation, None, meta).await {
             Ok((answer, ended)) => {
                 // An answer that failed at once has ended by now.
@@ -778,7 +786,7 @@ async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitte
     if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
         eprintln!("agentd: sending a change: {err}");
     }
-    let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+    let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: true };
     match start_answer(&shared, &connection, &agent, entry, &prompt, &conversation, None, meta).await {
         Ok((_, ended)) => settle(&shared, &emitter, ended).await,
         Err(why) => {
@@ -792,9 +800,13 @@ async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitte
     Ok(())
 }
 
-/// Runs the jobs that are due: those an agent has that were due after they last ran, once each, however long the laptop
-/// slept. One whose agent is busy waits for the next look.
+/// Runs a job that is due: one an agent has that was due after it last ran, once, however long the laptop slept. Jobs run
+/// one at a time, so those made up after a sleep don't all ask the model at once: none starts while one a schedule started
+/// is still being written, and the next waits for the next look. One whose agent is busy waits too.
 async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &SignalEmitter<'static>) {
+    if shared.core().scheduled_running() {
+        return;
+    }
     let now = now_local();
     for agent in agents::all() {
         let Some(path) = agents::jobs_path(&agent.id) else { continue };
@@ -803,6 +815,7 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
             let Ok(job) = jobs::get(&path, id) else { continue };
             if run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await.is_ok() {
                 jobs::ran(&path, id, due);
+                return;
             }
         }
     }
@@ -1185,7 +1198,7 @@ mod tests {
     }
 
     fn in_chain(ids: &[&str], depth: u8) -> Meta {
-        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None }
+        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None, scheduled: false }
     }
 
     /// An `autark-ai` whose `Look` never answers, as one loading a model on a busy laptop.
@@ -1213,7 +1226,7 @@ mod tests {
             let shared = Arc::new(Shared::new(Events::new(dir.join("events.jsonl"))));
             let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
             let mut ended = Ended::of("atlas", "answered", String::new());
-            let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+            let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
             ended.delivery = Some(Delivery { from: agent("atlas"), to: agent("raven"), entry: 1, brief: "forecast?".into(), conversation: String::new(), meta });
             // The listener settles every answer that ends: one waiting on a slow model would hold up every other answer.
             let settled = std::pin::pin!(settle(&shared, &emitter, Some(ended)));
@@ -1235,6 +1248,57 @@ mod tests {
         assert_eq!(ended.changed, ["atlas"]);
         assert!(matches!(&core.chat(&team[1]).entries()[1].what, What::Answer { writing: false, error, .. } if error == "Kith isn't running."));
         assert!(matches!(&core.chat(&team[0]).entries().last().unwrap().what, What::From { from, text, reply: true, .. } if from == "raven" && text.contains("Kith isn't running.")));
+    }
+
+    /// An `autark-ai` that starts every answer and never finishes one.
+    struct BusyAi {
+        next: std::sync::atomic::AtomicU32,
+    }
+
+    #[zbus::interface(name = "org.autark.AI1")]
+    impl BusyAi {
+        async fn look(&self, _question: String, _can: Vec<String>) -> String {
+            String::new()
+        }
+
+        async fn complete(&self, _system: String, _context: String, _prompt: String) -> u32 {
+            self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+        }
+    }
+
+    /// Needs a session bus and agents' folders of its own: run under `dbus-run-session` with `AGENTD_PRIVATE_BUS=1` and
+    /// private `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
+    #[test]
+    #[ignore = "needs a private bus and XDG folders: AGENTD_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    fn jobs_made_up_after_a_sleep_run_one_at_a_time() {
+        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+            return;
+        }
+        // It makes agents: never in your own folders.
+        assert!(std::env::var_os("XDG_CONFIG_HOME").is_some() && std::env::var_os("XDG_STATE_HOME").is_some(), "set private XDG folders");
+        let every_midnight = When::parse("every day at 0:00").unwrap();
+        let yesterday = now_local() - chrono::Duration::days(1);
+        let team: Vec<Agent> = ["sleeper one", "sleeper two"].iter().map(|name| agents::create(name, "", "", &[], &[], &[]).unwrap()).collect();
+        for agent in &team {
+            jobs::add(&agents::jobs_path(&agent.id).unwrap(), &every_midnight, "Summarise my day", yesterday).unwrap();
+        }
+        let scheduled = |shared: &Shared| team.iter().filter(|agent| shared.core().chat(agent).entries().iter().any(|entry| matches!(entry.what, What::Scheduled { .. }))).count();
+        async_io::block_on(async {
+            let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", BusyAi { next: 0.into() }).build().await.unwrap();
+            let connection = zbus::connection::Builder::session().build().await.unwrap();
+            let shared = Arc::new(Shared::new(Events::new(agents::state_base().join("events.jsonl"))));
+            let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
+            run_due(&shared, &connection, &emitter).await;
+            assert_eq!(scheduled(&shared), 1, "both jobs started at once");
+            // The next waits while the first is being written.
+            run_due(&shared, &connection, &emitter).await;
+            assert_eq!(scheduled(&shared), 1);
+            let all = agents::all();
+            let ended = shared.core().hear(1, Heard::Done(String::new()), &all);
+            assert!(ended.is_some());
+            run_due(&shared, &connection, &emitter).await;
+            assert_eq!(scheduled(&shared), 2);
+        });
     }
 
     #[test]
@@ -1306,7 +1370,7 @@ mod tests {
     #[test]
     fn an_answer_to_handed_over_work_goes_back_to_the_agent_that_asked() {
         let team = [linked("atlas", &["raven"]), linked("raven", &[])];
-        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
         let mut core = handoff_core(&team, "raven", "", meta.clone());
         core.hear(5, Heard::Piece("Rain, 28 degrees.".into()), &team);
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
@@ -1321,7 +1385,7 @@ mod tests {
     #[test]
     fn an_answer_that_hands_on_after_being_handed_work_does_both() {
         let team = [linked("atlas", &["raven"]), linked("raven", &["quill"]), linked("quill", &[])];
-        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
         let mut core = handoff_core(&team, "raven", "Ask QUILL too.\nHANDOFF quill: find my trip notes", meta);
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
         assert_eq!(ended.delivery.as_ref().map(|delivery| delivery.meta.depth), Some(2));

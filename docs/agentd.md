@@ -126,7 +126,9 @@ weekdays at 8:00" over it.
   question isn't one.
 - **A missed run is made up once.** Each job keeps the time it was last due and run (`jobs.toml`). Every half minute, and
   soon after the daemon starts, anything due after that runs once, however many times it came while the laptop slept. A job
-  made now doesn't run for a time before it was made, and one switched back on starts from then.
+  made now doesn't run for a time before it was made, and one switched back on starts from then. Jobs run one at a time:
+  none starts while another's answer is being written, so a dozen made up after a sleep don't ask the model at once. An
+  answer's five minutes without a word count from its first word, so time spent waiting its turn isn't held against it.
 - **An agent that is busy answering waits:** the run happens at the next look after it is free. A run that fails (the model
   is off) is not tried again until its next time.
 - **It is read-only like any answer:** the agent looks only at its `can` list, and a job can hand work on, within the
