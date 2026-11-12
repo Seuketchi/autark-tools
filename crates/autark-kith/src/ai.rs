@@ -13,7 +13,7 @@ pub trait Agents {
     fn clear(&self, id: &str) -> zbus::Result<()>;
     fn memory(&self, id: &str) -> zbus::Result<String>;
     fn remember(&self, id: &str, text: &str) -> zbus::Result<()>;
-    fn forget(&self, id: &str, n: u32) -> zbus::Result<()>;
+    fn forget(&self, id: &str, text: &str) -> zbus::Result<()>;
     fn answer_fact(&self, id: &str, entry: u64, save: bool) -> zbus::Result<()>;
     fn answer_add(&self, id: &str, entry: u64, add: bool) -> zbus::Result<()>;
     #[zbus(signal)]

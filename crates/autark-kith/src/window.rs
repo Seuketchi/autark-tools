@@ -117,7 +117,7 @@ fn fill_memory(facts: &gtk::Box, error: &gtk::Label, id: &str) {
             none.add_css_class("empty-fact");
             facts.append(&none);
         }
-        for (n, fact) in list.iter().enumerate() {
+        for fact in &list {
             let text = gtk::Label::builder().label(fact).wrap(true).wrap_mode(pango::WrapMode::WordChar).xalign(0.0).hexpand(true).selectable(true).build();
             let forget = gtk::Button::builder().icon_name("edit-delete-symbolic").tooltip_text("Forget this").valign(gtk::Align::Start).build();
             forget.add_css_class("flat");
@@ -125,11 +125,11 @@ fn fill_memory(facts: &gtk::Box, error: &gtk::Label, id: &str) {
             row.append(&text);
             row.append(&forget);
             facts.append(&row);
-            let (facts, error, id) = (facts.clone(), error.clone(), id.clone());
+            let (facts, error, id, fact) = (facts.clone(), error.clone(), id.clone(), fact.clone());
             forget.connect_clicked(move |_| {
-                let (facts, error, id) = (facts.clone(), error.clone(), id.clone());
+                let (facts, error, id, fact) = (facts.clone(), error.clone(), id.clone(), fact.clone());
                 glib::spawn_future_local(async move {
-                    match async { ai::proxy().await?.forget(&id, n as u32).await }.await {
+                    match async { ai::proxy().await?.forget(&id, &fact).await }.await {
                         Ok(()) => {
                             error.set_visible(false);
                             fill_memory(&facts, &error, &id);
