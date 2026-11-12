@@ -42,7 +42,10 @@ of one.
 | Its conversation (a week) | `~/.local/state/autark-agentd/agents/<id>/chat.json` |
 | Its memory | `~/.config/autark-agentd/agents/<id>/memory.toml` |
 | The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
-| The mailbox (what is waiting to be delivered) | `~/.local/state/autark-agentd/mailbox.json` |
+
+The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
+each handoff in it starts within moments. One that a restart catches before its answer ends is lost; the receiver's
+conversation says its answer was cut off, and the agent that asked gets no reply.
 
 An id is a short slug, so it can't name a path outside the agents' folders. A folder keeps its id even when its
 `agent.toml` can't be read, so a new agent never moves in on another's memory.
@@ -97,8 +100,10 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
 - **Read-only.** What is handed over is a request to look something up and answer. The receiver looks at no more than
   its own `can` list, and nothing it can do goes beyond reading, apart from the additions to a note you tap Add on.
 - **Code routes, not the model.** An agent with links is told who they are and to end its reply with a line
-  `HANDOFF <id>: <what to ask>`. The daemon reads that line itself (only the last line, only when well formed), takes it
-  out of what is shown, checks the link, the depth, the chain and whether the other agent is busy, and delivers. A model
+  `HANDOFF <id>: <what to ask>`. The daemon reads that line itself (only on the last line, at its start or after a
+  sentence ends there, and only when well formed, so a quoted email can't hand work on), takes it out of what is shown,
+  checks the link, the depth, the chain and whether the other agent is busy, and delivers. An answer you stop hands
+  nothing on: it is kept as it was written. A model
   that gets the line wrong hands nothing on, and one that claims it handed something without the line is wrong in a way
   you can see: there is no "Asked …" line.
 
