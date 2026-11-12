@@ -35,6 +35,20 @@ pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     result
 }
 
+/// Moves a file that can't be understood out of the way, to `<name>.bad-<seconds>` beside it, so a fresh one can be
+/// written without losing it. Returns where it went.
+pub fn set_aside(path: &Path, now: u64) -> std::io::Result<std::path::PathBuf> {
+    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut aside = path.with_file_name(format!("{name}.bad-{now}"));
+    let mut n = 2;
+    while aside.exists() {
+        aside = path.with_file_name(format!("{name}.bad-{now}-{n}"));
+        n += 1;
+    }
+    std::fs::rename(path, &aside)?;
+    Ok(aside)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

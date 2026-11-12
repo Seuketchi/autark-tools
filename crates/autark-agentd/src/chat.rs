@@ -5,11 +5,14 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 /// How long the conversation is kept.
 const KEPT: u64 = 7 * 24 * 60 * 60;
 /// How many entries go back to the model as the conversation so far.
 const RECENT: usize = 12;
+/// The version of `chat.json` this writes.
+const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Entry {
@@ -50,7 +53,10 @@ pub enum FactState {
 
 pub struct Chat {
     entries: Vec<Entry>,
+    /// Entries of a kind this version doesn't know, written by a newer one: kept as they are and saved again.
+    foreign: Vec<Value>,
     next: u64,
+    /// Where it is saved; `None` when it mustn't be, as for a file a newer version wrote.
     path: Option<PathBuf>,
     /// Who answers in it, for the transcript.
     speaker: String,
@@ -62,10 +68,39 @@ pub fn now() -> u64 {
 
 impl Chat {
     /// A conversation kept at `path`, with `speaker` answering.
+    /// A file that can't be understood is set aside and a new conversation begun; one that can't be read, or that a
+    /// newer version wrote, is shown but never written over.
     pub fn load(path: PathBuf, speaker: &str) -> Self {
-        let entries: Vec<Entry> = std::fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
-        let next = entries.iter().map(|entry| entry.id + 1).max().unwrap_or(1);
-        let mut chat = Self { entries, next, path: Some(path), speaker: speaker.to_owned() };
+        let (values, path) = match read(&path) {
+            Ok(Some((version, values))) if version > VERSION => {
+                eprintln!("agentd: {} is from a newer version (format {version}), so it is shown but not changed", path.display());
+                (values, None)
+            }
+            Ok(Some((_, values))) => (values, Some(path)),
+            Ok(None) => (Vec::new(), Some(path)),
+            Err(Unread::Unreadable(err)) => {
+                eprintln!("agentd: reading {}: {err}; it is left as it is", path.display());
+                (Vec::new(), None)
+            }
+            Err(Unread::NotUnderstood(err)) => {
+                match crate::files::set_aside(&path, now()) {
+                    Ok(aside) => eprintln!("agentd: {} can't be understood ({err}); it was kept as {}", path.display(), aside.display()),
+                    Err(why) => eprintln!("agentd: {} can't be understood ({err}) or set aside ({why})", path.display()),
+                }
+                let saved = !path.exists();
+                (Vec::new(), saved.then_some(path))
+            }
+        };
+        let mut entries = Vec::new();
+        let mut foreign = Vec::new();
+        for value in values {
+            match serde_json::from_value::<Entry>(value.clone()) {
+                Ok(entry) => entries.push(entry),
+                Err(_) => foreign.push(value),
+            }
+        }
+        let next = entries.iter().map(|entry| entry.id).chain(foreign.iter().filter_map(|value| value["id"].as_u64())).max().unwrap_or(0) + 1;
+        let mut chat = Self { entries, foreign, next, path, speaker: speaker.to_owned() };
         // An answer cut off by a restart won't grow any more.
         for entry in &mut chat.entries {
             if let What::Answer { writing, error, .. } = &mut entry.what
@@ -83,12 +118,13 @@ impl Chat {
 
     #[cfg(test)]
     pub fn in_memory(speaker: &str) -> Self {
-        Self { entries: Vec::new(), next: 1, path: None, speaker: speaker.to_owned() }
+        Self { entries: Vec::new(), foreign: Vec::new(), next: 1, path: None, speaker: speaker.to_owned() }
     }
 
     fn prune(&mut self) {
         let oldest = now().saturating_sub(KEPT);
         self.entries.retain(|entry| entry.time >= oldest);
+        self.foreign.retain(|value| value["time"].as_u64().unwrap_or(0) >= oldest);
     }
 
     pub fn entries(&mut self) -> &[Entry] {
@@ -130,6 +166,7 @@ impl Chat {
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.foreign.clear();
     }
 
     /// What was said last, by you or the agent, and when: for the roster's preview.
@@ -169,10 +206,42 @@ impl Chat {
     pub fn save(&mut self) {
         self.prune();
         let Some(path) = self.path.clone() else { return };
-        let result = serde_json::to_vec(&self.entries).map_err(std::io::Error::other).and_then(|bytes| crate::files::write(&path, &bytes));
+        let result = (|| {
+            let mut entries = self.entries.iter().map(serde_json::to_value).collect::<Result<Vec<Value>, _>>()?;
+            entries.extend(self.foreign.iter().cloned());
+            entries.sort_by_key(|entry| entry["id"].as_u64().unwrap_or(0));
+            let bytes = serde_json::to_vec(&json!({ "version": VERSION, "entries": entries }))?;
+            crate::files::write(&path, &bytes)
+        })();
         if let Err(err) = result {
             eprintln!("agentd: saving the conversation to {}: {err}", path.display());
         }
+    }
+}
+
+/// Why a conversation's file wasn't read.
+enum Unread {
+    Unreadable(std::io::Error),
+    NotUnderstood(String),
+}
+
+/// The file's version and its entries, unparsed; `None` when there is no file. The first files were a bare array.
+fn read(path: &std::path::Path) -> Result<Option<(u32, Vec<Value>)>, Unread> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(Unread::Unreadable(err)),
+    };
+    match serde_json::from_slice(&bytes).map_err(|err| Unread::NotUnderstood(err.to_string()))? {
+        Value::Array(entries) => Ok(Some((1, entries))),
+        Value::Object(mut file) => {
+            let version = file.get("version").and_then(Value::as_u64).unwrap_or(1).try_into().unwrap_or(u32::MAX);
+            match file.remove("entries") {
+                Some(Value::Array(entries)) => Ok(Some((version, entries))),
+                _ => Err(Unread::NotUnderstood("it has no entries".to_owned())),
+            }
+        }
+        _ => Err(Unread::NotUnderstood("it is not a conversation".to_owned())),
     }
 }
 
@@ -224,6 +293,58 @@ mod tests {
         assert!(!again.writing());
         assert!(matches!(&again.entries()[0].what, What::Answer { error, text, .. } if error.contains("cut off") && text == "Par"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn place(test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("agentd-chat-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("chat.json")
+    }
+
+    #[test]
+    fn an_entry_of_a_kind_not_known_here_is_kept() {
+        let path = place("unknown");
+        let now = now();
+        std::fs::write(&path, format!(r#"[{{"id":1,"time":{now},"kind":"you","text":"hi"}},{{"id":2,"time":{now},"kind":"handoff","to":"piper"}}]"#)).unwrap();
+        let mut chat = Chat::load(path.clone(), "A");
+        assert_eq!(chat.entries().len(), 1);
+        assert_eq!(chat.push(What::You { text: "again".into() }), 3);
+        chat.save();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["version"], VERSION);
+        let kinds: Vec<&str> = saved["entries"].as_array().unwrap().iter().map(|entry| entry["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["you", "handoff", "you"]);
+        assert_eq!(saved["entries"][1]["to"], "piper");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_conversation_that_cant_be_understood_is_set_aside_not_written_over() {
+        let path = place("bad");
+        std::fs::write(&path, "{ not json").unwrap();
+        let mut chat = Chat::load(path.clone(), "A");
+        assert!(chat.entries().is_empty());
+        chat.push(What::You { text: "hi".into() });
+        chat.save();
+        let aside: Vec<PathBuf> = std::fs::read_dir(path.parent().unwrap()).unwrap().flatten().map(|entry| entry.path()).filter(|p| p.to_string_lossy().contains("chat.json.bad-")).collect();
+        assert_eq!(aside.len(), 1);
+        assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "{ not json");
+        assert_eq!(Chat::load(path.clone(), "A").entries().len(), 1);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_conversation_from_a_newer_version_is_read_but_not_written_over() {
+        let path = place("newer");
+        let text = format!(r#"{{"version":{},"entries":[{{"id":1,"time":{},"kind":"you","text":"hi"}}]}}"#, VERSION + 1, now());
+        std::fs::write(&path, &text).unwrap();
+        let mut chat = Chat::load(path.clone(), "A");
+        assert_eq!(chat.entries().len(), 1);
+        chat.push(What::You { text: "more".into() });
+        chat.save();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
