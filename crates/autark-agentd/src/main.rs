@@ -29,6 +29,8 @@ fn main() {
         let connection = zbus::connection::Builder::session().method_timeout(CALLS).name("org.autark.Agents1").serve_at(service::PATH, service::Agents { shared: shared.clone() }).build().await?;
         // Only once the name is ours, so a second daemon that won't get it never rewrites the log under the first.
         shared.prune();
+        // Files an earlier version wrote 0644 are narrowed once, not only when each is written again.
+        agents::tighten();
         service::follow(shared, connection).await;
         Ok::<(), zbus::Error>(())
     });
