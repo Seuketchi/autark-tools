@@ -127,6 +127,8 @@ fn all_in(root: &Path) -> Vec<Agent> {
         .flatten()
         .filter_map(|entry| {
             let id = entry.file_name().into_string().ok().filter(|id| valid(id) && id != KITH)?;
+            // An agent.toml that can't be read leaves the agent off the team, unlogged as this runs on every call; its
+            // folder still holds its id (see `slug`).
             let file: File = toml::from_str(&std::fs::read_to_string(entry.path().join("agent.toml")).ok()?).ok()?;
             Some(Agent { id, name: file.name, colour: file.colour % COLOURS, job: file.job, soul: file.soul, can: file.can, skills: file.skills, links: file.links })
         })
@@ -254,7 +256,7 @@ fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], ski
     }
     let can = abilities(can);
     let skills = slugs(skills);
-    let id = slug(name, &existing);
+    let id = slug(root, name, &existing);
     let links = linked(links, &existing, &id)?;
     // Each new agent takes the colour least used, so a team looks varied.
     let colour = (0..COLOURS).min_by_key(|colour| existing.iter().filter(|agent| agent.colour == *colour).count()).unwrap_or(0);
@@ -392,8 +394,9 @@ fn delete_in(root: &Path, state: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A name as an id: lowercase letters, digits and dashes, and not one that is taken.
-fn slug(name: &str, existing: &[Agent]) -> String {
+/// A name as an id: lowercase letters, digits and dashes, and not one that is taken. A folder in `root` takes its id
+/// even when its `agent.toml` can't be read, so a new agent never moves in on its memory.
+fn slug(root: &Path, name: &str, existing: &[Agent]) -> String {
     let mut slug = String::new();
     for c in name.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {
@@ -406,7 +409,7 @@ fn slug(name: &str, existing: &[Agent]) -> String {
     if slug.is_empty() {
         slug = "agent".to_owned();
     }
-    let taken = |id: &str| id == KITH || existing.iter().any(|agent| agent.id == id);
+    let taken = |id: &str| id == KITH || existing.iter().any(|agent| agent.id == id) || root.join(id).exists();
     let base = slug.clone();
     let mut n = 2;
     while taken(&slug) {
@@ -450,6 +453,17 @@ mod tests {
         std::fs::write(&path, &newer).unwrap();
         assert!(update_in(&root, "piper", &Patch { job: Some("Other.".to_owned()), ..Patch::default() }).unwrap_err().contains("newer"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_folder_whose_agent_cant_be_read_keeps_its_id() {
+        let root = folder("unreadable");
+        std::fs::create_dir_all(root.join("piper")).unwrap();
+        std::fs::write(root.join("piper/agent.toml"), "not = [toml").unwrap();
+        std::fs::write(root.join("piper/memory.toml"), "[[fact]]\ntext = \"Mine\"\n").unwrap();
+        assert_eq!(create_in(&root, "Piper", "", "", &[], &[], &[]).unwrap().id, "piper-2");
+        assert_eq!(std::fs::read_to_string(root.join("piper/agent.toml")).unwrap(), "not = [toml");
         let _ = std::fs::remove_dir_all(root);
     }
 
