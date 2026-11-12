@@ -78,12 +78,13 @@ pub fn add(path: &Path, text: &str, time: u64) -> Result<(), String> {
     save(path, facts)
 }
 
-/// Forgets the `n`th fact, counting from 0.
-pub fn forget(path: &Path, n: usize) -> Result<(), String> {
+/// Forgets the fact with these words (spacing and case aside, as `add` tells them apart).
+pub fn forget(path: &Path, text: &str) -> Result<(), String> {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut facts = load(path)?;
-    if n >= facts.len() {
+    let Some(n) = facts.iter().position(|fact| fact.text.split_whitespace().collect::<Vec<_>>().join(" ").eq_ignore_ascii_case(&text)) else {
         return Err("there is no such fact".to_owned());
-    }
+    };
     facts.remove(n);
     save(path, facts)
 }
@@ -108,15 +109,16 @@ mod tests {
     }
 
     #[test]
-    fn a_fact_is_kept_once_and_forgotten_by_place() {
+    fn a_fact_is_kept_once_and_forgotten_by_its_words() {
         let p = path("keep");
         add(&p, "Prefers short answers", 5).unwrap();
         add(&p, "prefers  short answers", 6).unwrap();
         add(&p, "Lives in Cebu", 7).unwrap();
         assert_eq!(load(&p).unwrap().iter().map(|f| f.text.as_str()).collect::<Vec<_>>(), ["Prefers short answers", "Lives in Cebu"]);
-        forget(&p, 0).unwrap();
-        assert_eq!(load(&p).unwrap().len(), 1);
-        assert!(forget(&p, 5).is_err());
+        // A list read before another fact went is no help: the words name the fact, wherever it now is.
+        forget(&p, "lives in  cebu").unwrap();
+        assert_eq!(load(&p).unwrap().iter().map(|f| f.text.as_str()).collect::<Vec<_>>(), ["Prefers short answers"]);
+        assert!(forget(&p, "Lives in Cebu").is_err());
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
@@ -127,7 +129,7 @@ mod tests {
         std::fs::write(&p, "[[fact]]\ntext = \"Lives in Cebu\"\nnot toml at all").unwrap();
         assert!(load(&p).is_err());
         assert!(add(&p, "Prefers short answers", 1).unwrap_err().contains("memory.toml"));
-        assert!(forget(&p, 0).is_err());
+        assert!(forget(&p, "Lives in Cebu").is_err());
         assert!(std::fs::read_to_string(&p).unwrap().contains("not toml at all"));
         // A memory not made yet is an empty one.
         assert_eq!(load(&path("none")).unwrap(), []);

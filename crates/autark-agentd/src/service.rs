@@ -430,9 +430,9 @@ impl Agents {
         Ok(())
     }
 
-    /// Forgets the `n`th fact of an agent's memory, counting from 0.
-    async fn forget(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
-        memory::forget(&memory_of(&id)?, n as usize).map_err(Error::Failed)?;
+    /// Forgets the fact of an agent's memory with these words, as `Memory` gives them.
+    async fn forget(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, text: String) -> Result<(), Error> {
+        memory::forget(&memory_of(&id)?, &text).map_err(Error::Failed)?;
         self.shared.events.record(chat::now(), "forgot", &id, "");
         Self::agent_changed(&emitter, &id).await?;
         Ok(())
