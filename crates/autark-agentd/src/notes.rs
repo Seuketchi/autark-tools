@@ -4,7 +4,8 @@
 //! never outside the vault, and never in a note named for a secret.
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// The most items one sentence adds, and the longest one.
@@ -75,13 +76,19 @@ fn name(phrase: &str) -> Option<String> {
         _ => return None,
     };
     let name = kept.join(" ");
-    let fine = |c: char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '\'' | '_');
-    if name.is_empty() || kept.len() > 4 || name.chars().count() > 40 || !name.chars().all(fine) || name.starts_with(['-', '.', '\'']) {
+    if kept.len() > 4 || !fit(&name) {
         return None;
     }
     let mut chars = name.chars();
     let first = chars.next()?.to_uppercase().to_string();
     Some(format!("{first}{}", chars.as_str()))
+}
+
+/// Whether `name` may name a note: a few words of letters, digits, spaces, dashes, apostrophes and underscores, so it
+/// can't be a path or a hidden file.
+fn fit(name: &str) -> bool {
+    let fine = |c: char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '\'' | '_');
+    !name.is_empty() && name.chars().count() <= 40 && name.chars().all(fine) && !name.starts_with(['-', '.', '\''])
 }
 
 /// The vault: Notes' own setting, else the folder it last opened, else `~/Notes`. The same as Notes and Kith choose it.
@@ -125,6 +132,10 @@ fn find(vault: &Path, name: &str) -> PathBuf {
 
 /// Adds the items to the end of the note as unticked tasks, and says which note it was.
 pub fn append(vault: &Path, add: &Add) -> Result<PathBuf, String> {
+    // The proposal comes back from a saved conversation, which may have been changed since it was read.
+    if !fit(&add.note) {
+        return Err(format!("{:?} isn't a note's name", add.note));
+    }
     let lower = add.note.to_lowercase();
     if SECRETS.iter().any(|secret| lower.contains(secret)) {
         return Err("a note named for a secret isn't added to".to_owned());
@@ -133,17 +144,31 @@ pub fn append(vault: &Path, add: &Add) -> Result<PathBuf, String> {
         return Err(format!("there is no Notes folder at {}", vault.display()));
     }
     let path = find(vault, &add.note);
-    let existing = std::fs::metadata(&path).ok();
-    if existing.as_ref().is_some_and(|meta| meta.len() > BIGGEST) {
+    let link = || format!("{} is a link, not a note in the vault, so it isn't added to", add.note);
+    // The note is a plain file whose folder is in the vault: a link in its place is never followed out of it.
+    if std::fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
+        return Err(link());
+    }
+    let folder = path.parent().and_then(|folder| folder.canonicalize().ok());
+    if !vault.canonicalize().is_ok_and(|vault| folder.is_some_and(|folder| folder.starts_with(vault))) {
+        return Err(link());
+    }
+    let mut file = OpenOptions::new().read(true).create(true).append(true).open(&path).map_err(|err| format!("opening {}: {err}", path.display()))?;
+    // What was opened must be what the vault names, should a link have been put there meanwhile.
+    let opened = file.metadata().map_err(|err| format!("reading {}: {err}", path.display()))?;
+    if !std::fs::symlink_metadata(&path).is_ok_and(|named| named.is_file() && named.dev() == opened.dev() && named.ino() == opened.ino()) {
+        return Err(link());
+    }
+    if opened.len() > BIGGEST {
         return Err(format!("{} is too big to add to", add.note));
     }
+    let mut there = Vec::new();
+    file.read_to_end(&mut there).map_err(|err| format!("reading {}: {err}", path.display()))?;
     // A note that doesn't end its last line gets one first.
-    let needs_newline = existing.as_ref().is_some_and(|meta| meta.len() > 0) && !std::fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))?.ends_with(b"\n");
-    let mut text = if needs_newline { "\n".to_owned() } else { String::new() };
+    let mut text = if there.is_empty() || there.ends_with(b"\n") { String::new() } else { "\n".to_owned() };
     for item in &add.items {
         text.push_str(&format!("- [ ] {item}\n"));
     }
-    let mut file = OpenOptions::new().create(true).append(true).open(&path).map_err(|err| format!("opening {}: {err}", path.display()))?;
     file.write_all(text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))?;
     Ok(path)
 }
@@ -239,6 +264,32 @@ mod tests {
         assert!(append(&vault.join("nowhere"), &add("A list", &["x"])).is_err());
         assert!(!vault.join("Password list.md").exists());
         let _ = std::fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn a_note_name_that_parse_would_refuse_is_refused_when_adding_too() {
+        let vault = folder("names");
+        for note in [".hidden list", "../escape list", "a/b list", "Grocery\nlist", ""] {
+            assert!(append(&vault, &add(note, &["x"])).is_err(), "{note:?}");
+        }
+        assert_eq!(std::fs::read_dir(&vault).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn a_note_that_is_a_link_is_not_followed_out_of_the_vault() {
+        let base = folder("link");
+        let (vault, outside) = (base.join("vault"), base.join("outside.md"));
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(&outside, "mine\n").unwrap();
+        std::os::unix::fs::symlink(&outside, vault.join("Grocery list.md")).unwrap();
+        assert!(append(&vault, &add("Grocery list", &["milk"])).is_err());
+        // A link to where nothing is yet isn't followed to make a file there either.
+        std::os::unix::fs::symlink(base.join("new.md"), vault.join("Todo list.md")).unwrap();
+        assert!(append(&vault, &add("Todo list", &["x"])).is_err());
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "mine\n");
+        assert!(!base.join("new.md").exists());
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

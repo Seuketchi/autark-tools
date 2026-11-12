@@ -5,6 +5,7 @@ mod agents;
 mod ai;
 mod chat;
 mod events;
+mod files;
 mod jobs;
 mod mailbox;
 mod memory;
@@ -26,10 +27,11 @@ fn main() {
     agents::seed_lenses();
     agents::seed_links();
     let shared = Arc::new(service::Shared::new(events::Events::new(agents::state_base().join("events.jsonl"))));
-    shared.prune();
     let result = async_io::block_on(async {
         // A call to Kith can wait on a model that is loading or a busy laptop for longer than D-Bus's 25 seconds.
         let connection = zbus::connection::Builder::session().method_timeout(CALLS).name("org.autark.Agents1").serve_at(service::PATH, service::Agents { shared: shared.clone() }).build().await?;
+        // Only once the name is ours, so a second daemon that won't get it never rewrites the log under the first.
+        shared.prune();
         service::follow(shared, connection).await;
         Ok::<(), zbus::Error>(())
     });

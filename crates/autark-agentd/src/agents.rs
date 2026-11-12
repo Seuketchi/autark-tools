@@ -19,6 +19,8 @@ const SOUL: usize = 4 * 1024;
 /// The most skills one agent works by, and how much of each is read.
 const MAX_SKILLS: usize = 4;
 const SKILL: usize = 10 * 1024;
+/// The version of `agent.toml` this writes.
+const VERSION: u32 = 1;
 /// How many avatar colours the roster has.
 pub const COLOURS: u8 = 8;
 
@@ -46,6 +48,9 @@ pub const ABILITIES: [&str; 6] = ["mail", "calendar", "tasks", "notes", "web", "
 
 #[derive(Serialize, Deserialize, Default)]
 struct File {
+    /// Missing in the first files, which are version 1.
+    #[serde(default = "first")]
+    version: u32,
     name: String,
     #[serde(default)]
     colour: u8,
@@ -59,6 +64,10 @@ struct File {
     skills: Vec<String>,
     #[serde(default)]
     links: Vec<String>,
+}
+
+fn first() -> u32 {
+    1
 }
 
 fn home() -> PathBuf {
@@ -123,6 +132,8 @@ fn all_in(root: &Path) -> Vec<Agent> {
         .flatten()
         .filter_map(|entry| {
             let id = entry.file_name().into_string().ok().filter(|id| valid(id) && id != KITH)?;
+            // An agent.toml that can't be read leaves the agent off the team, unlogged as this runs on every call; its
+            // folder still holds its id (see `slug`).
             let file: File = toml::from_str(&std::fs::read_to_string(entry.path().join("agent.toml")).ok()?).ok()?;
             Some(Agent { id, name: file.name, colour: file.colour % COLOURS, job: file.job, soul: file.soul, can: file.can, skills: file.skills, links: file.links })
         })
@@ -218,12 +229,23 @@ fn linked(links: &[String], existing: &[Agent], own: &str) -> Result<Vec<String>
 }
 
 fn write(root: &Path, agent: &Agent) -> Result<(), String> {
-    let file =
-        File { name: agent.name.clone(), colour: agent.colour, job: agent.job.clone(), soul: agent.soul.clone(), can: agent.can.clone(), skills: agent.skills.clone(), links: agent.links.clone() };
-    let dir = root.join(&agent.id);
-    std::fs::create_dir_all(&dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
+    let path = root.join(&agent.id).join("agent.toml");
+    // What a newer version wrote may hold more than this one knows, which writing it again would lose.
+    if let Some(newer) = std::fs::read_to_string(&path).ok().and_then(|text| toml::from_str::<File>(&text).ok()).filter(|file| file.version > VERSION) {
+        return Err(format!("{} was written by a newer version (format {}), so it isn't changed here", agent.name, newer.version));
+    }
+    let file = File {
+        version: VERSION,
+        name: agent.name.clone(),
+        colour: agent.colour,
+        job: agent.job.clone(),
+        soul: agent.soul.clone(),
+        can: agent.can.clone(),
+        skills: agent.skills.clone(),
+        links: agent.links.clone(),
+    };
     let text = toml::to_string(&file).map_err(|err| err.to_string())?;
-    std::fs::write(dir.join("agent.toml"), text).map_err(|err| format!("writing {}: {err}", dir.display()))
+    crate::files::write(&path, text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))
 }
 
 fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], skills: &[String], links: &[String]) -> Result<Agent, String> {
@@ -243,7 +265,7 @@ fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], ski
     }
     let can = abilities(can);
     let skills = slugs(skills);
-    let id = slug(name, &existing);
+    let id = slug(root, name, &existing);
     let links = linked(links, &existing, &id)?;
     // Each new agent takes the colour least used, so a team looks varied.
     let colour = (0..COLOURS).min_by_key(|colour| existing.iter().filter(|agent| agent.colour == *colour).count()).unwrap_or(0);
@@ -407,8 +429,9 @@ fn delete_in(root: &Path, state: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A name as an id: lowercase letters, digits and dashes, and not one that is taken.
-fn slug(name: &str, existing: &[Agent]) -> String {
+/// A name as an id: lowercase letters, digits and dashes, and not one that is taken. A folder in `root` takes its id
+/// even when its `agent.toml` can't be read, so a new agent never moves in on its memory.
+fn slug(root: &Path, name: &str, existing: &[Agent]) -> String {
     let mut slug = String::new();
     for c in name.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {
@@ -421,7 +444,7 @@ fn slug(name: &str, existing: &[Agent]) -> String {
     if slug.is_empty() {
         slug = "agent".to_owned();
     }
-    let taken = |id: &str| id == KITH || existing.iter().any(|agent| agent.id == id);
+    let taken = |id: &str| id == KITH || existing.iter().any(|agent| agent.id == id) || root.join(id).exists();
     let base = slug.clone();
     let mut n = 2;
     while taken(&slug) {
@@ -439,6 +462,44 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("agentd-agents-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn an_agents_file_and_folder_are_only_yours() {
+        let root = folder("mode");
+        let agent = create_in(&root, "Piper", "", "", &[], &[], &[]).unwrap();
+        assert_eq!((mode(&root.join(&agent.id)), mode(&root.join(&agent.id).join("agent.toml"))), (0o700, 0o600));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_agent_says_its_version_and_one_from_a_newer_version_is_not_changed() {
+        let root = folder("version");
+        create_in(&root, "Piper", "Read mail.", "", &[], &[], &[]).unwrap();
+        let path = root.join("piper/agent.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(&format!("version = {VERSION}\n")));
+        let newer = text.replace(&format!("version = {VERSION}"), &format!("version = {}", VERSION + 1));
+        std::fs::write(&path, &newer).unwrap();
+        assert!(update_in(&root, "piper", &Patch { job: Some("Other.".to_owned()), ..Patch::default() }).unwrap_err().contains("newer"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_folder_whose_agent_cant_be_read_keeps_its_id() {
+        let root = folder("unreadable");
+        std::fs::create_dir_all(root.join("piper")).unwrap();
+        std::fs::write(root.join("piper/agent.toml"), "not = [toml").unwrap();
+        std::fs::write(root.join("piper/memory.toml"), "[[fact]]\ntext = \"Mine\"\n").unwrap();
+        assert_eq!(create_in(&root, "Piper", "", "", &[], &[], &[]).unwrap().id, "piper-2");
+        assert_eq!(std::fs::read_to_string(root.join("piper/agent.toml")).unwrap(), "not = [toml");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
