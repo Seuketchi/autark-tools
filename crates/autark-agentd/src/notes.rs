@@ -76,13 +76,19 @@ fn name(phrase: &str) -> Option<String> {
         _ => return None,
     };
     let name = kept.join(" ");
-    let fine = |c: char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '\'' | '_');
-    if name.is_empty() || kept.len() > 4 || name.chars().count() > 40 || !name.chars().all(fine) || name.starts_with(['-', '.', '\'']) {
+    if kept.len() > 4 || !fit(&name) {
         return None;
     }
     let mut chars = name.chars();
     let first = chars.next()?.to_uppercase().to_string();
     Some(format!("{first}{}", chars.as_str()))
+}
+
+/// Whether `name` may name a note: a few words of letters, digits, spaces, dashes, apostrophes and underscores, so it
+/// can't be a path or a hidden file.
+fn fit(name: &str) -> bool {
+    let fine = |c: char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '\'' | '_');
+    !name.is_empty() && name.chars().count() <= 40 && name.chars().all(fine) && !name.starts_with(['-', '.', '\''])
 }
 
 /// The vault: Notes' own setting, else the folder it last opened, else `~/Notes`. The same as Notes and Kith choose it.
@@ -126,6 +132,10 @@ fn find(vault: &Path, name: &str) -> PathBuf {
 
 /// Adds the items to the end of the note as unticked tasks, and says which note it was.
 pub fn append(vault: &Path, add: &Add) -> Result<PathBuf, String> {
+    // The proposal comes back from a saved conversation, which may have been changed since it was read.
+    if !fit(&add.note) {
+        return Err(format!("{:?} isn't a note's name", add.note));
+    }
     let lower = add.note.to_lowercase();
     if SECRETS.iter().any(|secret| lower.contains(secret)) {
         return Err("a note named for a secret isn't added to".to_owned());
@@ -253,6 +263,16 @@ mod tests {
         assert!(append(&vault, &add("Big list", &["x"])).unwrap_err().contains("too big"));
         assert!(append(&vault.join("nowhere"), &add("A list", &["x"])).is_err());
         assert!(!vault.join("Password list.md").exists());
+        let _ = std::fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn a_note_name_that_parse_would_refuse_is_refused_when_adding_too() {
+        let vault = folder("names");
+        for note in [".hidden list", "../escape list", "a/b list", "Grocery\nlist", ""] {
+            assert!(append(&vault, &add(note, &["x"])).is_err(), "{note:?}");
+        }
+        assert_eq!(std::fs::read_dir(&vault).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(vault);
     }
 
