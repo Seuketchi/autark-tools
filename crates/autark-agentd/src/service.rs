@@ -145,8 +145,16 @@ struct Core {
 pub struct Shared {
     core: Mutex<Core>,
     events: Events,
-    /// Work handed on and waiting to be started, and the task to wake for it.
-    mailbox: Mutex<(VecDeque<Delivery>, Option<Waker>)>,
+    /// Work handed on and cards waiting to be sent, and the task to wake for them.
+    mailbox: Mutex<(VecDeque<Posted>, Option<Waker>)>,
+}
+
+/// What `settle` leaves for `follow` to do beside the listener.
+enum Posted {
+    /// Work handed on, whose answer is to be started.
+    Delivery(Box<Delivery>),
+    /// A card for the notification centre.
+    News(News),
 }
 
 impl Shared {
@@ -154,18 +162,18 @@ impl Shared {
         Self { core: Mutex::new(Core::default()), events, mailbox: Mutex::default() }
     }
 
-    /// Leaves work handed on to be started by `follow`, so whoever settled the answer that handed it on never waits for
-    /// a model to start.
-    fn post(&self, delivery: Delivery) {
+    /// Leaves work handed on to be started, or a card to be sent, by `follow`, so whoever settled an answer never waits for
+    /// a model to start or for the notification centre.
+    fn post(&self, posted: Posted) {
         let mut mailbox = self.mailbox.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        mailbox.0.push_back(delivery);
+        mailbox.0.push_back(posted);
         if let Some(waker) = mailbox.1.take() {
             waker.wake();
         }
     }
 
-    /// The work waiting to be started, or `Pending` until some is.
-    fn collect(&self, cx: &mut Context<'_>) -> Poll<Vec<Delivery>> {
+    /// What is waiting to be done, or `Pending` until something is.
+    fn collect(&self, cx: &mut Context<'_>) -> Poll<Vec<Posted>> {
         let mut mailbox = self.mailbox.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if mailbox.0.is_empty() {
             mailbox.1 = Some(cx.waker().clone());
@@ -976,7 +984,8 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
             async_io::Timer::after(Duration::from_secs(3)).await;
         }
     };
-    // Work handed on starts here, beside the listener, so a model slow to start one never holds up the others' words.
+    // Work handed on starts here, and cards are sent from here, beside the listener, so a model slow to start one or a
+    // stuck notification centre never holds up the others' words.
     let deliveries = async {
         let mut running = FuturesUnordered::new();
         loop {
@@ -985,8 +994,13 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 shared.collect(cx)
             })
             .await;
-            for delivery in posted {
-                running.push(deliver(&shared, &connection, &emitter, delivery));
+            for posted in posted {
+                running.push(async {
+                    match posted {
+                        Posted::Delivery(delivery) => deliver(&shared, &connection, &emitter, *delivery).await,
+                        Posted::News(news) => notify::send(&connection, &news).await,
+                    }
+                });
             }
         }
     };
@@ -1080,11 +1094,11 @@ async fn settle(shared: &Shared, emitter: &SignalEmitter<'_>, ended: Option<Ende
             eprintln!("agentd: sending a change: {err}");
         }
     }
-    for news in &ended.news {
-        notify::send(emitter.connection(), news).await;
+    for news in ended.news {
+        shared.post(Posted::News(news));
     }
     if let Some(delivery) = ended.delivery {
-        shared.post(delivery);
+        shared.post(Posted::Delivery(Box::new(delivery)));
     }
 }
 
@@ -1422,6 +1436,42 @@ mod tests {
             assert!(shared.core().tries.is_empty());
         });
         agents::delete(&agent.id).unwrap();
+    }
+
+    /// A notification centre whose `Notify` never answers, as a busy or stuck one.
+    struct SlowNotifications;
+
+    #[zbus::interface(name = "org.freedesktop.Notifications")]
+    impl SlowNotifications {
+        #[allow(clippy::too_many_arguments)] // The Notify call's own arguments.
+        async fn notify(&self, _app: String, _replaces: u32, _icon: String, _summary: String, _body: String, _actions: Vec<String>, _hints: HashMap<String, zbus::OwnedVariant>, _expire: i32) -> u32 {
+            std::future::pending().await
+        }
+    }
+
+    /// Needs a session bus of its own, as `settling_a_handoff_does_not_wait_for_its_answer_to_start`.
+    #[test]
+    #[ignore = "needs a private bus: AGENTD_PRIVATE_BUS=1 dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    fn settling_news_does_not_wait_for_the_notification_centre() {
+        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+            return;
+        }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("agentd-news-{}", std::process::id()));
+        async_io::block_on(async {
+            let _centre = zbus::connection::Builder::session().name("org.freedesktop.Notifications").serve_at("/org/freedesktop/Notifications", SlowNotifications).build().await.unwrap();
+            let connection = zbus::connection::Builder::session().build().await.unwrap();
+            let shared = Arc::new(Shared::new(Events::new(dir.join("events.jsonl"))));
+            let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
+            let mut ended = Ended::of("piper", "answered", String::new());
+            ended.news.push(notify::scheduled("piper", "PIPER", "Two wrote.", true));
+            // The listener settles every answer that ends: a stuck notification centre would hold up every other answer.
+            let settled = std::pin::pin!(settle(&shared, &emitter, Some(ended)));
+            let first = futures_util::future::select(settled, async_io::Timer::after(Duration::from_secs(3))).await;
+            assert!(matches!(first, futures_util::future::Either::Left(_)), "settle waited for the notification centre");
+            assert_eq!(shared.mailbox.lock().unwrap().0.len(), 1);
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
