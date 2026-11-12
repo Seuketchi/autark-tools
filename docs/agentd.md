@@ -41,17 +41,22 @@ of one.
 | An agent: name, colour, job, soul, `can`, `skills`, `links` | `~/.config/autark-agentd/agents/<id>/agent.toml` |
 | Its conversation (a week) | `~/.local/state/autark-agentd/agents/<id>/chat.json` |
 | Its memory | `~/.config/autark-agentd/agents/<id>/memory.toml` |
+| Its scheduled jobs (at most 5) | `~/.config/autark-agentd/agents/<id>/jobs.toml` |
 | The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
-| The mailbox (what is waiting to be delivered) | `~/.local/state/autark-agentd/mailbox.json` |
+
+The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
+each handoff in it starts within moments. One that a restart catches before its answer ends is lost; the receiver's
+conversation says its answer was cut off, and the agent that asked gets no reply.
 
 An id is a short slug, so it can't name a path outside the agents' folders. A folder keeps its id even when its
 `agent.toml` can't be read, so a new agent never moves in on another's memory.
 
-`agent.toml`, `memory.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of their format
-wrote them. A file from a newer version is read but never written over. An entry of a kind this version doesn't know
-is kept as it is. A `chat.json` that can't be understood is moved aside to `chat.json.bad-<seconds>` before a new one
-is begun; a `memory.toml` that can't be read is left as it is, and Memory, Remember and Forget say why until it is
-fixed. An entry's `id` is never given twice in a conversation.
+`agent.toml`, `memory.toml`, `jobs.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of
+their format wrote them. A file from a newer version is read but never written over (a `jobs.toml` from one runs no
+jobs, and Jobs says why). An entry of a kind this version doesn't know is kept as it is. A `chat.json` or `jobs.toml`
+that can't be understood is moved aside to `<name>.bad-<seconds>` before a new one is begun; a `memory.toml` that can't
+be read is left as it is, and Memory, Remember and Forget say why until it is fixed. An entry's `id` is never given
+twice in a conversation.
 
 ## Memory
 
@@ -97,8 +102,10 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
 - **Read-only.** What is handed over is a request to look something up and answer. The receiver looks at no more than
   its own `can` list, and nothing it can do goes beyond reading, apart from the additions to a note you tap Add on.
 - **Code routes, not the model.** An agent with links is told who they are and to end its reply with a line
-  `HANDOFF <id>: <what to ask>`. The daemon reads that line itself (only the last line, only when well formed), takes it
-  out of what is shown, checks the link, the depth, the chain and whether the other agent is busy, and delivers. A model
+  `HANDOFF <id>: <what to ask>`. The daemon reads that line itself (only on the last line, at its start or after a
+  sentence ends there, and only when well formed, so a quoted email can't hand work on), takes it out of what is shown,
+  checks the link, the depth, the chain and whether the other agent is busy, and delivers. An answer you stop hands
+  nothing on: it is kept as it was written. A model
   that gets the line wrong hands nothing on, and one that claims it handed something without the line is wrong in a way
   you can see: there is no "Asked …" line.
 
@@ -110,15 +117,18 @@ weekdays at 8:00" over it.
 
 - **Code reads the time, not the model.** `every day at 8`, `weekdays at 17:30`, `weekends at 10am`, `every monday at 9`,
   `the 1st of every month at 9` (the 1st to the 28th, so every month has it), or `every morning` (8), `every evening` (18),
-  `every night` (21). A time that can't be read says what can be said. A 4B model gets dates wrong, and a job on the wrong
-  day is worse than none.
+  `every night` (21). With a part of the day a bare hour is read in it (`every evening at 7` is 19:00, `every night at
+  12` midnight), and a time that contradicts it (`every morning at 7pm`) is refused. A time that can't be read says what
+  can be said. A 4B model gets dates wrong, and a job on the wrong day is worse than none.
 - **Set from the roster** (**⋯ › Schedule…**: when, what, an on/off switch, Run now, remove) **or by saying it:** "every
   weekday at 8, tell me who has written" (or the same with the time last) answers with a card, **Schedule** or **Don't
   schedule**, and only on Schedule is a job made. A sentence about yourself ("I go to the gym every day at 6") or a
   question isn't one.
 - **A missed run is made up once.** Each job keeps the time it was last due and run (`jobs.toml`). Every half minute, and
   soon after the daemon starts, anything due after that runs once, however many times it came while the laptop slept. A job
-  made now doesn't run for a time before it was made, and one switched back on starts from then.
+  made now doesn't run for a time before it was made, and one switched back on starts from then. Jobs run one at a time:
+  none starts while another's answer is being written, so a dozen made up after a sleep don't ask the model at once. An
+  answer's five minutes without a word count from its first word, so time spent waiting its turn isn't held against it.
 - **An agent that is busy answering waits:** the run happens at the next look after it is free. A run that fails (the model
   is off) is not tried again until its next time.
 - **It is read-only like any answer:** the agent looks only at its `can` list, and a job can hand work on, within the
@@ -149,7 +159,7 @@ standing work, and it needs those checks to exist in `autark-ai` first.
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation; `Say` returns the answer's id and its entry |
 | `AnswerFact(id, entry, save)` / `AnswerAdd(id, entry, add)` | Save a proposed fact or not; add a proposed line to a note or not |
 | `Memory(id)` / `Remember(id, text)` / `Forget(id, text)` | Its memory; a fact is forgotten by its words |
-| `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, n)` / `SetJobEnabled(id, n, on)` / `RunJob(id, n)` | Its schedule |
+| `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, job)` / `SetJobEnabled(id, job, on)` / `RunJob(id, job)` | Its schedule; `Jobs` is a JSON array of `{"id","when","prompt","enabled","next","last"}`, and a job is called by its `id`, which no other job of the agent is ever given |
 | `MarkRead(id)` | You've seen what an agent said while you weren't looking; the `unread` flag in `Agents()` goes |
 | `Events(since)` / `EventsAfter(seq)` | What happened, from a time or after an event's number, as a JSON array of `{"seq","time","kind","agent","text"}` |
 | signals `AgentChanged(id)`, `AgentsChanged()`, `AnswerPiece(answer, offset, text)` | What clients follow |

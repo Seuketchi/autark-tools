@@ -61,18 +61,14 @@ impl When {
         } else {
             return Err(format!("say when, like {SHAPES}"));
         };
-        let usual = if has("morning") {
-            Some((8, 0))
-        } else if has("evening") {
-            Some((18, 0))
-        } else if has("night") {
-            Some((21, 0))
-        } else {
-            None
-        };
-        let (hour, minute) = match clock(&words)? {
-            Some(time) => time,
-            None => usual.ok_or_else(|| format!("say what time, like {SHAPES}"))?,
+        let part = ["morning", "evening", "night"].into_iter().find(|part| has(part));
+        let (hour, minute) = match (clock(&words)?, part) {
+            (Some((hour, minute, stated)), Some(part)) => in_part(part, hour, minute, stated)?,
+            (Some((hour, minute, _)), None) => (hour, minute),
+            (None, Some("morning")) => (8, 0),
+            (None, Some("evening")) => (18, 0),
+            (None, Some(_)) => (21, 0),
+            (None, None) => return Err(format!("say what time, like {SHAPES}")),
         };
         Ok(Self { days, hour, minute })
     }
@@ -132,9 +128,26 @@ fn suffixed(day: u32) -> String {
     format!("{day}{suffix}")
 }
 
-/// A time of day in the words: "8am", "9:30 pm", "17:30", or a bare number after "at". `Ok(None)` when there is none,
-/// `Err` when it gives one that can't be.
-fn clock(words: &[&str]) -> Result<Option<(u32, u32)>, String> {
+/// A time said with a part of the day: a bare hour in the evening or at night is after noon ("every evening at 7" is 19:00,
+/// "every night at 12" midnight, "every night at 1" one in the morning), and a time outside the part, such as "every
+/// morning at 7pm", is refused rather than guessed at. `stated` is whether am or pm was said.
+fn in_part(part: &str, hour: u32, minute: u32, stated: bool) -> Result<(u32, u32), String> {
+    let hour = match (part, stated, hour) {
+        ("evening", false, 1..=11) | ("night", false, 5..=11) => hour + 12,
+        ("night", false, 12) => 0,
+        _ => hour,
+    };
+    let fits = match part {
+        "morning" => (4..=11).contains(&hour),
+        "evening" => (16..=23).contains(&hour),
+        _ => (19..=23).contains(&hour) || hour <= 4,
+    };
+    if fits { Ok((hour, minute)) } else { Err(format!("\"{part}\" and {hour}:{minute:02} don't go together: say one or the other")) }
+}
+
+/// A time of day in the words: "8am", "9:30 pm", "17:30", or a bare number after "at", and whether am or pm was said.
+/// `Ok(None)` when there is none, `Err` when it gives one that can't be.
+fn clock(words: &[&str]) -> Result<Option<(u32, u32, bool)>, String> {
     let bad = || "that time of day isn't one".to_owned();
     for (n, word) in words.iter().enumerate() {
         let (number, suffix) = match word.find(|c: char| c.is_alphabetic()) {
@@ -156,7 +169,7 @@ fn clock(words: &[&str]) -> Result<Option<(u32, u32)>, String> {
             Some(_) => return Err(bad()),
             None => hour,
         };
-        return if hour < 24 { Ok(Some((hour, minute))) } else { Err(bad()) };
+        return if hour < 24 { Ok(Some((hour, minute, suffix.is_some()))) } else { Err(bad()) };
     }
     Ok(None)
 }
@@ -242,6 +255,28 @@ mod tests {
         assert_eq!(When::parse("every evening"), Ok(when(Days::Every, 18, 0)));
         assert_eq!(When::parse("every night at 10pm"), Ok(when(Days::Every, 22, 0)));
         assert_eq!(When::parse("12am every day"), Ok(when(Days::Every, 0, 0)));
+    }
+
+    #[test]
+    fn a_bare_hour_in_the_evening_or_at_night_is_after_noon() {
+        assert_eq!(When::parse("every evening at 7"), Ok(when(Days::Every, 19, 0)));
+        assert_eq!(When::parse("weekdays at 6:30 in the evening"), Ok(when(Days::Weekdays, 18, 30)));
+        assert_eq!(When::parse("every night at 10"), Ok(when(Days::Every, 22, 0)));
+        // The small hours and midnight are the night's too.
+        assert_eq!(When::parse("every night at 1"), Ok(when(Days::Every, 1, 0)));
+        assert_eq!(When::parse("every night at 12"), Ok(when(Days::Every, 0, 0)));
+        // What is said in full stays as it is.
+        assert_eq!(When::parse("every evening at 7pm"), Ok(when(Days::Every, 19, 0)));
+        assert_eq!(When::parse("every evening at 19:30"), Ok(when(Days::Every, 19, 30)));
+        assert_eq!(When::parse("every morning at 7"), Ok(when(Days::Every, 7, 0)));
+        assert_eq!(When::parse("every day at 7"), Ok(when(Days::Every, 7, 0)));
+    }
+
+    #[test]
+    fn a_time_that_contradicts_the_part_of_the_day_is_refused() {
+        for text in ["every morning at 7pm", "every morning at 17:00", "every morning at 12", "every evening at 7am", "every evening at 9:00 am", "every night at 3pm", "every evening at 2"] {
+            assert!(When::parse(text).unwrap_err().contains("don't go together"), "{text}");
+        }
     }
 
     #[test]
