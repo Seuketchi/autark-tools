@@ -145,6 +145,23 @@ fn fill_memory(facts: &gtk::Box, error: &gtk::Label, id: &str) {
     });
 }
 
+/// A check box for each agent that work may be handed to, ticked for `selected`: everyone but Kith (which takes requests
+/// in the launcher's panel) and `own`.
+fn link_boxes(members: &[Member], own: Option<&str>, selected: &[String]) -> (gtk::FlowBox, Vec<(String, gtk::CheckButton)>) {
+    let flow = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(3).homogeneous(true).build();
+    let boxes: Vec<(String, gtk::CheckButton)> = members
+        .iter()
+        .filter(|member| member.id != "kith" && Some(member.id.as_str()) != own)
+        .map(|member| {
+            let check = gtk::CheckButton::with_label(&member.name);
+            check.set_active(selected.contains(&member.id));
+            flow.append(&check);
+            (member.id.clone(), check)
+        })
+        .collect();
+    (flow, boxes)
+}
+
 impl Kith {
     pub fn new(app: &gtk::Application) -> Rc<Self> {
         let window = gtk::ApplicationWindow::builder().application(app).title("Kith").default_width(1000).default_height(700).build();
@@ -268,6 +285,7 @@ impl Kith {
         // The agent's own menu: clear the conversation, or remove the agent.
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Memory…"), Some("kith.memory"));
+        menu.append(Some("Hands work to…"), Some("kith.links"));
         menu.append(Some("Clear conversation"), Some("kith.clear"));
         menu.append(Some("Delete agent"), Some("kith.delete"));
         more.set_menu_model(Some(&menu));
@@ -276,6 +294,10 @@ impl Kith {
         let kith = self.clone();
         clear.connect_activate(move |_, _| kith.clear());
         actions.add_action(&clear);
+        let links = gtk::gio::SimpleAction::new("links", None);
+        let kith = self.clone();
+        links.connect_activate(move |_, _| kith.links());
+        actions.add_action(&links);
         let memory = gtk::gio::SimpleAction::new("memory", None);
         let kith = self.clone();
         memory.connect_activate(move |_, _| kith.memory());
@@ -420,6 +442,20 @@ impl Kith {
                 self.messages.append(&self.fact_card(&message.text, card));
                 continue;
             }
+            if message.note {
+                let note = gtk::Label::builder().label(&message.text).wrap(true).wrap_mode(pango::WrapMode::WordChar).max_width_chars(62).xalign(0.0).halign(gtk::Align::Start).build();
+                note.add_css_class("handoff");
+                if !message.error.is_empty() {
+                    note.add_css_class("failed");
+                }
+                self.messages.append(&note);
+                continue;
+            }
+            if !message.from.is_empty() {
+                let from = gtk::Label::builder().label(&message.from).xalign(0.0).halign(gtk::Align::Start).build();
+                from.add_css_class("from-label");
+                self.messages.append(&from);
+            }
             let text = if message.error.is_empty() { message.text.clone() } else { message.error.clone() };
             let shown = if message.writing.is_some() { format!("{text}▍") } else { text.clone() };
             let bubble = gtk::Label::builder()
@@ -433,6 +469,9 @@ impl Kith {
                 .build();
             bubble.add_css_class("bubble");
             bubble.add_css_class(if message.who == Who::You { "you" } else { "agent" });
+            if !message.from.is_empty() {
+                bubble.add_css_class("from");
+            }
             if !message.error.is_empty() {
                 bubble.add_css_class("failed");
             }
@@ -572,6 +611,59 @@ impl Kith {
         });
     }
 
+    /// A small window to choose which agents this one may hand work to. A handoff goes only to a linked agent, shows in
+    /// both conversations, and is at most three deep.
+    fn links(self: &Rc<Self>) {
+        let Some(id) = self.current.borrow().clone() else {
+            return;
+        };
+        if id == "kith" {
+            self.fail("Kith takes requests in the launcher's panel, not handoffs.");
+            return;
+        }
+        let members = self.members.borrow().clone();
+        let selected = members.iter().find(|member| member.id == id).map(|member| member.links.clone()).unwrap_or_default();
+        let name = self.title.label();
+        let dialog = gtk::Window::builder()
+            .application(&self.window.application().expect("the window belongs to the app"))
+            .transient_for(&self.window)
+            .modal(true)
+            .title(format!("{name} hands work to"))
+            .default_width(420)
+            .build();
+        dialog.add_css_class("new-agent");
+        let form = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        form.add_css_class("form");
+        let about = gtk::Label::builder().label("Work it can hand on when a question needs what another agent does. Every handoff shows in both conversations.").xalign(0.0).wrap(true).build();
+        about.add_css_class("field-label");
+        let (flow, boxes) = link_boxes(&members, Some(&id), &selected);
+        let error = gtk::Label::builder().xalign(0.0).wrap(true).visible(false).build();
+        error.add_css_class("note");
+        let save = gtk::Button::builder().label("Save").halign(gtk::Align::End).margin_top(12).build();
+        save.add_css_class("suggested-action");
+        form.append(&about);
+        form.append(&flow);
+        form.append(&error);
+        form.append(&save);
+        dialog.set_child(Some(&form));
+        let shown = dialog.clone();
+        save.connect_clicked(move |_| {
+            let chosen: Vec<String> = boxes.iter().filter(|(_, check)| check.is_active()).map(|(id, _)| id.clone()).collect();
+            let patch = serde_json::json!({ "links": chosen }).to_string();
+            let (dialog, error, id) = (dialog.clone(), error.clone(), id.clone());
+            glib::spawn_future_local(async move {
+                match async { ai::proxy().await?.set_agent(&id, &patch).await }.await {
+                    Ok(()) => dialog.close(),
+                    Err(err) => {
+                        error.set_label(&ai::said(&err));
+                        error.set_visible(true);
+                    }
+                }
+            });
+        });
+        shown.present();
+    }
+
     /// A small window with what the agent remembers: forget a fact, or add one. The memory is small on purpose, and
     /// when it is full the backend says so rather than dropping a fact.
     fn memory(self: &Rc<Self>) {
@@ -683,6 +775,9 @@ impl Kith {
             })
             .collect();
         form.append(&can);
+        form.append(&label("Who may it hand work to? Optional."));
+        let (link_flow, link_boxes) = link_boxes(&self.members.borrow(), None, &[]);
+        form.append(&link_flow);
         form.append(&label("Skills it works by, by name and separated by commas. Optional."));
         let skills = gtk::Entry::builder().placeholder_text("accountant").build();
         form.append(&skills);
@@ -700,9 +795,14 @@ impl Kith {
             let skills_text = skills.text().to_string();
             let skills: Vec<String> = skills_text.split(',').map(str::trim).filter(|skill| !skill.is_empty()).map(str::to_owned).collect();
             let can: Vec<&'static str> = boxes.iter().filter(|(_, check)| check.is_active()).map(|(key, _)| *key).collect();
+            let links: Vec<String> = link_boxes.iter().filter(|(_, check)| check.is_active()).map(|(id, _)| id.clone()).collect();
             let (kith, window, error) = (kith.clone(), window.clone(), error.clone());
             glib::spawn_future_local(async move {
-                match async { ai::proxy().await?.create_agent(&name, &job, &soul, &can, &skills.iter().map(String::as_str).collect::<Vec<_>>(), &[]).await }.await {
+                match async {
+                    ai::proxy().await?.create_agent(&name, &job, &soul, &can, &skills.iter().map(String::as_str).collect::<Vec<_>>(), &links.iter().map(String::as_str).collect::<Vec<_>>()).await
+                }
+                .await
+                {
                     Ok(id) => {
                         window.close();
                         *kith.current.borrow_mut() = Some(id);

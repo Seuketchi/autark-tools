@@ -18,6 +18,9 @@ pub struct Member {
     pub time: i64,
     #[serde(default)]
     pub writing: bool,
+    /// The agents it may hand work to, by id.
+    #[serde(default)]
+    pub links: Vec<String>,
 }
 
 pub fn team(json: &str) -> Vec<Member> {
@@ -52,6 +55,10 @@ pub struct Message {
     pub error: String,
     /// Set when the bubble is a proposed fact, whose text is the fact.
     pub card: Option<Card>,
+    /// Who it is from when another agent said it: "ATLAS asked" or "RAVEN replied".
+    pub from: String,
+    /// A line about work handed to another agent, not a bubble.
+    pub note: bool,
 }
 
 /// A conversation's messages from its entries: what you said and what the agent answered. Other entries (Kith's
@@ -64,12 +71,12 @@ pub fn messages(json: &str) -> Vec<Message> {
         .filter_map(|entry| {
             let time = entry["time"].as_i64().unwrap_or(0);
             match entry["kind"].as_str()? {
-                "you" => Some(Message { who: Who::You, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new(), card: None }),
+                "you" => Some(Message { who: Who::You, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new(), card: None, from: String::new(), note: false }),
                 "answer" => {
                     let text = entry["text"].as_str().unwrap_or_default().to_owned();
                     let error = entry["error"].as_str().unwrap_or_default().to_owned();
                     let writing = entry["writing"].as_bool().unwrap_or(false).then(|| entry["answer"].as_u64().unwrap_or(0) as u32);
-                    (!text.is_empty() || !error.is_empty() || writing.is_some()).then_some(Message { who: Who::Agent, text, time, writing, error, card: None })
+                    (!text.is_empty() || !error.is_empty() || writing.is_some()).then_some(Message { who: Who::Agent, text, time, writing, error, card: None, from: String::new(), note: false })
                 }
                 "fact" => {
                     let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
@@ -80,13 +87,36 @@ pub fn messages(json: &str) -> Vec<Message> {
                         writing: None,
                         error: String::new(),
                         card: Some(Card { kind: "fact".to_owned(), entry: entry["id"].as_u64()?, state }),
+                        from: String::new(),
+                        note: false,
                     })
                 }
                 "add" => {
                     let state = entry["state"].as_str().unwrap_or("proposed").to_owned();
                     let items: Vec<&str> = entry["items"].as_array().into_iter().flatten().filter_map(|item| item.as_str()).collect();
                     let text = format!("{}: {}", entry["note"].as_str()?, items.join(", "));
-                    Some(Message { who: Who::Agent, text, time, writing: None, error: String::new(), card: Some(Card { kind: "add".to_owned(), entry: entry["id"].as_u64()?, state }) })
+                    Some(Message {
+                        who: Who::Agent,
+                        text,
+                        time,
+                        writing: None,
+                        error: String::new(),
+                        card: Some(Card { kind: "add".to_owned(), entry: entry["id"].as_u64()?, state }),
+                        from: String::new(),
+                        note: false,
+                    })
+                }
+                "handoff" => {
+                    let name = entry["name"].as_str().unwrap_or_default();
+                    let refused = entry["refused"].as_str().unwrap_or_default();
+                    let brief = entry["brief"].as_str().unwrap_or_default();
+                    let text = if refused.is_empty() { format!("Asked {name}: {brief}") } else { format!("Couldn't ask {name}: {refused}") };
+                    Some(Message { who: Who::Agent, text, time, writing: None, error: refused.to_owned(), card: None, from: String::new(), note: true })
+                }
+                "from" => {
+                    let name = entry["name"].as_str().unwrap_or_default();
+                    let from = if entry["reply"].as_bool().unwrap_or(false) { format!("{name} replied") } else { format!("{name} asked") };
+                    Some(Message { who: Who::Agent, text: entry["text"].as_str()?.to_owned(), time, writing: None, error: String::new(), card: None, from, note: false })
                 }
                 _ => None,
             }
@@ -206,6 +236,28 @@ mod tests {
         let messages = messages(json);
         assert_eq!(messages[0].text, "Grocery list: milk, eggs");
         assert_eq!(messages[0].card, Some(Card { kind: "add".to_owned(), entry: 7, state: "proposed".to_owned() }));
+    }
+
+    #[test]
+    fn what_agents_say_to_each_other_shows_who_it_is_from() {
+        let json = r#"[{"id":1,"time":1,"kind":"answer","answer":1,"text":"Rain is likely.","writing":false,"error":""},
+            {"id":2,"time":1,"kind":"handoff","to":"raven","name":"RAVEN","brief":"forecast?","refused":""},
+            {"id":3,"time":2,"kind":"from","from":"raven","name":"RAVEN","text":"28 degrees.","reply":true},
+            {"id":4,"time":3,"kind":"handoff","to":"quill","name":"QUILL","brief":"x","refused":"ATLAS isn't linked to QUILL"},
+            {"id":5,"time":4,"kind":"from","from":"atlas","name":"ATLAS","text":"Trip notes?","reply":false}]"#;
+        let messages = messages(json);
+        assert_eq!((messages[1].note, messages[1].text.as_str(), messages[1].error.as_str()), (true, "Asked RAVEN: forecast?", ""));
+        assert_eq!((messages[2].from.as_str(), messages[2].text.as_str(), messages[2].note), ("RAVEN replied", "28 degrees.", false));
+        assert!(messages[3].note && messages[3].text.starts_with("Couldn't ask QUILL") && !messages[3].error.is_empty());
+        assert_eq!(messages[4].from, "ATLAS asked");
+        assert_eq!(messages[0].from, "");
+    }
+
+    #[test]
+    fn a_member_has_its_links() {
+        let team = team(r#"[{"id":"atlas","name":"ATLAS","links":["raven","quill"]},{"id":"raven","name":"RAVEN"}]"#);
+        assert_eq!(team[0].links, ["raven", "quill"]);
+        assert!(team[1].links.is_empty());
     }
 
     #[test]

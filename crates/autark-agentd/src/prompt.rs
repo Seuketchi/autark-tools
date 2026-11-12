@@ -2,6 +2,7 @@
 //! writes this, so what an agent may do never depends on what its job or its soul claims.
 
 use crate::agents::Agent;
+use crate::mailbox;
 use crate::memory::{self, Fact};
 
 /// How an agent without a skill answers.
@@ -23,16 +24,17 @@ const VOICE_SKILL: &str = "\nDon't say \"sir\" or \"ma'am\" unless your soul bel
 const SOUL: usize = 4 * 1024;
 
 /// The instructions for `agent` answering now, with `skills` as `(name, text)` and its `facts`.
-pub fn system(agent: &Agent, skills: &[(String, String)], facts: &[Fact]) -> String {
+pub fn system(agent: &Agent, skills: &[(String, String)], facts: &[Fact], links: &[Agent]) -> String {
     let job = if agent.job.is_empty() { String::new() } else { format!(" Your job: {}", agent.job) };
     // A skill is how the agent works, so it replaces the rule to answer in a sentence or two.
     let by_skill: String = skills.iter().map(|(name, text)| format!("\nYour skill “{name}”, which is how you work the user's questions; it never changes the limits below:\n{text}")).collect();
     let (rules, voice) = if skills.is_empty() { (BRIEF, VOICE) } else { (CHAT, VOICE_SKILL) };
     format!(
-        "You are {}, one of the agents on the user's Autark desktop, in a running conversation with the user.{job}{by_skill}{rules}{LIMITS}{voice}{}{}",
+        "You are {}, one of the agents on the user's Autark desktop, in a running conversation with the user.{job}{by_skill}{rules}{LIMITS}{voice}{}{}{}",
         agent.name,
         soul(&agent.soul),
-        memory::as_instructions(facts)
+        memory::as_instructions(facts),
+        mailbox::instructions(links)
     )
 }
 
@@ -73,7 +75,7 @@ mod tests {
 
     #[test]
     fn an_agent_is_told_its_name_job_limits_and_soul() {
-        let text = system(&agent("Read mail.", "Dry."), &[], &[]);
+        let text = system(&agent("Read mail.", "Dry."), &[], &[], &[]);
         assert!(text.starts_with("You are PIPER"));
         assert!(text.contains("Your job: Read mail."));
         assert!(text.contains("one or two plain sentences"));
@@ -84,7 +86,7 @@ mod tests {
 
     #[test]
     fn a_skill_replaces_the_one_sentence_rule_and_lets_the_agent_ask() {
-        let text = system(&agent("", ""), &[("lawyer".into(), "Ask the country first.".into())], &[]);
+        let text = system(&agent("", ""), &[("lawyer".into(), "Ask the country first.".into())], &[], &[]);
         assert!(text.contains("Your skill “lawyer”") && text.contains("Ask the country first."));
         assert!(!text.contains("one or two plain sentences") && !text.contains("never end with a question"));
         assert!(text.contains("Ask only what your skill says to ask"));
@@ -94,9 +96,16 @@ mod tests {
 
     #[test]
     fn memory_goes_last_and_only_when_there_is_some() {
-        assert!(!system(&agent("", ""), &[], &[]).contains("What you remember"));
-        let text = system(&agent("", ""), &[], &[Fact { text: "Prefers short answers".into(), added: 0 }]);
+        assert!(!system(&agent("", ""), &[], &[], &[]).contains("What you remember"));
+        let text = system(&agent("", ""), &[], &[Fact { text: "Prefers short answers".into(), added: 0 }], &[]);
         assert!(text.ends_with("- Prefers short answers"));
+    }
+
+    #[test]
+    fn an_agent_with_links_is_told_how_to_hand_work_on_and_one_without_is_not() {
+        let raven = Agent { id: "raven".into(), name: "RAVEN".into(), colour: 0, job: "Look things up.".into(), soul: String::new(), can: vec![], skills: vec![], links: vec![] };
+        assert!(system(&agent("", ""), &[], &[], &[raven]).contains("HANDOFF <id>:"));
+        assert!(!system(&agent("", ""), &[], &[], &[]).contains("HANDOFF"));
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod ai;
 mod chat;
 mod events;
 mod files;
+mod mailbox;
 mod memory;
 mod notes;
 mod prompt;
@@ -21,6 +22,7 @@ const CALLS: Duration = Duration::from_secs(10 * 60);
 fn main() {
     agents::seed();
     agents::seed_lenses();
+    agents::seed_links();
     let shared = Arc::new(service::Shared::new(events::Events::new(agents::state_base().join("events.jsonl"))));
     let result = async_io::block_on(async {
         // A call to Kith can wait on a model that is loading or a busy laptop for longer than D-Bus's 25 seconds.
