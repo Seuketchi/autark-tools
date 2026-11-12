@@ -28,6 +28,9 @@ const IDLE: Duration = Duration::from_secs(300);
 const PRUNE: Duration = Duration::from_secs(60 * 60);
 /// How many words that arrive before the call that started them has returned are kept to be matched.
 const EARLY: usize = 256;
+/// How long such words are kept: the call returns within moments of them, and words older than this are another
+/// answer's, such as one of Kith's own, whose id a later answer may reuse.
+const EARLY_KEPT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, zbus::DBusError)]
 #[zbus(prefix = "org.autark.Agents1.Error")]
@@ -58,14 +61,16 @@ enum Told {
     Done(u32, String),
     /// Kith's own conversation changed.
     Kith,
+    /// `autark-ai` started, stopped or was replaced: its answer ids start again.
+    Restarted,
 }
 
 #[derive(Default)]
 struct Core {
     chats: HashMap<String, Chat>,
     pending: HashMap<u32, Pending>,
-    /// What `autark-ai` said of an answer before its id reached `say`.
-    early: VecDeque<(u32, Heard)>,
+    /// What `autark-ai` said of an answer before its id reached `say`, and when.
+    early: VecDeque<(u32, Heard, Instant)>,
 }
 
 pub struct Shared {
@@ -100,9 +105,12 @@ impl Core {
         self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now() });
         let mut finished = None;
         let early = std::mem::take(&mut self.early);
-        for (id, heard) in early {
+        for (id, heard, when) in early {
+            if when.elapsed() > EARLY_KEPT {
+                continue;
+            }
             if id != answer {
-                self.early.push_back((id, heard));
+                self.early.push_back((id, heard, when));
                 continue;
             }
             match heard {
@@ -144,9 +152,17 @@ impl Core {
         Some((pending.agent, if well { "answered" } else { "failed" }, said))
     }
 
+    /// `autark-ai` has gone or been replaced: the answers it was writing won't end, and the ids of what was heard early
+    /// will be given again to other answers. Ends each answer and returns what to log for it.
+    fn ai_restarted(&mut self) -> Vec<(String, &'static str, String)> {
+        self.early.clear();
+        let answers: Vec<u32> = self.pending.keys().copied().collect();
+        answers.into_iter().filter_map(|answer| self.finish(answer, "Kith's model stopped before the answer was finished.")).collect()
+    }
+
     fn hear(&mut self, answer: u32, heard: Heard) -> Option<(String, &'static str, String)> {
         if !self.pending.contains_key(&answer) {
-            self.early.push_back((answer, heard));
+            self.early.push_back((answer, heard, Instant::now()));
             while self.early.len() > EARLY {
                 self.early.pop_front();
             }
@@ -556,7 +572,8 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 let pieces = proxy.receive_answer_piece().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Told::Piece(args.id, args.offset, args.text))));
                 let done = proxy.receive_answer_done().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Told::Done(args.id, args.error))));
                 let kith = proxy.receive_history_changed().await?.map(|_| Told::Kith);
-                let mut heard = futures_util::stream::select(futures_util::stream::select(pieces, done), kith);
+                let restarted = proxy.inner().receive_owner_changed().await?.map(|_| Told::Restarted);
+                let mut heard = futures_util::stream::select(futures_util::stream::select(pieces, done), futures_util::stream::select(kith, restarted));
                 while let Some(heard) = heard.next().await {
                     match heard {
                         // Passed on at once, whoever started it: the roster follows Kith's answers too.
@@ -567,6 +584,12 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                             shared.core().hear(id, Heard::Piece(text));
                         }
                         Told::Kith => announce(&shared, &emitter, Some((KITH.to_owned(), "", String::new()))).await,
+                        Told::Restarted => {
+                            let ended = shared.core().ai_restarted();
+                            for ended in ended {
+                                announce(&shared, &emitter, Some(ended)).await;
+                            }
+                        }
                         Told::Done(id, error) => {
                             let ended = shared.core().hear(id, Heard::Done(error));
                             announce(&shared, &emitter, ended).await;
@@ -641,6 +664,33 @@ mod tests {
         assert_eq!(text_of(&mut core, &a), ("Early".to_owned(), false, String::new()));
         // What belongs to others stays to be matched.
         assert_eq!(core.early.len(), 1);
+    }
+
+    #[test]
+    fn words_heard_too_long_ago_are_not_matched() {
+        let a = agent("piper");
+        let (mut core, entry) = core_with(&a);
+        core.hear(9, Heard::Piece("from another answer 9".into()));
+        core.early[0].2 = Instant::now().checked_sub(EARLY_KEPT + Duration::from_secs(1)).unwrap();
+        assert!(core.register(9, &a, entry).is_none());
+        assert_eq!(text_of(&mut core, &a), (String::new(), true, String::new()));
+        assert!(core.early.is_empty());
+    }
+
+    #[test]
+    fn when_autark_ai_restarts_what_was_heard_is_dropped_and_answers_end() {
+        let a = agent("piper");
+        let (mut core, entry) = core_with(&a);
+        core.register(3, &a, entry);
+        core.hear(4, Heard::Piece("Kith's".into()));
+        let ended = core.ai_restarted();
+        assert_eq!(ended.iter().map(|ended| (ended.0.as_str(), ended.1)).collect::<Vec<_>>(), [("piper", "failed")]);
+        assert!(core.early.is_empty() && core.pending.is_empty());
+        assert!(!text_of(&mut core, &a).1);
+        // Ids start again at 1 in a new autark-ai: answer 4 there is not the one heard before.
+        let next = core.chat(&a).push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+        core.register(4, &a, next);
+        assert!(core.early.is_empty());
     }
 
     #[test]
