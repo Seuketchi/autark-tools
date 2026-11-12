@@ -24,7 +24,7 @@ jobs:
           pacman -Syu --noconfirm --needed base-devel git clang pkgconf rustup zstd \
             gtk4 gtk4-layer-shell vte4 pipewire cryptsetup pam gstreamer gst-plugins-base wayland libvpx opus
           rustup default stable
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build
         run: cargo build --release --workspace --locked
       - name: Pack
