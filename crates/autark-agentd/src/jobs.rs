@@ -15,6 +15,8 @@ pub const MAX_JOBS: usize = 5;
 pub const PROMPT: usize = 400;
 /// How a time is kept in the file.
 const FORMAT: &str = "%Y-%m-%dT%H:%M";
+/// The version of `jobs.toml` this writes.
+const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Job {
@@ -32,22 +34,41 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct File {
+    /// Missing in the first files, which are version 1.
+    #[serde(default = "first")]
+    version: u32,
     #[serde(default)]
     job: Vec<Job>,
 }
 
-pub fn load(path: &Path) -> Vec<Job> {
-    std::fs::read_to_string(path).ok().and_then(|text| toml::from_str::<File>(&text).ok()).map(|file| file.job).unwrap_or_default()
+fn first() -> u32 {
+    1
+}
+
+/// The jobs kept at `path`, none when it hasn't been made. A file that can't be understood is moved aside to
+/// `jobs.toml.bad-<seconds>`, so a new one never writes over it; one from a newer version is an error and left as it is.
+pub fn load(path: &Path) -> Result<Vec<Job>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("its jobs.toml can't be read: {err}")),
+    };
+    match toml::from_str::<File>(&text) {
+        Ok(file) if file.version > VERSION => Err(format!("its jobs.toml is from a newer version (format {}), so it is left as it is", file.version)),
+        Ok(file) => Ok(file.job),
+        Err(err) => {
+            let aside = crate::files::set_aside(path, crate::chat::now()).map_err(|moving| format!("its jobs.toml can't be understood ({err}) or moved aside: {moving}"))?;
+            eprintln!("agentd: {} couldn't be understood, so it was moved to {}: {err}", path.display(), aside.display());
+            Ok(Vec::new())
+        }
+    }
 }
 
 fn save(path: &Path, jobs: Vec<Job>) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
-    }
-    let text = if jobs.is_empty() { String::new() } else { toml::to_string(&File { job: jobs }).map_err(|err| err.to_string())? };
-    std::fs::write(path, text).map_err(|err| format!("writing {}: {err}", path.display()))
+    let text = toml::to_string(&File { version: VERSION, job: jobs }).map_err(|err| err.to_string())?;
+    crate::files::write(path, text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))
 }
 
 /// A job that starts from now: what was due before it was made doesn't run.
@@ -64,7 +85,7 @@ pub fn add(path: &Path, when: &When, prompt: &str, now: NaiveDateTime) -> Result
     if prompt.chars().count() > PROMPT {
         return Err(format!("what it is to do is at most {PROMPT} characters"));
     }
-    let mut jobs = load(path);
+    let mut jobs = load(path)?;
     if jobs.len() >= MAX_JOBS {
         return Err(format!("an agent has at most {MAX_JOBS} jobs: remove one first"));
     }
@@ -77,7 +98,7 @@ pub fn add(path: &Path, when: &When, prompt: &str, now: NaiveDateTime) -> Result
 }
 
 pub fn remove(path: &Path, n: usize) -> Result<(), String> {
-    let mut jobs = load(path);
+    let mut jobs = load(path)?;
     if n >= jobs.len() {
         return Err("there is no such job".to_owned());
     }
@@ -87,7 +108,7 @@ pub fn remove(path: &Path, n: usize) -> Result<(), String> {
 
 /// Turns a job on or off. One turned on starts from now, so what was due while it was off doesn't run.
 pub fn set_enabled(path: &Path, n: usize, on: bool, now: NaiveDateTime) -> Result<(), String> {
-    let mut jobs = load(path);
+    let mut jobs = load(path)?;
     let job = jobs.get_mut(n).ok_or_else(|| "there is no such job".to_owned())?;
     if on && !job.enabled {
         job.last = When::parse(&job.when).ok().map(|when| starting(&when, now)).unwrap_or_default();
@@ -96,9 +117,11 @@ pub fn set_enabled(path: &Path, n: usize, on: bool, now: NaiveDateTime) -> Resul
     save(path, jobs)
 }
 
-/// The jobs that are due at `now`, each with the time it was due: on, and due after it last ran.
+/// The jobs that are due at `now`, each with the time it was due: on, and due after it last ran. None while the file
+/// can't be read: `Jobs` says why, and this is asked every half minute.
 pub fn due(path: &Path, now: NaiveDateTime) -> Vec<(usize, NaiveDateTime)> {
     load(path)
+        .unwrap_or_default()
         .iter()
         .enumerate()
         .filter(|(_, job)| job.enabled)
@@ -112,7 +135,10 @@ pub fn due(path: &Path, now: NaiveDateTime) -> Vec<(usize, NaiveDateTime)> {
 
 /// Notes that job `n` ran for the time it was due.
 pub fn ran(path: &Path, n: usize, due: NaiveDateTime) {
-    let mut jobs = load(path);
+    let mut jobs = match load(path) {
+        Ok(jobs) => jobs,
+        Err(err) => return eprintln!("agentd: noting a job's run: {err}"),
+    };
     if let Some(job) = jobs.get_mut(n) {
         job.last = due.format(FORMAT).to_string();
         if let Err(err) = save(path, jobs) {
@@ -122,9 +148,9 @@ pub fn ran(path: &Path, n: usize, due: NaiveDateTime) {
 }
 
 /// The jobs as JSON for a client: `[{"n","when","prompt","enabled","next","last"}]`, `next` as local time.
-pub fn view(path: &Path, now: NaiveDateTime) -> Value {
-    Value::Array(
-        load(path)
+pub fn view(path: &Path, now: NaiveDateTime) -> Result<Value, String> {
+    Ok(Value::Array(
+        load(path)?
             .iter()
             .enumerate()
             .map(|(n, job)| {
@@ -132,7 +158,7 @@ pub fn view(path: &Path, now: NaiveDateTime) -> Value {
                 json!({ "n": n, "when": job.when, "prompt": job.prompt, "enabled": job.enabled, "next": next, "last": job.last })
             })
             .collect(),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -161,7 +187,7 @@ mod tests {
         let p = path("add");
         add(&p, &weekdays(8), "  Summarise   my calendar ", at(19, 9, 0)).unwrap();
         add(&p, &weekdays(8), "summarise my calendar", at(19, 9, 0)).unwrap();
-        let jobs = load(&p);
+        let jobs = load(&p).unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!((jobs[0].when.as_str(), jobs[0].prompt.as_str(), jobs[0].enabled), ("weekdays at 8:00", "Summarise my calendar", true));
         // What was due before it was made doesn't run.
@@ -211,8 +237,43 @@ mod tests {
         assert!(add(&p, &weekdays(8), &"x".repeat(PROMPT + 1), at(19, 9, 0)).is_err());
         assert!(add(&p, &weekdays(8), " ", at(19, 9, 0)).is_err());
         remove(&p, 0).unwrap();
-        assert_eq!(load(&p).len(), MAX_JOBS - 1);
+        assert_eq!(load(&p).unwrap().len(), MAX_JOBS - 1);
         assert!(remove(&p, 9).is_err());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn jobs_toml_is_yours_only_and_says_its_version() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = path("private");
+        add(&p, &weekdays(8), "Summarise", at(19, 9, 0)).unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(std::fs::read_to_string(&p).unwrap().contains("version = 1"));
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn a_jobs_toml_that_cant_be_understood_is_set_aside_not_written_over() {
+        let p = path("bad");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "[[job]]\nwhen = \"weekdays at 8:00\"\nnot toml at all").unwrap();
+        add(&p, &weekdays(9), "Summarise", at(19, 9, 0)).unwrap();
+        assert_eq!(load(&p).unwrap().len(), 1);
+        let aside: Vec<_> = std::fs::read_dir(p.parent().unwrap()).unwrap().filter_map(|entry| entry.ok()).filter(|entry| entry.file_name().to_string_lossy().starts_with("jobs.toml.bad-")).collect();
+        assert_eq!(aside.len(), 1);
+        assert!(std::fs::read_to_string(aside[0].path()).unwrap().contains("not toml at all"));
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn a_jobs_toml_from_a_newer_version_is_left_as_it_is() {
+        let p = path("newer");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let newer = "version = 99\n\n[[job]]\nwhen = \"weekdays at 8:00\"\nprompt = \"Summarise\"\nfuture = true\n";
+        std::fs::write(&p, newer).unwrap();
+        assert!(add(&p, &weekdays(9), "More", at(19, 9, 0)).unwrap_err().contains("newer"));
+        assert!(due(&p, at(20, 8, 0)).is_empty());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), newer);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
@@ -220,7 +281,7 @@ mod tests {
     fn the_view_has_what_a_client_shows() {
         let p = path("view");
         add(&p, &weekdays(8), "Summarise", at(19, 9, 0)).unwrap();
-        let view = view(&p, at(19, 9, 0));
+        let view = view(&p, at(19, 9, 0)).unwrap();
         assert_eq!((view[0]["n"].as_u64(), view[0]["when"].as_str(), view[0]["next"].as_str()), (Some(0), Some("weekdays at 8:00"), Some("2026-10-20 08:00")));
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }

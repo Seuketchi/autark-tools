@@ -41,6 +41,7 @@ of one.
 | An agent: name, colour, job, soul, `can`, `skills`, `links` | `~/.config/autark-agentd/agents/<id>/agent.toml` |
 | Its conversation (a week) | `~/.local/state/autark-agentd/agents/<id>/chat.json` |
 | Its memory | `~/.config/autark-agentd/agents/<id>/memory.toml` |
+| Its scheduled jobs (at most 5) | `~/.config/autark-agentd/agents/<id>/jobs.toml` |
 | The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
 
 The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
@@ -50,11 +51,12 @@ conversation says its answer was cut off, and the agent that asked gets no reply
 An id is a short slug, so it can't name a path outside the agents' folders. A folder keeps its id even when its
 `agent.toml` can't be read, so a new agent never moves in on another's memory.
 
-`agent.toml`, `memory.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of their format
-wrote them. A file from a newer version is read but never written over. An entry of a kind this version doesn't know
-is kept as it is. A `chat.json` that can't be understood is moved aside to `chat.json.bad-<seconds>` before a new one
-is begun; a `memory.toml` that can't be read is left as it is, and Memory, Remember and Forget say why until it is
-fixed. An entry's `id` is never given twice in a conversation.
+`agent.toml`, `memory.toml`, `jobs.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of
+their format wrote them. A file from a newer version is read but never written over (a `jobs.toml` from one runs no
+jobs, and Jobs says why). An entry of a kind this version doesn't know is kept as it is. A `chat.json` or `jobs.toml`
+that can't be understood is moved aside to `<name>.bad-<seconds>` before a new one is begun; a `memory.toml` that can't
+be read is left as it is, and Memory, Remember and Forget say why until it is fixed. An entry's `id` is never given
+twice in a conversation.
 
 ## Memory
 

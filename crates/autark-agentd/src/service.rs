@@ -653,7 +653,7 @@ impl Agents {
     /// An agent's scheduled jobs as JSON: `[{"n","when","prompt","enabled","next","last"}]`, times as local time.
     async fn jobs(&self, id: String) -> Result<String, Error> {
         let path = jobs_of(&id)?;
-        Ok(jobs::view(&path, now_local()).to_string())
+        Ok(jobs::view(&path, now_local()).map_err(Error::Failed)?.to_string())
     }
 
     /// Gives an agent a job: `when` in words (every day at 8, weekdays at 17:30, every monday at 9, the 1st of every month at
@@ -685,7 +685,7 @@ impl Agents {
     /// Runs the `n`th job of an agent now, once, without changing when it is next due.
     async fn run_job(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
         let agent = find(&id)?;
-        let job = jobs::load(&jobs_of(&id)?).into_iter().nth(n as usize).ok_or_else(|| Error::Failed("there is no such job".to_owned()))?;
+        let job = jobs::load(&jobs_of(&id)?).map_err(Error::Failed)?.into_iter().nth(n as usize).ok_or_else(|| Error::Failed("there is no such job".to_owned()))?;
         run_scheduled(self.shared.clone(), connection.clone(), emitter.into_owned(), agent, job.when, job.prompt).await.map_err(Error::Failed)
     }
 
@@ -787,7 +787,7 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
     for agent in agents::all() {
         let Some(path) = agents::jobs_path(&agent.id) else { continue };
         for (n, due) in jobs::due(&path, now) {
-            let Some(job) = jobs::load(&path).into_iter().nth(n) else { continue };
+            let Some(job) = jobs::load(&path).unwrap_or_default().into_iter().nth(n) else { continue };
             if run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await.is_ok() {
                 jobs::ran(&path, n, due);
             }
