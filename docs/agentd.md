@@ -144,7 +144,7 @@ standing work, and it needs those checks to exist in `autark-ai` first.
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation; `Say` returns the answer's id and its entry |
 | `AnswerFact(id, entry, save)` / `AnswerAdd(id, entry, add)` | Save a proposed fact or not; add a proposed line to a note or not |
 | `Memory(id)` / `Remember(id, text)` / `Forget(id, text)` | Its memory; a fact is forgotten by its words |
-| `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, n)` / `SetJobEnabled(id, n, on)` / `RunJob(id, n)` | Its schedule |
+| `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, job)` / `SetJobEnabled(id, job, on)` / `RunJob(id, job)` | Its schedule; `Jobs` is a JSON array of `{"id","when","prompt","enabled","next","last"}`, and a job is called by its `id`, which no other job of the agent is ever given |
 | `Events(since)` / `EventsAfter(seq)` | What happened, from a time or after an event's number, as a JSON array of `{"seq","time","kind","agent","text"}` |
 | signals `AgentChanged(id)`, `AgentsChanged()`, `AnswerPiece(answer, offset, text)` | What clients follow |
 

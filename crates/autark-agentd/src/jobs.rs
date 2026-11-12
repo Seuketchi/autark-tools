@@ -20,6 +20,10 @@ const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Job {
+    /// What the job is called by: never given to another of the agent's jobs, so a client or a run under way that holds
+    /// it never reaches another job. 0 in a file written before jobs had ids, until it is read.
+    #[serde(default)]
+    pub id: u32,
     /// The words for when, as `When::describe` writes them.
     pub when: String,
     pub prompt: String,
@@ -34,11 +38,14 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct File {
     /// Missing in the first files, which are version 1.
     #[serde(default = "first")]
     version: u32,
+    /// The id the next job gets.
+    #[serde(default)]
+    next: u32,
     #[serde(default)]
     job: Vec<Job>,
 }
@@ -47,27 +54,41 @@ fn first() -> u32 {
     1
 }
 
-/// The jobs kept at `path`, none when it hasn't been made. A file that can't be understood is moved aside to
-/// `jobs.toml.bad-<seconds>`, so a new one never writes over it; one from a newer version is an error and left as it is.
-pub fn load(path: &Path) -> Result<Vec<Job>, String> {
+/// The file at `path`, with an id for each job; empty when it hasn't been made. A file that can't be understood is moved
+/// aside to `jobs.toml.bad-<seconds>`, so a new one never writes over it; one from a newer version is an error and left
+/// as it is.
+fn read(path: &Path) -> Result<File, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(File { next: 1, ..File::default() }),
         Err(err) => return Err(format!("its jobs.toml can't be read: {err}")),
     };
-    match toml::from_str::<File>(&text) {
-        Ok(file) if file.version > VERSION => Err(format!("its jobs.toml is from a newer version (format {}), so it is left as it is", file.version)),
-        Ok(file) => Ok(file.job),
+    let mut file = match toml::from_str::<File>(&text) {
+        Ok(file) if file.version > VERSION => return Err(format!("its jobs.toml is from a newer version (format {}), so it is left as it is", file.version)),
+        Ok(file) => file,
         Err(err) => {
             let aside = crate::files::set_aside(path, crate::chat::now()).map_err(|moving| format!("its jobs.toml can't be understood ({err}) or moved aside: {moving}"))?;
             eprintln!("agentd: {} couldn't be understood, so it was moved to {}: {err}", path.display(), aside.display());
-            Ok(Vec::new())
+            File::default()
         }
+    };
+    // Jobs written before they had ids get them in order, the same each time until the file is written again.
+    file.next = file.next.max(file.job.iter().map(|job| job.id).max().unwrap_or(0) + 1);
+    for job in file.job.iter_mut().filter(|job| job.id == 0) {
+        job.id = file.next;
+        file.next += 1;
     }
+    Ok(file)
 }
 
-fn save(path: &Path, jobs: Vec<Job>) -> Result<(), String> {
-    let text = toml::to_string(&File { version: VERSION, job: jobs }).map_err(|err| err.to_string())?;
+/// The jobs kept at `path`, as `read` finds them.
+pub fn load(path: &Path) -> Result<Vec<Job>, String> {
+    read(path).map(|file| file.job)
+}
+
+fn save(path: &Path, mut file: File) -> Result<(), String> {
+    file.version = VERSION;
+    let text = toml::to_string(&file).map_err(|err| err.to_string())?;
     crate::files::write(path, text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))
 }
 
@@ -85,77 +106,79 @@ pub fn add(path: &Path, when: &When, prompt: &str, now: NaiveDateTime) -> Result
     if prompt.chars().count() > PROMPT {
         return Err(format!("what it is to do is at most {PROMPT} characters"));
     }
-    let mut jobs = load(path)?;
-    if jobs.len() >= MAX_JOBS {
+    let mut file = read(path)?;
+    if file.job.len() >= MAX_JOBS {
         return Err(format!("an agent has at most {MAX_JOBS} jobs: remove one first"));
     }
     let when_text = when.describe();
-    if jobs.iter().any(|job| job.when == when_text && job.prompt.eq_ignore_ascii_case(&prompt)) {
+    if file.job.iter().any(|job| job.when == when_text && job.prompt.eq_ignore_ascii_case(&prompt)) {
         return Ok(());
     }
-    jobs.push(Job { when: when_text, prompt, enabled: true, last: starting(when, now) });
-    save(path, jobs)
+    file.job.push(Job { id: file.next, when: when_text, prompt, enabled: true, last: starting(when, now) });
+    file.next += 1;
+    save(path, file)
 }
 
-pub fn remove(path: &Path, n: usize) -> Result<(), String> {
-    let mut jobs = load(path)?;
-    if n >= jobs.len() {
-        return Err("there is no such job".to_owned());
-    }
-    jobs.remove(n);
-    save(path, jobs)
+/// The job with this id.
+pub fn get(path: &Path, id: u32) -> Result<Job, String> {
+    load(path)?.into_iter().find(|job| job.id == id).ok_or_else(|| "there is no such job".to_owned())
+}
+
+pub fn remove(path: &Path, id: u32) -> Result<(), String> {
+    let mut file = read(path)?;
+    let n = file.job.iter().position(|job| job.id == id).ok_or_else(|| "there is no such job".to_owned())?;
+    file.job.remove(n);
+    save(path, file)
 }
 
 /// Turns a job on or off. One turned on starts from now, so what was due while it was off doesn't run.
-pub fn set_enabled(path: &Path, n: usize, on: bool, now: NaiveDateTime) -> Result<(), String> {
-    let mut jobs = load(path)?;
-    let job = jobs.get_mut(n).ok_or_else(|| "there is no such job".to_owned())?;
+pub fn set_enabled(path: &Path, id: u32, on: bool, now: NaiveDateTime) -> Result<(), String> {
+    let mut file = read(path)?;
+    let job = file.job.iter_mut().find(|job| job.id == id).ok_or_else(|| "there is no such job".to_owned())?;
     if on && !job.enabled {
         job.last = When::parse(&job.when).ok().map(|when| starting(&when, now)).unwrap_or_default();
     }
     job.enabled = on;
-    save(path, jobs)
+    save(path, file)
 }
 
-/// The jobs that are due at `now`, each with the time it was due: on, and due after it last ran. None while the file
-/// can't be read: `Jobs` says why, and this is asked every half minute.
-pub fn due(path: &Path, now: NaiveDateTime) -> Vec<(usize, NaiveDateTime)> {
+/// The jobs that are due at `now`, each by its id with the time it was due: on, and due after it last ran. None while the
+/// file can't be read: `Jobs` says why, and this is asked every half minute.
+pub fn due(path: &Path, now: NaiveDateTime) -> Vec<(u32, NaiveDateTime)> {
     load(path)
         .unwrap_or_default()
         .iter()
-        .enumerate()
-        .filter(|(_, job)| job.enabled)
-        .filter_map(|(n, job)| {
+        .filter(|job| job.enabled)
+        .filter_map(|job| {
             let latest = When::parse(&job.when).ok()?.latest_due(now)?;
             let last = NaiveDateTime::parse_from_str(&job.last, FORMAT).ok();
-            last.is_none_or(|last| latest > last).then_some((n, latest))
+            last.is_none_or(|last| latest > last).then_some((job.id, latest))
         })
         .collect()
 }
 
-/// Notes that job `n` ran for the time it was due.
-pub fn ran(path: &Path, n: usize, due: NaiveDateTime) {
-    let mut jobs = match load(path) {
-        Ok(jobs) => jobs,
+/// Notes that the job with this id ran for the time it was due; nothing when it has been removed meanwhile.
+pub fn ran(path: &Path, id: u32, due: NaiveDateTime) {
+    let mut file = match read(path) {
+        Ok(file) => file,
         Err(err) => return eprintln!("agentd: noting a job's run: {err}"),
     };
-    if let Some(job) = jobs.get_mut(n) {
+    if let Some(job) = file.job.iter_mut().find(|job| job.id == id) {
         job.last = due.format(FORMAT).to_string();
-        if let Err(err) = save(path, jobs) {
+        if let Err(err) = save(path, file) {
             eprintln!("agentd: noting a job's run: {err}");
         }
     }
 }
 
-/// The jobs as JSON for a client: `[{"n","when","prompt","enabled","next","last"}]`, `next` as local time.
+/// The jobs as JSON for a client: `[{"id","when","prompt","enabled","next","last"}]`, `next` as local time.
 pub fn view(path: &Path, now: NaiveDateTime) -> Result<Value, String> {
     Ok(Value::Array(
         load(path)?
             .iter()
-            .enumerate()
-            .map(|(n, job)| {
+            .map(|job| {
                 let next = job.enabled.then(|| When::parse(&job.when).ok().and_then(|when| when.next_due(now))).flatten().map(|next| next.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
-                json!({ "n": n, "when": job.when, "prompt": job.prompt, "enabled": job.enabled, "next": next, "last": job.last })
+                json!({ "id": job.id, "when": job.when, "prompt": job.prompt, "enabled": job.enabled, "next": next, "last": job.last })
             })
             .collect(),
     ))
@@ -201,12 +224,12 @@ mod tests {
         add(&p, &weekdays(8), "Summarise", at(19, 9, 0)).unwrap();
         assert!(due(&p, at(19, 23, 0)).is_empty());
         // Tuesday 8:00 comes.
-        assert_eq!(due(&p, at(20, 8, 0)), [(0, at(20, 8, 0))]);
-        ran(&p, 0, at(20, 8, 0));
+        assert_eq!(due(&p, at(20, 8, 0)), [(1, at(20, 8, 0))]);
+        ran(&p, 1, at(20, 8, 0));
         assert!(due(&p, at(20, 8, 30)).is_empty());
         // The laptop sleeps through Wednesday and Thursday: on waking Friday at 10, it runs once, for Friday.
-        assert_eq!(due(&p, at(23, 10, 0)), [(0, at(23, 8, 0))]);
-        ran(&p, 0, at(23, 8, 0));
+        assert_eq!(due(&p, at(23, 10, 0)), [(1, at(23, 8, 0))]);
+        ran(&p, 1, at(23, 8, 0));
         assert!(due(&p, at(23, 10, 1)).is_empty());
         // Saturday and Sunday it is not due; Monday it is.
         assert!(due(&p, at(25, 12, 0)).is_empty());
@@ -218,9 +241,9 @@ mod tests {
     fn a_job_that_is_off_doesnt_run_and_one_turned_on_starts_from_now() {
         let p = path("off");
         add(&p, &weekdays(8), "Summarise", at(19, 9, 0)).unwrap();
-        set_enabled(&p, 0, false, at(19, 9, 0)).unwrap();
+        set_enabled(&p, 1, false, at(19, 9, 0)).unwrap();
         assert!(due(&p, at(21, 9, 0)).is_empty());
-        set_enabled(&p, 0, true, at(21, 9, 0)).unwrap();
+        set_enabled(&p, 1, true, at(21, 9, 0)).unwrap();
         assert!(due(&p, at(21, 9, 0)).is_empty());
         assert_eq!(due(&p, at(22, 8, 0)).len(), 1);
         assert!(set_enabled(&p, 3, true, at(21, 9, 0)).is_err());
@@ -236,7 +259,7 @@ mod tests {
         assert!(add(&p, &weekdays(8), "one more", at(19, 9, 0)).unwrap_err().contains("at most"));
         assert!(add(&p, &weekdays(8), &"x".repeat(PROMPT + 1), at(19, 9, 0)).is_err());
         assert!(add(&p, &weekdays(8), " ", at(19, 9, 0)).is_err());
-        remove(&p, 0).unwrap();
+        remove(&p, 1).unwrap();
         assert_eq!(load(&p).unwrap().len(), MAX_JOBS - 1);
         assert!(remove(&p, 9).is_err());
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
@@ -278,11 +301,43 @@ mod tests {
     }
 
     #[test]
+    fn a_job_keeps_its_id_when_another_is_removed() {
+        let p = path("ids");
+        for prompt in ["a", "b", "c"] {
+            add(&p, &weekdays(8), &format!("job {prompt}"), at(19, 9, 0)).unwrap();
+        }
+        let ids: Vec<u64> = view(&p, at(19, 9, 0)).unwrap().as_array().unwrap().iter().map(|job| job["id"].as_u64().unwrap()).collect();
+        assert_eq!(ids, [1, 2, 3]);
+        remove(&p, 1).unwrap();
+        // Job 3 is still job c, though it has moved up the list.
+        set_enabled(&p, 3, false, at(19, 9, 0)).unwrap();
+        ran(&p, 2, at(20, 8, 0));
+        let jobs = load(&p).unwrap();
+        assert_eq!(jobs.iter().map(|job| (job.prompt.as_str(), job.enabled)).collect::<Vec<_>>(), [("job b", true), ("job c", false)]);
+        assert_eq!(jobs[0].last, "2026-10-20T08:00");
+        assert!(remove(&p, 1).is_err());
+        // An id is never given again, so a stale one reaches nothing.
+        add(&p, &weekdays(8), "job d", at(19, 9, 0)).unwrap();
+        assert_eq!(load(&p).unwrap().last().map(|job| job.id), Some(4));
+        assert_eq!(due(&p, at(20, 8, 0)).iter().map(|(id, _)| *id).collect::<Vec<_>>(), [4]);
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn jobs_written_before_ids_get_them_in_order() {
+        let p = path("old");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "[[job]]\nwhen = \"weekdays at 8:00\"\nprompt = \"a\"\n\n[[job]]\nwhen = \"weekdays at 9:00\"\nprompt = \"b\"\n").unwrap();
+        assert_eq!(load(&p).unwrap().iter().map(|job| job.id).collect::<Vec<_>>(), [1, 2]);
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
     fn the_view_has_what_a_client_shows() {
         let p = path("view");
         add(&p, &weekdays(8), "Summarise", at(19, 9, 0)).unwrap();
         let view = view(&p, at(19, 9, 0)).unwrap();
-        assert_eq!((view[0]["n"].as_u64(), view[0]["when"].as_str(), view[0]["next"].as_str()), (Some(0), Some("weekdays at 8:00"), Some("2026-10-20 08:00")));
+        assert_eq!((view[0]["id"].as_u64(), view[0]["when"].as_str(), view[0]["next"].as_str()), (Some(1), Some("weekdays at 8:00"), Some("2026-10-20 08:00")));
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 }

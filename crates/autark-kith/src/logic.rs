@@ -170,7 +170,8 @@ pub const COLOURS: [&str; 8] = ["#48B5A0", "#F2A33A", "#6C63E8", "#9B6FE0", "#3D
 /// A job of an agent, for the schedule window.
 #[derive(serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct Job {
-    pub n: u32,
+    /// What the backend calls it by: it stays the job's while others are removed.
+    pub id: u32,
     pub when: String,
     pub prompt: String,
     #[serde(default)]
@@ -291,8 +292,8 @@ mod tests {
 
     #[test]
     fn jobs_are_read_for_the_schedule_window() {
-        let jobs = jobs(r#"[{"n":0,"when":"weekdays at 8:00","prompt":"Summarise","enabled":true,"next":"2026-10-27 08:00","last":""}]"#);
-        assert_eq!((jobs[0].n, jobs[0].when.as_str(), jobs[0].enabled, jobs[0].next.as_str()), (0, "weekdays at 8:00", true, "2026-10-27 08:00"));
+        let jobs = jobs(r#"[{"id":3,"when":"weekdays at 8:00","prompt":"Summarise","enabled":true,"next":"2026-10-27 08:00","last":""}]"#);
+        assert_eq!((jobs[0].id, jobs[0].when.as_str(), jobs[0].enabled, jobs[0].next.as_str()), (3, "weekdays at 8:00", true, "2026-10-27 08:00"));
         assert!(super::jobs("nonsense").is_empty());
     }
 

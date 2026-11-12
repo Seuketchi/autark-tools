@@ -225,7 +225,7 @@ fn fill_jobs(list: &gtk::Box, error: &gtk::Label, id: &str) {
                     });
                 }
             };
-            let (n, id_on) = (job.n, id.clone());
+            let (job, id_on) = (job.id, id.clone());
             let call_on = call.clone();
             on.connect_state_set(move |_, state| {
                 let id = id_on.clone();
@@ -233,7 +233,7 @@ fn fill_jobs(list: &gtk::Box, error: &gtk::Label, id: &str) {
                     Box::new(move |proxy| {
                         Box::pin({
                             let id = id.clone();
-                            async move { proxy.set_job_enabled(&id, n, state).await }
+                            async move { proxy.set_job_enabled(&id, job, state).await }
                         })
                     }),
                     true,
@@ -247,7 +247,7 @@ fn fill_jobs(list: &gtk::Box, error: &gtk::Label, id: &str) {
                     Box::new(move |proxy| {
                         Box::pin({
                             let id = id.clone();
-                            async move { proxy.run_job(&id, n).await }
+                            async move { proxy.run_job(&id, job).await }
                         })
                     }),
                     false,
@@ -260,7 +260,7 @@ fn fill_jobs(list: &gtk::Box, error: &gtk::Label, id: &str) {
                     Box::new(move |proxy| {
                         Box::pin({
                             let id = id.clone();
-                            async move { proxy.remove_job(&id, n).await }
+                            async move { proxy.remove_job(&id, job).await }
                         })
                     }),
                     true,

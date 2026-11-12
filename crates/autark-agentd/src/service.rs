@@ -650,7 +650,8 @@ impl Agents {
         Ok(())
     }
 
-    /// An agent's scheduled jobs as JSON: `[{"n","when","prompt","enabled","next","last"}]`, times as local time.
+    /// An agent's scheduled jobs as JSON: `[{"id","when","prompt","enabled","next","last"}]`, times as local time. A job's
+    /// `id` is never given to another of the agent's jobs.
     async fn jobs(&self, id: String) -> Result<String, Error> {
         let path = jobs_of(&id)?;
         Ok(jobs::view(&path, now_local()).map_err(Error::Failed)?.to_string())
@@ -667,25 +668,25 @@ impl Agents {
         Ok(())
     }
 
-    /// Removes the `n`th job of an agent, counting from 0.
-    async fn remove_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
-        jobs::remove(&jobs_of(&id)?, n as usize).map_err(Error::Failed)?;
+    /// Removes an agent's job, by the job's id.
+    async fn remove_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32) -> Result<(), Error> {
+        jobs::remove(&jobs_of(&id)?, job).map_err(Error::Failed)?;
         self.shared.events.record(chat::now(), "job-removed", &id, "");
         Self::agent_changed(&emitter, &id).await?;
         Ok(())
     }
 
-    /// Turns the `n`th job of an agent on or off.
-    async fn set_job_enabled(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32, on: bool) -> Result<(), Error> {
-        jobs::set_enabled(&jobs_of(&id)?, n as usize, on, now_local()).map_err(Error::Failed)?;
+    /// Turns an agent's job, by the job's id, on or off.
+    async fn set_job_enabled(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32, on: bool) -> Result<(), Error> {
+        jobs::set_enabled(&jobs_of(&id)?, job, on, now_local()).map_err(Error::Failed)?;
         Self::agent_changed(&emitter, &id).await?;
         Ok(())
     }
 
-    /// Runs the `n`th job of an agent now, once, without changing when it is next due.
-    async fn run_job(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
+    /// Runs an agent's job, by the job's id, now, once, without changing when it is next due.
+    async fn run_job(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32) -> Result<(), Error> {
         let agent = find(&id)?;
-        let job = jobs::load(&jobs_of(&id)?).map_err(Error::Failed)?.into_iter().nth(n as usize).ok_or_else(|| Error::Failed("there is no such job".to_owned()))?;
+        let job = jobs::get(&jobs_of(&id)?, job).map_err(Error::Failed)?;
         run_scheduled(self.shared.clone(), connection.clone(), emitter.into_owned(), agent, job.when, job.prompt).await.map_err(Error::Failed)
     }
 
@@ -786,10 +787,11 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
     let now = now_local();
     for agent in agents::all() {
         let Some(path) = agents::jobs_path(&agent.id) else { continue };
-        for (n, due) in jobs::due(&path, now) {
-            let Some(job) = jobs::load(&path).unwrap_or_default().into_iter().nth(n) else { continue };
+        for (id, due) in jobs::due(&path, now) {
+            // Removed since it was found due: nothing to run.
+            let Ok(job) = jobs::get(&path, id) else { continue };
             if run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await.is_ok() {
-                jobs::ran(&path, n, due);
+                jobs::ran(&path, id, due);
             }
         }
     }
