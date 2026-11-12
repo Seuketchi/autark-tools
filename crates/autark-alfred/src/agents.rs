@@ -1,7 +1,7 @@
 //! The team: named agents, each with a job, a soul, a memory and a conversation of its own. Kith itself is always the
 //! first of them, kept by `autark-ai`: its conversation is the one the launcher shows. The others are folders of
-//! `~/.config/autark-agentd/agents/<id>/` (`agent.toml`, `memory.toml`), with their conversation in
-//! `$XDG_STATE_HOME/autark-agentd/agents/<id>/chat.json`: what one says and remembers is never mixed with another's.
+//! `~/.config/autark-alfred/agents/<id>/` (`agent.toml`, `memory.toml`), with their conversation in
+//! `$XDG_STATE_HOME/autark-alfred/agents/<id>/chat.json`: what one says and remembers is never mixed with another's.
 
 use std::path::{Path, PathBuf};
 
@@ -75,7 +75,7 @@ fn home() -> PathBuf {
 }
 
 fn config_root() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("autark-agentd/agents")
+    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("autark-alfred/agents")
 }
 
 /// Narrows the agents' folders and the daemon's state, as an earlier version left them, to you alone. The skills folder
@@ -87,7 +87,7 @@ pub fn tighten() {
 
 /// Where the daemon keeps what it writes as it runs: the event log, the mailbox and each agent's conversation.
 pub fn state_base() -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state")).join("autark-agentd")
+    std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state")).join("autark-alfred")
 }
 
 fn state_root() -> PathBuf {
@@ -316,11 +316,11 @@ fn seed_lenses_in(root: &Path, dirs: &[PathBuf]) {
             continue;
         }
         if let Err(err) = create_in(root, name, job, "", &[], &[skill.to_owned()], &[]) {
-            eprintln!("agentd: making the agent {name}: {err}");
+            eprintln!("alfred: making the agent {name}: {err}");
         }
     }
     if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
-        eprintln!("agentd: marking the lens agents as made in {}", root.display());
+        eprintln!("alfred: marking the lens agents as made in {}", root.display());
     }
 }
 
@@ -342,18 +342,18 @@ fn seed_links_in(root: &Path) {
         let Some(agent) = team.iter().find(|agent| agent.id == id).filter(|agent| agent.links.is_empty()) else { continue };
         let links: Vec<String> = links.iter().filter(|link| team.iter().any(|other| other.id == **link)).map(|link| (*link).to_owned()).collect();
         if let Err(err) = update_in(root, &agent.id, &Patch { links: Some(links), ..Patch::default() }) {
-            eprintln!("agentd: linking {}: {err}", agent.name);
+            eprintln!("alfred: linking {}: {err}", agent.name);
         }
     }
     if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
-        eprintln!("agentd: marking the starter links as made in {}", root.display());
+        eprintln!("alfred: marking the starter links as made in {}", root.display());
     }
 }
 
 /// Where skills are looked for: a folder of your own for the agents, then Claude Code's.
 fn skill_dirs() -> Vec<PathBuf> {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
-    vec![config.join("autark-agentd/skills-md"), home().join(".claude/skills")]
+    vec![config.join("autark-alfred/skills-md"), home().join(".claude/skills")]
 }
 
 /// A skill's text: its `SKILL.md` without the front matter, at most 10 KB. `None` when it isn't there.
@@ -410,11 +410,11 @@ fn seed_in(root: &Path) {
     for (name, job, soul, can) in STARTERS {
         let can: Vec<String> = can.iter().map(|can| (*can).to_owned()).collect();
         if let Err(err) = create_in(root, name, job, soul, &can, &[], &[]) {
-            eprintln!("agentd: making the agent {name}: {err}");
+            eprintln!("alfred: making the agent {name}: {err}");
         }
     }
     if std::fs::create_dir_all(root).and_then(|()| std::fs::write(marker, "")).is_err() {
-        eprintln!("agentd: marking the starter team as made in {}", root.display());
+        eprintln!("alfred: marking the starter team as made in {}", root.display());
     }
 }
 
@@ -466,7 +466,7 @@ mod tests {
     use super::*;
 
     fn folder(test: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentd-agents-{test}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-agents-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

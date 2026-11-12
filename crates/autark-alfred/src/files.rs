@@ -55,7 +55,7 @@ pub fn tighten(root: &Path) {
     let meta = match std::fs::symlink_metadata(root) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
-        Err(err) => return eprintln!("agentd: looking at {}: {err}", root.display()),
+        Err(err) => return eprintln!("alfred: looking at {}: {err}", root.display()),
     };
     let wanted = if meta.is_dir() {
         0o700
@@ -68,12 +68,12 @@ pub fn tighten(root: &Path) {
     if meta.permissions().mode() & 0o777 != wanted
         && let Err(err) = std::fs::set_permissions(root, std::fs::Permissions::from_mode(wanted))
     {
-        eprintln!("agentd: narrowing {}: {err}", root.display());
+        eprintln!("alfred: narrowing {}: {err}", root.display());
     }
     if meta.is_dir() {
         match std::fs::read_dir(root) {
             Ok(entries) => entries.flatten().for_each(|entry| tighten(&entry.path())),
-            Err(err) => eprintln!("agentd: reading {}: {err}", root.display()),
+            Err(err) => eprintln!("alfred: reading {}: {err}", root.display()),
         }
     }
 }
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn a_file_is_replaced_whole_and_only_yours() {
-        let dir = std::env::temp_dir().join(format!("agentd-files-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-files-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn what_an_earlier_version_left_open_is_narrowed_and_links_are_not_followed() {
         use std::os::unix::fs::symlink;
-        let base = std::env::temp_dir().join(format!("agentd-tighten-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("alfred-tighten-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let (root, outside) = (base.join("state"), base.join("outside"));
         std::fs::create_dir_all(root.join("agents/piper")).unwrap();

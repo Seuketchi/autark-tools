@@ -1,16 +1,19 @@
-# `autark-agentd`: the team's backend
+# `autark-alfred`: the team's backend
+
+ALFRED is the Assistant that Lists, Files, Reminds, and Edits Drafts: the daemon behind Kith's team. It was called
+`autark-agentd` (`org.autark.Agents1`) until it was renamed to stop sharing a name with an unrelated program.
 
 Kith's agents (ATLAS, PIPER, the profession lenses and the ones you make) need what a team needs: a place where each
 agent's job, conversation and memory live, a way for agents to hand work to each other, work that happens on a
-schedule, and a record of what happened. `autark-agentd` is that backend, in the manner of agent-kitchen's `kitchend`:
+schedule, and a record of what happened. `autark-alfred` is that backend, in the manner of agent-kitchen's `kitchend`:
 one daemon owns the state and the rules, and every window or tool is a client of its API.
 
 ## What goes where
 
 ```
 autark-kith (roster) ──┐
-launcher / bar / notifyd ─┼─ D-Bus ─▶ autark-agentd  org.autark.Agents1
-autark-agentd (tests) ──┘               │
+launcher / bar / notifyd ─┼─ D-Bus ─▶ autark-alfred  org.autark.Alfred1
+autark-alfred (tests) ──┘               │
                                         │ owns: agents, chats, memory, mailbox, schedule, events
                                         │
                               D-Bus ────▼──── autark-ai  org.autark.AI1
@@ -19,15 +22,15 @@ autark-agentd (tests) ──┘               │
                                           tasks, notes, web, all read-only
 ```
 
-- **`autark-agentd`** decides who does what: which agent answers, what it may look at, what it remembers, who it may
+- **`autark-alfred`** decides who does what: which agent answers, what it may look at, what it remembers, who it may
   hand work to, and when it runs. It never talks to a model or reads your mail itself.
 - **`autark-ai`** stays Kith's own daemon (the launcher's panel, routing, actions, tasks) and becomes the team's
   gateway to the model and the senses, through two calls: `Complete` (an answer for a given system prompt, streamed)
   and `Look` (what an agent may see about a question, from the subjects it is allowed). Everything private is read
   there, under the rules it already has.
-- A client talks to `autark-agentd` only. The roster never calls `autark-ai` for an agent.
+- A client talks to `autark-alfred` only. The roster never calls `autark-ai` for an agent.
 
-D-Bus is Autark's one way for its tools to talk, so the backend is `org.autark.Agents1` on the session bus rather than
+D-Bus is Autark's one way for its tools to talk, so the backend is `org.autark.Alfred1` on the session bus rather than
 a new kind of socket. The API is typed and listed below, and the daemon needs nothing from a client but the call.
 
 ## State
@@ -38,11 +41,11 @@ of one. Files an earlier version left readable by others are narrowed when the d
 
 | What | Where |
 |---|---|
-| An agent: name, colour, job, soul, `can`, `skills`, `links` | `~/.config/autark-agentd/agents/<id>/agent.toml` |
-| Its conversation (a week) | `~/.local/state/autark-agentd/agents/<id>/chat.json` |
-| Its memory | `~/.config/autark-agentd/agents/<id>/memory.toml` |
-| Its scheduled jobs (at most 5) | `~/.config/autark-agentd/agents/<id>/jobs.toml` |
-| The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
+| An agent: name, colour, job, soul, `can`, `skills`, `links` | `~/.config/autark-alfred/agents/<id>/agent.toml` |
+| Its conversation (a week) | `~/.local/state/autark-alfred/agents/<id>/chat.json` |
+| Its memory | `~/.config/autark-alfred/agents/<id>/memory.toml` |
+| Its scheduled jobs (at most 5) | `~/.config/autark-alfred/agents/<id>/jobs.toml` |
+| The event log (14 days) | `~/.local/state/autark-alfred/events.jsonl` |
 
 The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
 each handoff in it starts within moments. One that a restart catches before its answer ends is lost; the receiver's
@@ -87,7 +90,7 @@ Kitchen's front of house gates a change.
 
 The rules are Kitchen's, because they are the ones that keep a team from tying itself in knots:
 
-- **Identity comes from the daemon.** A message says who sent it because `autark-agentd` wrote it on that agent's
+- **Identity comes from the daemon.** A message says who sent it because `autark-alfred` wrote it on that agent's
   behalf, never because a model claimed it. A message from you says so.
 - **Only linked agents.** An agent's `links` names the agents it may hand work to ("Hands work to…" in the roster's
   **⋯**, or when making an agent). No link, no handoff, and the refusal is shown in the sender's chat so you can see why.
@@ -138,7 +141,7 @@ weekdays at 8:00" over it.
 ## Telling you
 
 An answer you didn't ask for just now is the one you'd miss: a scheduled run's, or an agent's reply to work it handed on.
-When one lands, `autark-agentd` puts a card in the notification centre, quietly (the same `x-autark-quiet` card Kith's
+When one lands, `autark-alfred` puts a card in the notification centre, quietly (the same `x-autark-quiet` card Kith's
 other suggestions are: no banner, no chime, so Focus and a presentation are not broken into), titled with the agent
 ("QUILL · scheduled", or the asker's name for a reply) and holding the first 140 characters: "RAVEN replied: Friday is
 free." A run that failed says so ("Couldn't run: Ollama isn't running"), so a job doesn't go quiet. The roster puts a dot and
@@ -151,7 +154,7 @@ Heartbeats, as OpenClaw's, are next: an agent wakes every so often, code runs th
 the calendar changed?), and only when something changed does the model get called. That is what makes a 4B model usable for
 standing work, and it needs those checks to exist in `autark-ai` first.
 
-## API: `org.autark.Agents1` at `/org/autark/Agents1`
+## API: `org.autark.Alfred1` at `/org/autark/Alfred1`
 
 | Call | Does |
 |---|---|
@@ -189,7 +192,7 @@ answer only its length.
 ## Order of work
 
 1. **The backend and its state** (this PR): the daemon, agents, conversations, memory, the event log; `autark-ai`
-   gains `Complete` and `Look`; the roster moves to `org.autark.Agents1`. `links` is stored and validated (it names
+   gains `Complete` and `Look`; the roster moves to `org.autark.Alfred1`. `links` is stored and validated (it names
    agents on the team, never the agent itself) but does nothing until step 2, so the roster has no field for it yet.
    Kith stays `autark-ai`'s: a message to it from the roster goes through its own `Chat` and `ChatAnswer`, and what it
    would do as an action is left to the launcher's panel, where it asks first.

@@ -83,19 +83,19 @@ impl Chat {
     pub fn load(path: PathBuf, speaker: &str) -> Self {
         let ((values, saved_next), path) = match read(&path) {
             Ok(Some(stored)) if stored.version > VERSION => {
-                eprintln!("agentd: {} is from a newer version (format {}), so it is shown but not changed", path.display(), stored.version);
+                eprintln!("alfred: {} is from a newer version (format {}), so it is shown but not changed", path.display(), stored.version);
                 ((stored.entries, stored.next), None)
             }
             Ok(Some(stored)) => ((stored.entries, stored.next), Some(path)),
             Ok(None) => ((Vec::new(), 0), Some(path)),
             Err(Unread::Unreadable(err)) => {
-                eprintln!("agentd: reading {}: {err}; it is left as it is", path.display());
+                eprintln!("alfred: reading {}: {err}; it is left as it is", path.display());
                 ((Vec::new(), 0), None)
             }
             Err(Unread::NotUnderstood(err)) => {
                 match crate::files::set_aside(&path, now()) {
-                    Ok(aside) => eprintln!("agentd: {} can't be understood ({err}); it was kept as {}", path.display(), aside.display()),
-                    Err(why) => eprintln!("agentd: {} can't be understood ({err}) or set aside ({why})", path.display()),
+                    Ok(aside) => eprintln!("alfred: {} can't be understood ({err}); it was kept as {}", path.display(), aside.display()),
+                    Err(why) => eprintln!("alfred: {} can't be understood ({err}) or set aside ({why})", path.display()),
                 }
                 let saved = !path.exists();
                 ((Vec::new(), 0), saved.then_some(path))
@@ -235,7 +235,7 @@ impl Chat {
             crate::files::write(&path, &bytes)
         })();
         if let Err(err) = result {
-            eprintln!("agentd: saving the conversation to {}: {err}", path.display());
+            eprintln!("alfred: saving the conversation to {}: {err}", path.display());
         }
     }
 }
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn an_answer_cut_off_by_a_restart_says_so() {
-        let dir = std::env::temp_dir().join(format!("agentd-chat-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-chat-{}", std::process::id()));
         let path = dir.join("chat.json");
         let mut chat = Chat::load(path.clone(), "A");
         chat.push(What::Answer { answer: 3, text: "Par".into(), writing: true, error: String::new() });
@@ -326,7 +326,7 @@ mod tests {
     }
 
     fn place(test: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentd-chat-{test}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-chat-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("chat.json")

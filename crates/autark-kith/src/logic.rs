@@ -1,4 +1,4 @@
-//! What the roster shows, worked out from what `autark-agentd` sends: the team, a conversation's messages, previews and
+//! What the roster shows, worked out from what `autark-alfred` sends: the team, a conversation's messages, previews and
 //! times. No GTK here, so it can be tested.
 
 use serde::Deserialize;

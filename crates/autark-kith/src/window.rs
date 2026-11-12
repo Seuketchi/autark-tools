@@ -1,5 +1,5 @@
 //! The team's window: the roster on the left, with a face, the last words and the time for each agent, and the
-//! conversation with the one picked on the right. A new answer grows in its bubble as `autark-agentd` writes it.
+//! conversation with the one picked on the right. A new answer grows in its bubble as `autark-alfred` writes it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use gtk::{glib, pango};
 use crate::ai;
 use crate::logic::{self, Member, Message, Who};
 
-/// What `autark-agentd` tells the window.
+/// What `autark-alfred` tells the window.
 enum Event {
     /// An agent's conversation changed.
     Agent(String),
@@ -1051,7 +1051,7 @@ impl Kith {
         dialog.present();
     }
 
-    /// Follows `autark-agentd` while the window is open: an agent's words as they're written, and changes to the team.
+    /// Follows `autark-alfred` while the window is open: an agent's words as they're written, and changes to the team.
     /// Tries again every few seconds when it isn't running, so starting it brings the team in.
     fn listen(self: &Rc<Self>) {
         let kith = self.clone();

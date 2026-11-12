@@ -103,7 +103,7 @@ mod tests {
     use super::*;
 
     fn path(test: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentd-memory-{test}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-memory-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("memory.toml")
     }
