@@ -117,8 +117,9 @@ weekdays at 8:00" over it.
 
 - **Code reads the time, not the model.** `every day at 8`, `weekdays at 17:30`, `weekends at 10am`, `every monday at 9`,
   `the 1st of every month at 9` (the 1st to the 28th, so every month has it), or `every morning` (8), `every evening` (18),
-  `every night` (21). A time that can't be read says what can be said. A 4B model gets dates wrong, and a job on the wrong
-  day is worse than none.
+  `every night` (21). With a part of the day a bare hour is read in it (`every evening at 7` is 19:00, `every night at
+  12` midnight), and a time that contradicts it (`every morning at 7pm`) is refused. A time that can't be read says what
+  can be said. A 4B model gets dates wrong, and a job on the wrong day is worse than none.
 - **Set from the roster** (**⋯ › Schedule…**: when, what, an on/off switch, Run now, remove) **or by saying it:** "every
   weekday at 8, tell me who has written" (or the same with the time last) answers with a card, **Schedule** or **Don't
   schedule**, and only on Schedule is a job made. A sentence about yourself ("I go to the gym every day at 6") or a
