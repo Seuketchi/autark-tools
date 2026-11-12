@@ -67,8 +67,8 @@ of one. Files an earlier version left readable by others are narrowed when the d
 
 A team made while the daemon was `autark-agentd` is moved once, when it starts and has its bus name, before the
 starter team is made: `~/.config/autark-agentd` becomes `~/.config/autark-alfred` when it holds agents
-(`agents/<id>/agent.toml`), and `~/.local/state/autark-agentd` becomes `~/.local/state/autark-alfred` when its
-`events.jsonl` is this daemon's log. Nothing is moved when the new folder is there already, and folders another program
+(`agents/<id>/agent.toml`), and `~/.local/state/autark-agentd` becomes `~/.local/state/autark-alfred` when the team moved,
+its `events.jsonl` is this daemon's log or it holds a conversation (`agents/<id>/chat.json`). Nothing is moved when the new folder is there already, and folders another program
 of the old name keeps are left alone.
 
 The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
