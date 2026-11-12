@@ -25,8 +25,15 @@ struct File {
     fact: Vec<Fact>,
 }
 
-pub fn load(path: &Path) -> Vec<Fact> {
-    std::fs::read_to_string(path).ok().and_then(|text| toml::from_str::<File>(&text).ok()).map(|file| file.fact).unwrap_or_default()
+/// The facts kept at `path`, none when it hasn't been made. A file that can't be read or understood is an error, so it
+/// is never taken for an empty memory and written over.
+pub fn load(path: &Path) -> Result<Vec<Fact>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("its memory.toml can't be read: {err}")),
+    };
+    toml::from_str::<File>(&text).map(|file| file.fact).map_err(|err| format!("its memory.toml can't be understood, so it is left as it is: {err}"))
 }
 
 fn save(path: &Path, facts: Vec<Fact>) -> Result<(), String> {
@@ -43,7 +50,7 @@ pub fn add(path: &Path, text: &str, time: u64) -> Result<(), String> {
     if text.chars().count() > FACT {
         return Err(format!("a fact is at most {FACT} characters: say it shorter"));
     }
-    let mut facts = load(path);
+    let mut facts = load(path)?;
     if facts.iter().any(|fact| fact.text.eq_ignore_ascii_case(&text)) {
         return Ok(());
     }
@@ -60,7 +67,7 @@ pub fn add(path: &Path, text: &str, time: u64) -> Result<(), String> {
 
 /// Forgets the `n`th fact, counting from 0.
 pub fn forget(path: &Path, n: usize) -> Result<(), String> {
-    let mut facts = load(path);
+    let mut facts = load(path)?;
     if n >= facts.len() {
         return Err("there is no such fact".to_owned());
     }
@@ -93,10 +100,24 @@ mod tests {
         add(&p, "Prefers short answers", 5).unwrap();
         add(&p, "prefers  short answers", 6).unwrap();
         add(&p, "Lives in Cebu", 7).unwrap();
-        assert_eq!(load(&p).iter().map(|f| f.text.as_str()).collect::<Vec<_>>(), ["Prefers short answers", "Lives in Cebu"]);
+        assert_eq!(load(&p).unwrap().iter().map(|f| f.text.as_str()).collect::<Vec<_>>(), ["Prefers short answers", "Lives in Cebu"]);
         forget(&p, 0).unwrap();
-        assert_eq!(load(&p).len(), 1);
+        assert_eq!(load(&p).unwrap().len(), 1);
         assert!(forget(&p, 5).is_err());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn a_memory_that_cant_be_read_is_never_written_over() {
+        let p = path("unreadable");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "[[fact]]\ntext = \"Lives in Cebu\"\nnot toml at all").unwrap();
+        assert!(load(&p).is_err());
+        assert!(add(&p, "Prefers short answers", 1).unwrap_err().contains("memory.toml"));
+        assert!(forget(&p, 0).is_err());
+        assert!(std::fs::read_to_string(&p).unwrap().contains("not toml at all"));
+        // A memory not made yet is an empty one.
+        assert_eq!(load(&path("none")).unwrap(), []);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
@@ -118,7 +139,7 @@ mod tests {
         }
         let err = add(&p, "one more", 1).unwrap_err();
         assert!(err.contains("full") && err.contains("forget"));
-        assert_eq!(load(&p).len(), MAX_FACTS);
+        assert_eq!(load(&p).unwrap().len(), MAX_FACTS);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
@@ -127,9 +148,9 @@ mod tests {
         let p = path("chars");
         let long = "x".repeat(FACT);
         for _ in 0..6 {
-            add(&p, &format!("{}{}", long, load(&p).len()).chars().take(FACT).collect::<String>(), 1).ok();
+            add(&p, &format!("{}{}", long, load(&p).unwrap().len()).chars().take(FACT).collect::<String>(), 1).ok();
         }
-        assert!(load(&p).iter().map(|f| f.text.chars().count()).sum::<usize>() <= MAX_CHARS);
+        assert!(load(&p).unwrap().iter().map(|f| f.text.chars().count()).sum::<usize>() <= MAX_CHARS);
         assert!(add(&p, &"y".repeat(FACT + 1), 1).is_err());
         assert!(add(&p, "   ", 1).is_err());
         let _ = std::fs::remove_dir_all(p.parent().unwrap());

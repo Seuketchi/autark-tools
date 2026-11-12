@@ -360,7 +360,15 @@ impl Agents {
                     String::new()
                 }
             };
-            let facts = agents::memory_path(&agent.id).map(|path| memory::load(&path)).unwrap_or_default();
+            let facts = match agents::memory_path(&agent.id).map(|path| memory::load(&path)) {
+                Some(Ok(facts)) => facts,
+                Some(Err(err)) => {
+                    // It answers without its memory rather than not at all; Memory() shows you why.
+                    eprintln!("agentd: {}: {err}", agent.name);
+                    Vec::new()
+                }
+                None => Vec::new(),
+            };
             let skills: Vec<(String, String)> = agent.skills.iter().filter_map(|name| agents::skill_text(name).map(|text| (name.clone(), text))).collect();
             proxy.complete(&prompt::system(&agent, &skills, &facts), &prompt::context(&conversation, &seen), &text).await
         }
@@ -407,10 +415,11 @@ impl Agents {
         ai(connection).await?.stop(answer).await.map_err(engine)
     }
 
-    /// An agent's memory as JSON: `[{"text","added"}]`, at most 12 facts and 2,000 characters in all.
+    /// An agent's memory as JSON: `[{"text","added"}]`, at most 12 facts and 2,000 characters in all, or why its file
+    /// can't be read.
     async fn memory(&self, id: String) -> Result<String, Error> {
         let path = memory_of(&id)?;
-        serde_json::to_string(&memory::load(&path)).map_err(|err| Error::Failed(err.to_string()))
+        serde_json::to_string(&memory::load(&path).map_err(Error::Failed)?).map_err(|err| Error::Failed(err.to_string()))
     }
 
     /// Adds a fact to an agent's memory, or says why it can't: the memory is full, or the fact is too long.
