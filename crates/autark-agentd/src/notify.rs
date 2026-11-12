@@ -34,13 +34,13 @@ const BODY: usize = 140;
 /// A scheduled run's answer, or why it failed, as news for the agent that ran it.
 pub fn scheduled(agent_id: &str, name: &str, said: &str, well: bool) -> News {
     let body = if well { brief(said) } else { format!("Couldn't run: {}", brief(said)) };
-    News { agent: agent_id.to_owned(), title: format!("{name} · scheduled"), body }
+    News { agent: agent_id.to_owned(), title: format!("{name} · scheduled"), body: escape(&body) }
 }
 
 /// An agent's reply to work the asker handed it, as news for the asker.
 pub fn replied(asker_id: &str, asker: &str, from: &str, said: &str, well: bool) -> News {
     let body = if well { format!("{from} replied: {}", brief(said)) } else { format!("{from} couldn't answer: {}", brief(said)) };
-    News { agent: asker_id.to_owned(), title: asker.to_owned(), body }
+    News { agent: asker_id.to_owned(), title: asker.to_owned(), body: escape(&body) }
 }
 
 /// The start of what was said in single spaces, short enough for a card.
@@ -51,6 +51,12 @@ fn brief(text: &str) -> String {
     }
     let cut: String = flat.chars().take(BODY).collect();
     format!("{}…", cut.trim_end())
+}
+
+/// Text for a card's body, which the notification centre reads as Pango markup: `&`, `<` and `>` as entities, so what a
+/// model wrote shows as written and can't make a link.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Puts the card in the centre, quietly. A missing notification service is not an error worth more than a line.
@@ -84,6 +90,17 @@ mod tests {
         let news = replied("atlas", "ATLAS", "RAVEN", "Friday is free.", true);
         assert_eq!((news.agent.as_str(), news.title.as_str(), news.body.as_str()), ("atlas", "ATLAS", "RAVEN replied: Friday is free."));
         assert_eq!(replied("atlas", "ATLAS", "RAVEN", "no model", false).body, "RAVEN couldn't answer: no model");
+    }
+
+    #[test]
+    fn what_the_model_wrote_is_shown_as_text_never_as_markup() {
+        // The notification centre reads a body as Pango markup: a model's answer must not make links or styling there.
+        let news = scheduled("piper", "PIPER", "<a href=\"https://x.example\">Open</a> & <b>now</b>", true);
+        assert_eq!(news.body, "&lt;a href=\"https://x.example\"&gt;Open&lt;/a&gt; &amp; &lt;b&gt;now&lt;/b&gt;");
+        assert_eq!(replied("atlas", "ATLAS", "R<i>", "a < b", true).body, "R&lt;i&gt; replied: a &lt; b");
+        // Cut before it is escaped, so an entity is never cut in half.
+        let body = scheduled("a", "A", &"&".repeat(BODY * 2), true).body;
+        assert!(body.ends_with("&amp;…"), "{body}");
     }
 
     #[test]
