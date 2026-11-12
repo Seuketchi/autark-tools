@@ -49,6 +49,35 @@ pub fn set_aside(path: &Path, now: u64) -> std::io::Result<std::path::PathBuf> {
     Ok(aside)
 }
 
+/// Narrows what an earlier version left under `root` to you alone: folders 0700, files 0600. A link is left as it is and
+/// not followed, so nothing outside `root` is changed. What can't be changed is logged and the rest goes on.
+pub fn tighten(root: &Path) {
+    let meta = match std::fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => return eprintln!("agentd: looking at {}: {err}", root.display()),
+    };
+    let wanted = if meta.is_dir() {
+        0o700
+    } else if meta.is_file() {
+        0o600
+    } else {
+        // A link, or anything else that isn't ours to narrow.
+        return;
+    };
+    if meta.permissions().mode() & 0o777 != wanted
+        && let Err(err) = std::fs::set_permissions(root, std::fs::Permissions::from_mode(wanted))
+    {
+        eprintln!("agentd: narrowing {}: {err}", root.display());
+    }
+    if meta.is_dir() {
+        match std::fs::read_dir(root) {
+            Ok(entries) => entries.flatten().for_each(|entry| tighten(&entry.path())),
+            Err(err) => eprintln!("agentd: reading {}: {err}", root.display()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +101,37 @@ mod tests {
         // No temporary file is left beside it.
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn what_an_earlier_version_left_open_is_narrowed_and_links_are_not_followed() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("agentd-tighten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, outside) = (base.join("state"), base.join("outside"));
+        std::fs::create_dir_all(root.join("agents/piper")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let open = |path: &Path, mode: u32| std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        for (file, text) in [("events.jsonl", "{}"), ("agents/piper/chat.json", "{}")] {
+            std::fs::write(root.join(file), text).unwrap();
+            open(&root.join(file), 0o644);
+        }
+        for dir in ["", "agents", "agents/piper"] {
+            open(&root.join(dir), 0o755);
+        }
+        std::fs::write(outside.join("notes.md"), "mine").unwrap();
+        open(&outside.join("notes.md"), 0o644);
+        open(&outside, 0o755);
+        symlink(outside.join("notes.md"), root.join("agents/piper/link.md")).unwrap();
+        symlink(&outside, root.join("agents/outside")).unwrap();
+        tighten(&root);
+        for dir in ["", "agents", "agents/piper"] {
+            assert_eq!(mode(&root.join(dir)), 0o700, "{dir}");
+        }
+        assert_eq!((mode(&root.join("events.jsonl")), mode(&root.join("agents/piper/chat.json"))), (0o600, 0o600));
+        assert_eq!((mode(&outside), mode(&outside.join("notes.md"))), (0o755, 0o644));
+        // A folder that isn't there is nothing to do.
+        tighten(&base.join("missing"));
+        let _ = std::fs::remove_dir_all(base);
     }
 }

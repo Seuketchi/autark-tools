@@ -30,6 +30,10 @@ pub const PATH: &str = "/org/autark/Agents1";
 /// How long an answer may go without a word before it is given up on: a model on a busy laptop can take a while to
 /// start, but not this long.
 const IDLE: Duration = Duration::from_secs(300);
+/// How many times a job whose answer can't be started (`autark-ai` still loading after a wake) is tried before it is
+/// given up on until its next time, and how long between tries.
+const TRIES: u8 = 3;
+const RETRY: Duration = Duration::from_secs(120);
 /// How long an answer may wait for its first word: behind other answers in `autark-ai`'s queue, such as jobs made up after
 /// a sleep, and a model loading. Its `IDLE` clock starts at that word.
 const FIRST_WORD: Duration = Duration::from_secs(30 * 60);
@@ -134,6 +138,8 @@ struct Core {
     early: VecDeque<(u32, Heard, Instant)>,
     /// The agents with an answer you haven't opened the conversation for. Kept while the daemon runs.
     unread: HashSet<String>,
+    /// The jobs whose answer couldn't be started, by agent and job: how many tries, and when the last was.
+    tries: HashMap<(String, u32), (u8, Instant)>,
 }
 
 pub struct Shared {
@@ -729,7 +735,8 @@ impl Agents {
     async fn run_job(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32) -> Result<(), Error> {
         let agent = find(&id)?;
         let job = jobs::get(&jobs_of(&id)?, job).map_err(Error::Failed)?;
-        run_scheduled(self.shared.clone(), connection.clone(), emitter.into_owned(), agent, job.when, job.prompt).await.map_err(Error::Failed)
+        // A run that couldn't start says why in the conversation, as a scheduled one does.
+        run_scheduled(self.shared.clone(), connection.clone(), emitter.into_owned(), agent, job.when, job.prompt).await.map(|_| ()).map_err(Error::Failed)
     }
 
     /// Answers a job an agent proposed (the entry of a `job` in its conversation): schedules it, or not. A job that can't be
@@ -791,8 +798,9 @@ fn jobs_of(id: &str) -> Result<std::path::PathBuf, Error> {
 }
 
 /// Runs a job: what it asks goes in the agent's conversation as if you had said it, and the agent answers. Refused when the
-/// agent is busy answering, which a scheduled run waits out and `RunJob` reports.
-async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmitter<'static>, agent: Agent, when: String, prompt: String) -> Result<(), String> {
+/// agent is busy answering, which a scheduled run waits out and `RunJob` reports. `Ok(Err(why))` when its answer couldn't
+/// be started, which the entry says.
+async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmitter<'static>, agent: Agent, when: String, prompt: String) -> Result<Result<(), String>, String> {
     let (entry, conversation) = {
         let mut core = shared.core();
         let chat = core.chat(&agent);
@@ -811,21 +819,26 @@ async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitte
     }
     let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: true };
     match start_answer(&shared, &connection, &agent, entry, &prompt, &conversation, None, meta).await {
-        Ok((_, ended)) => settle(&shared, &emitter, ended).await,
+        Ok((_, ended)) => {
+            settle(&shared, &emitter, ended).await;
+            Ok(Ok(()))
+        }
         Err(why) => {
             shared.core().fail(&agent, entry, &why);
             shared.events.record(chat::now(), "failed", &agent.id, &why);
             if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
                 eprintln!("agentd: sending a change: {err}");
             }
+            Ok(Err(why))
         }
     }
-    Ok(())
 }
 
 /// Runs a job that is due: one an agent has that was due after it last ran, once, however long the laptop slept. Jobs run
 /// one at a time, so those made up after a sleep don't all ask the model at once: none starts while one a schedule started
-/// is still being written, and the next waits for the next look. One whose agent is busy waits too.
+/// is still being written, and the next waits for the next look. One whose agent is busy waits too. One whose answer
+/// can't be started (`autark-ai` still loading after a wake) is tried again `RETRY` later, and after `TRIES` tries is
+/// given up on until its next time.
 async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &SignalEmitter<'static>) {
     if shared.core().scheduled_running() {
         return;
@@ -834,12 +847,31 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
     for agent in agents::all() {
         let Some(path) = agents::jobs_path(&agent.id) else { continue };
         for (id, due) in jobs::due(&path, now) {
+            let key = (agent.id.clone(), id);
+            if shared.core().tries.get(&key).is_some_and(|(_, last)| last.elapsed() < RETRY) {
+                continue;
+            }
             // Removed since it was found due: nothing to run.
             let Ok(job) = jobs::get(&path, id) else { continue };
-            if run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await.is_ok() {
-                jobs::ran(&path, id, due);
-                return;
+            match run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await {
+                // Busy: the next look.
+                Err(_) => continue,
+                Ok(Ok(())) => {
+                    shared.core().tries.remove(&key);
+                    jobs::ran(&path, id, due);
+                }
+                Ok(Err(_)) => {
+                    let mut core = shared.core();
+                    let tried = core.tries.entry(key.clone()).or_insert((0, Instant::now()));
+                    *tried = (tried.0 + 1, Instant::now());
+                    if tried.0 >= TRIES {
+                        core.tries.remove(&key);
+                        drop(core);
+                        jobs::ran(&path, id, due);
+                    }
+                }
             }
+            return;
         }
     }
 }
@@ -1330,6 +1362,53 @@ mod tests {
             run_due(&shared, &connection, &emitter).await;
             assert_eq!(scheduled(&shared), 2);
         });
+    }
+
+    /// An `autark-ai` that is up but can't start an answer yet, as one still loading after a wake.
+    struct LoadingAi;
+
+    #[zbus::interface(name = "org.autark.AI1")]
+    impl LoadingAi {
+        async fn look(&self, _question: String, _can: Vec<String>) -> String {
+            String::new()
+        }
+
+        async fn complete(&self, _system: String, _context: String, _prompt: String) -> zbus::fdo::Result<u32> {
+            Err(zbus::fdo::Error::Failed("The model is still loading.".into()))
+        }
+    }
+
+    /// Needs a session bus and agents' folders of its own, as `jobs_made_up_after_a_sleep_run_one_at_a_time`.
+    #[test]
+    #[ignore = "needs a private bus and XDG folders: AGENTD_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    fn a_job_whose_answer_cant_start_is_tried_again_then_given_up() {
+        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+            return;
+        }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(std::env::var_os("XDG_CONFIG_HOME").is_some() && std::env::var_os("XDG_STATE_HOME").is_some(), "set private XDG folders");
+        let agent = agents::create("waker", "", "", &[], &[], &[]).unwrap();
+        let path = agents::jobs_path(&agent.id).unwrap();
+        jobs::add(&path, &When::parse("every day at 0:00").unwrap(), "Summarise my day", now_local() - chrono::Duration::days(1)).unwrap();
+        async_io::block_on(async {
+            let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", LoadingAi).build().await.unwrap();
+            let connection = zbus::connection::Builder::session().build().await.unwrap();
+            let shared = Arc::new(Shared::new(Events::new(agents::state_base().join("events.jsonl"))));
+            let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
+            for _ in 1..TRIES {
+                run_due(&shared, &connection, &emitter).await;
+                // Not noted as run, so it is made up when the model is ready.
+                assert_eq!(jobs::due(&path, now_local()).len(), 1, "a run that couldn't start was noted as run");
+                // The next try waits a while; here it is due at once.
+                for tried in shared.core().tries.values_mut() {
+                    tried.1 = Instant::now().checked_sub(RETRY + Duration::from_secs(1)).unwrap();
+                }
+            }
+            run_due(&shared, &connection, &emitter).await;
+            assert!(jobs::due(&path, now_local()).is_empty(), "given up on after {TRIES} tries");
+            assert!(shared.core().tries.is_empty());
+        });
+        agents::delete(&agent.id).unwrap();
     }
 
     #[test]
