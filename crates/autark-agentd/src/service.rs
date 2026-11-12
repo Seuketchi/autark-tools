@@ -1226,6 +1226,9 @@ mod tests {
         Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None, scheduled: false }
     }
 
+    /// Held by each test that serves `org.autark.AI1` on the private bus: two at once would answer for each other.
+    static PRIVATE_BUS: Mutex<()> = Mutex::new(());
+
     /// An `autark-ai` whose `Look` never answers, as one loading a model on a busy laptop.
     struct SlowAi;
 
@@ -1244,6 +1247,7 @@ mod tests {
         if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
             return;
         }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = std::env::temp_dir().join(format!("agentd-settle-{}", std::process::id()));
         async_io::block_on(async {
             let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", SlowAi).build().await.unwrap();
@@ -1299,6 +1303,7 @@ mod tests {
         if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
             return;
         }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // It makes agents: never in your own folders.
         assert!(std::env::var_os("XDG_CONFIG_HOME").is_some() && std::env::var_os("XDG_STATE_HOME").is_some(), "set private XDG folders");
         let every_midnight = When::parse("every day at 0:00").unwrap();
