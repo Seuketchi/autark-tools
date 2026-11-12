@@ -16,17 +16,26 @@ use crate::agents::{self, Agent, KITH};
 use crate::ai::{self, AiProxy};
 use crate::chat::{self, Chat, FactState, What};
 use crate::events::Events;
+use crate::jobs;
 use crate::mailbox;
 use crate::memory;
 use crate::notes;
 use crate::prompt;
 use crate::remember;
+use crate::when::{self, When};
 
 pub const PATH: &str = "/org/autark/Agents1";
 
 /// How long an answer may go without a word before it is given up on: a model on a busy laptop can take a while to
 /// start, but not this long.
 const IDLE: Duration = Duration::from_secs(300);
+/// How many times a job whose answer can't be started (`autark-ai` still loading after a wake) is tried before it is
+/// given up on until its next time, and how long between tries.
+const TRIES: u8 = 3;
+const RETRY: Duration = Duration::from_secs(120);
+/// How long an answer may wait for its first word: behind other answers in `autark-ai`'s queue, such as jobs made up after
+/// a sleep, and a model loading. Its `IDLE` clock starts at that word.
+const FIRST_WORD: Duration = Duration::from_secs(30 * 60);
 /// How often the event log is pruned.
 const PRUNE: Duration = Duration::from_secs(60 * 60);
 /// How many words that arrive before the call that started them has returned are kept to be matched.
@@ -56,12 +65,17 @@ struct Meta {
     chain: Vec<String>,
     /// The agent that asked for it, which gets the answer back.
     origin: Option<String>,
+    /// Whether a schedule started it, so you weren't there to see it arrive.
+    scheduled: bool,
 }
 
 /// An answer being written by an agent here.
 struct Pending {
     agent: String,
-    heard: Instant,
+    /// When it was started.
+    started: Instant,
+    /// When a word of it was last heard; `None` until the first.
+    heard: Option<Instant>,
     meta: Meta,
     /// You stopped it: what was written so far is kept, and a handoff cut off in it is not made.
     stopped: bool,
@@ -119,6 +133,8 @@ struct Core {
     pending: HashMap<u32, Pending>,
     /// What `autark-ai` said of an answer before its id reached `say`, and when.
     early: VecDeque<(u32, Heard, Instant)>,
+    /// The jobs whose answer couldn't be started, by agent and job: how many tries, and when the last was.
+    tries: HashMap<(String, u32), (u8, Instant)>,
 }
 
 pub struct Shared {
@@ -180,7 +196,7 @@ impl Core {
         if let Some(What::Answer { answer: id, .. }) = chat.get_mut(entry) {
             *id = answer;
         }
-        self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now(), meta, stopped: false });
+        self.pending.insert(answer, Pending { agent: agent.id.clone(), started: Instant::now(), heard: None, meta, stopped: false });
         let mut finished = None;
         let early = std::mem::take(&mut self.early);
         for (id, heard, when) in early {
@@ -206,7 +222,7 @@ impl Core {
 
     fn append(&mut self, answer: u32, piece: &str) {
         let Some(pending) = self.pending.get_mut(&answer) else { return };
-        pending.heard = Instant::now();
+        pending.heard = Some(Instant::now());
         let agent = pending.agent.clone();
         if let Some(chat) = self.chats.get_mut(&agent)
             && let Some(What::Answer { text, .. }) = chat.answer_mut(answer)
@@ -292,7 +308,8 @@ impl Core {
                 chain.push(to.id.clone());
                 ended.changed.push(to.id.clone());
                 ended.logged.push(("handoff", from.id.clone(), format!("to {}: {}", to.id, asked.brief)));
-                ended.delivery = Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()) } });
+                ended.delivery =
+                    Some(Delivery { from: from.clone(), to, entry, brief: asked.brief, conversation, meta: Meta { depth: meta.depth + 1, chain, origin: Some(from.id.clone()), scheduled: false } });
             }
             Err(why) => {
                 self.chat(from).push(What::Handoff { to: asked.to.clone(), name: asked.to.clone(), brief: asked.brief, refused: why.clone() });
@@ -317,6 +334,16 @@ impl Core {
             *error = why.to_owned();
         }
         chat.save();
+    }
+
+    /// Whether an answer a schedule started is still being written: the next job waits for it.
+    fn scheduled_running(&self) -> bool {
+        self.pending.values().any(|pending| pending.meta.scheduled)
+    }
+
+    /// The answers to give up on: quiet for too long since their last word, or with no word long after they were started.
+    fn idle(&self) -> Vec<u32> {
+        self.pending.iter().filter(|(_, pending)| pending.heard.map_or(pending.started.elapsed() > FIRST_WORD, |heard| heard.elapsed() > IDLE)).map(|(id, _)| *id).collect()
     }
 
     /// `autark-ai` has gone or been replaced: the answers it was writing won't end, and the ids of what was heard early
@@ -497,14 +524,14 @@ impl Agents {
         // nothing is claimed that wasn't done.
         let proposal = if let Some(fact) = remember::fact(&text) {
             Some(("I can keep that in my memory if you say so.", Some(What::Fact { text: fact, state: FactState::Proposed })))
-        } else {
-            notes::parse(&text).map(|add| {
-                if agent.can.iter().any(|can| can == "notes") {
-                    ("I can add that to your note if you say so.", Some(What::Add { note: add.note, items: add.items, state: FactState::Proposed }))
-                } else {
-                    ("I'm not set up to look at your notes, so I can't add to them.", None)
-                }
+        } else if let Some(add) = notes::parse(&text) {
+            Some(if agent.can.iter().any(|can| can == "notes") {
+                ("I can add that to your note if you say so.", Some(What::Add { note: add.note, items: add.items, state: FactState::Proposed }))
+            } else {
+                ("I'm not set up to look at your notes, so I can't add to them.", None)
             })
+        } else {
+            when::request(&text).map(|(when, prompt)| ("I can do that on a schedule if you say so.", Some(What::Job { when: when.describe(), prompt, state: FactState::Proposed })))
         };
         if let Some((said, card)) = proposal {
             let entry = {
@@ -536,7 +563,7 @@ impl Agents {
             (entry, conversation)
         };
         Self::agent_changed(&emitter, &agent.id).await?;
-        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None };
+        let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: false };
         match start_answer(&self.shared, connection, &agent, entry, &text, &conversation, None, meta).await {
             Ok((answer, ended)) => {
                 // An answer that failed at once has ended by now.
@@ -648,6 +675,71 @@ impl Agents {
         Ok(())
     }
 
+    /// An agent's scheduled jobs as JSON: `[{"id","when","prompt","enabled","next","last"}]`, times as local time. A job's
+    /// `id` is never given to another of the agent's jobs.
+    async fn jobs(&self, id: String) -> Result<String, Error> {
+        let path = jobs_of(&id)?;
+        Ok(jobs::view(&path, now_local()).map_err(Error::Failed)?.to_string())
+    }
+
+    /// Gives an agent a job: `when` in words (every day at 8, weekdays at 17:30, every monday at 9, the 1st of every month at
+    /// 9, every morning), and what it is to do, which it does as if you had said it. A time that can't be read says what can.
+    async fn add_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, when: String, prompt: String) -> Result<(), Error> {
+        let path = jobs_of(&id)?;
+        let when = When::parse(&when).map_err(Error::Failed)?;
+        jobs::add(&path, &when, &prompt, now_local()).map_err(Error::Failed)?;
+        self.shared.events.record(chat::now(), "job-added", &id, &prompt);
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Removes an agent's job, by the job's id.
+    async fn remove_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32) -> Result<(), Error> {
+        jobs::remove(&jobs_of(&id)?, job).map_err(Error::Failed)?;
+        self.shared.events.record(chat::now(), "job-removed", &id, "");
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Turns an agent's job, by the job's id, on or off.
+    async fn set_job_enabled(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32, on: bool) -> Result<(), Error> {
+        jobs::set_enabled(&jobs_of(&id)?, job, on, now_local()).map_err(Error::Failed)?;
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
+    /// Runs an agent's job, by the job's id, now, once, without changing when it is next due.
+    async fn run_job(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, job: u32) -> Result<(), Error> {
+        let agent = find(&id)?;
+        let job = jobs::get(&jobs_of(&id)?, job).map_err(Error::Failed)?;
+        // A run that couldn't start says why in the conversation, as a scheduled one does.
+        run_scheduled(self.shared.clone(), connection.clone(), emitter.into_owned(), agent, job.when, job.prompt).await.map(|_| ()).map_err(Error::Failed)
+    }
+
+    /// Answers a job an agent proposed (the entry of a `job` in its conversation): schedules it, or not. A job that can't be
+    /// scheduled says why and stays to be answered again.
+    async fn answer_job(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, entry: u64, schedule: bool) -> Result<(), Error> {
+        let agent = find(&id)?;
+        let path = jobs_of(&id)?;
+        {
+            let mut core = self.shared.core();
+            let chat = core.chat(&agent);
+            let Some((words, prompt, state)) = chat.job_mut(entry) else { return failed("there is no such job") };
+            if *state != FactState::Proposed {
+                return failed("that has been answered already");
+            }
+            if schedule {
+                let when = When::parse(words).map_err(Error::Failed)?;
+                jobs::add(&path, &when, prompt, now_local()).map_err(Error::Failed)?;
+            }
+            *state = if schedule { FactState::Saved } else { FactState::Dismissed };
+            chat.save();
+        }
+        self.shared.events.record(chat::now(), if schedule { "job-added" } else { "job-declined" }, &id, "");
+        Self::agent_changed(&emitter, &id).await?;
+        Ok(())
+    }
+
     /// What happened since `since` (seconds since the epoch), as a JSON array of `{"seq","time","kind","agent","text"}`.
     async fn events(&self, since: u64) -> String {
         self.shared.events.since(since)
@@ -670,6 +762,97 @@ impl Agents {
     async fn answer_piece(emitter: &SignalEmitter<'_>, answer: u32, offset: u32, text: &str) -> zbus::Result<()>;
 }
 
+fn now_local() -> chrono::NaiveDateTime {
+    chrono::Local::now().naive_local()
+}
+
+fn jobs_of(id: &str) -> Result<std::path::PathBuf, Error> {
+    if id == KITH {
+        return failed("Kith's jobs are its tasks, in the launcher's panel");
+    }
+    find(id)?;
+    agents::jobs_path(id).ok_or_else(|| Error::Failed(format!("there is no agent {id}")))
+}
+
+/// Runs a job: what it asks goes in the agent's conversation as if you had said it, and the agent answers. Refused when the
+/// agent is busy answering, which a scheduled run waits out and `RunJob` reports. `Ok(Err(why))` when its answer couldn't
+/// be started, which the entry says.
+async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmitter<'static>, agent: Agent, when: String, prompt: String) -> Result<Result<(), String>, String> {
+    let (entry, conversation) = {
+        let mut core = shared.core();
+        let chat = core.chat(&agent);
+        if chat.writing() {
+            return Err(format!("{} is still answering", agent.name));
+        }
+        let conversation = chat.transcript();
+        chat.push(What::Scheduled { when, prompt: prompt.clone() });
+        let entry = chat.push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+        chat.save();
+        (entry, conversation)
+    };
+    shared.events.record(chat::now(), "scheduled-run", &agent.id, &prompt);
+    if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
+        eprintln!("agentd: sending a change: {err}");
+    }
+    let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: true };
+    match start_answer(&shared, &connection, &agent, entry, &prompt, &conversation, None, meta).await {
+        Ok((_, ended)) => {
+            settle(&shared, &emitter, ended).await;
+            Ok(Ok(()))
+        }
+        Err(why) => {
+            shared.core().fail(&agent, entry, &why);
+            shared.events.record(chat::now(), "failed", &agent.id, &why);
+            if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
+                eprintln!("agentd: sending a change: {err}");
+            }
+            Ok(Err(why))
+        }
+    }
+}
+
+/// Runs a job that is due: one an agent has that was due after it last ran, once, however long the laptop slept. Jobs run
+/// one at a time, so those made up after a sleep don't all ask the model at once: none starts while one a schedule started
+/// is still being written, and the next waits for the next look. One whose agent is busy waits too. One whose answer
+/// can't be started (`autark-ai` still loading after a wake) is tried again `RETRY` later, and after `TRIES` tries is
+/// given up on until its next time.
+async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &SignalEmitter<'static>) {
+    if shared.core().scheduled_running() {
+        return;
+    }
+    let now = now_local();
+    for agent in agents::all() {
+        let Some(path) = agents::jobs_path(&agent.id) else { continue };
+        for (id, due) in jobs::due(&path, now) {
+            let key = (agent.id.clone(), id);
+            if shared.core().tries.get(&key).is_some_and(|(_, last)| last.elapsed() < RETRY) {
+                continue;
+            }
+            // Removed since it was found due: nothing to run.
+            let Ok(job) = jobs::get(&path, id) else { continue };
+            match run_scheduled(shared.clone(), connection.clone(), emitter.clone(), agent.clone(), job.when, job.prompt).await {
+                // Busy: the next look.
+                Err(_) => continue,
+                Ok(Ok(())) => {
+                    shared.core().tries.remove(&key);
+                    jobs::ran(&path, id, due);
+                }
+                Ok(Err(_)) => {
+                    let mut core = shared.core();
+                    let tried = core.tries.entry(key.clone()).or_insert((0, Instant::now()));
+                    *tried = (tried.0 + 1, Instant::now());
+                    if tried.0 >= TRIES {
+                        core.tries.remove(&key);
+                        drop(core);
+                        jobs::ran(&path, id, due);
+                    }
+                }
+            }
+            return;
+        }
+    }
+}
+
 fn memory_of(id: &str) -> Result<std::path::PathBuf, Error> {
     if id == KITH {
         return failed("Kith's memory is kept in the launcher's panel");
@@ -688,6 +871,14 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
             return;
         }
     };
+    let schedule = async {
+        // A look soon after start, so what was missed while the laptop was off is made up, then every half minute.
+        async_io::Timer::after(Duration::from_secs(5)).await;
+        loop {
+            run_due(&shared, &connection, &emitter).await;
+            async_io::Timer::after(Duration::from_secs(30)).await;
+        }
+    };
     let watch = async {
         let mut pruned = Instant::now();
         loop {
@@ -697,7 +888,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 shared.prune();
                 pruned = Instant::now();
             }
-            let idle: Vec<u32> = shared.core().pending.iter().filter(|(_, pending)| pending.heard.elapsed() > IDLE).map(|(id, _)| *id).collect();
+            let idle = shared.core().idle();
             for answer in idle {
                 if let Ok(proxy) = AiProxy::new(&connection).await {
                     let _ = proxy.stop(answer).await;
@@ -763,7 +954,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
             }
         }
     };
-    futures_util::future::join3(watch, listen, deliveries).await;
+    futures_util::future::join4(watch, listen, schedule, deliveries).await;
 }
 
 /// Asks `autark-ai` for an agent's answer: what it may look at that the question is about, then the answer itself under the
@@ -948,6 +1139,26 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_waiting_its_turn_is_not_given_up_on_until_it_has_begun_and_gone_quiet() {
+        let a = agent("piper");
+        let (mut core, entry) = core_with(&a);
+        core.register(3, &a, entry, Meta::default(), &[]);
+        let long_ago = Instant::now().checked_sub(IDLE + Duration::from_secs(60)).unwrap();
+        // Six minutes behind other answers in autark-ai, or a model loading, before its first word.
+        core.pending.get_mut(&3).unwrap().started = long_ago;
+        assert!(core.idle().is_empty());
+        // Once it has begun, six minutes without a word is too long.
+        core.hear(3, Heard::Piece("Hel".into()), &[]);
+        core.pending.get_mut(&3).unwrap().heard = Some(long_ago);
+        assert_eq!(core.idle(), [3]);
+        // One that never begins is given up on too, later.
+        let next = core.chat(&a).push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+        core.register(4, &a, next, Meta::default(), &[]);
+        core.pending.get_mut(&4).unwrap().started = Instant::now().checked_sub(FIRST_WORD + Duration::from_secs(60)).unwrap();
+        assert!(core.idle().contains(&4));
+    }
+
+    #[test]
     fn an_answer_for_an_agent_deleted_meanwhile_brings_nothing_back() {
         // An id that names no folder, so nothing on disk is read even if the conversation were loaded again.
         let a = agent("deleted/");
@@ -1019,8 +1230,11 @@ mod tests {
     }
 
     fn in_chain(ids: &[&str], depth: u8) -> Meta {
-        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None }
+        Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None, scheduled: false }
     }
+
+    /// Held by each test that serves `org.autark.AI1` on the private bus: two at once would answer for each other.
+    static PRIVATE_BUS: Mutex<()> = Mutex::new(());
 
     /// An `autark-ai` whose `Look` never answers, as one loading a model on a busy laptop.
     struct SlowAi;
@@ -1040,6 +1254,7 @@ mod tests {
         if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
             return;
         }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = std::env::temp_dir().join(format!("agentd-settle-{}", std::process::id()));
         async_io::block_on(async {
             let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", SlowAi).build().await.unwrap();
@@ -1047,7 +1262,7 @@ mod tests {
             let shared = Arc::new(Shared::new(Events::new(dir.join("events.jsonl"))));
             let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
             let mut ended = Ended::of("atlas", "answered", String::new());
-            let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+            let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
             ended.delivery = Some(Delivery { from: agent("atlas"), to: agent("raven"), entry: 1, brief: "forecast?".into(), conversation: String::new(), meta });
             // The listener settles every answer that ends: one waiting on a slow model would hold up every other answer.
             let settled = std::pin::pin!(settle(&shared, &emitter, Some(ended)));
@@ -1069,6 +1284,105 @@ mod tests {
         assert_eq!(ended.changed, ["atlas"]);
         assert!(matches!(&core.chat(&team[1]).entries()[1].what, What::Answer { writing: false, error, .. } if error == "Kith isn't running."));
         assert!(matches!(&core.chat(&team[0]).entries().last().unwrap().what, What::From { from, text, reply: true, .. } if from == "raven" && text.contains("Kith isn't running.")));
+    }
+
+    /// An `autark-ai` that starts every answer and never finishes one.
+    struct BusyAi {
+        next: std::sync::atomic::AtomicU32,
+    }
+
+    #[zbus::interface(name = "org.autark.AI1")]
+    impl BusyAi {
+        async fn look(&self, _question: String, _can: Vec<String>) -> String {
+            String::new()
+        }
+
+        async fn complete(&self, _system: String, _context: String, _prompt: String) -> u32 {
+            self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+        }
+    }
+
+    /// Needs a session bus and agents' folders of its own: run under `dbus-run-session` with `AGENTD_PRIVATE_BUS=1` and
+    /// private `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
+    #[test]
+    #[ignore = "needs a private bus and XDG folders: AGENTD_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    fn jobs_made_up_after_a_sleep_run_one_at_a_time() {
+        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+            return;
+        }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // It makes agents: never in your own folders.
+        assert!(std::env::var_os("XDG_CONFIG_HOME").is_some() && std::env::var_os("XDG_STATE_HOME").is_some(), "set private XDG folders");
+        let every_midnight = When::parse("every day at 0:00").unwrap();
+        let yesterday = now_local() - chrono::Duration::days(1);
+        let team: Vec<Agent> = ["sleeper one", "sleeper two"].iter().map(|name| agents::create(name, "", "", &[], &[], &[]).unwrap()).collect();
+        for agent in &team {
+            jobs::add(&agents::jobs_path(&agent.id).unwrap(), &every_midnight, "Summarise my day", yesterday).unwrap();
+        }
+        let scheduled = |shared: &Shared| team.iter().filter(|agent| shared.core().chat(agent).entries().iter().any(|entry| matches!(entry.what, What::Scheduled { .. }))).count();
+        async_io::block_on(async {
+            let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", BusyAi { next: 0.into() }).build().await.unwrap();
+            let connection = zbus::connection::Builder::session().build().await.unwrap();
+            let shared = Arc::new(Shared::new(Events::new(agents::state_base().join("events.jsonl"))));
+            let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
+            run_due(&shared, &connection, &emitter).await;
+            assert_eq!(scheduled(&shared), 1, "both jobs started at once");
+            // The next waits while the first is being written.
+            run_due(&shared, &connection, &emitter).await;
+            assert_eq!(scheduled(&shared), 1);
+            let all = agents::all();
+            let ended = shared.core().hear(1, Heard::Done(String::new()), &all);
+            assert!(ended.is_some());
+            run_due(&shared, &connection, &emitter).await;
+            assert_eq!(scheduled(&shared), 2);
+        });
+    }
+
+    /// An `autark-ai` that is up but can't start an answer yet, as one still loading after a wake.
+    struct LoadingAi;
+
+    #[zbus::interface(name = "org.autark.AI1")]
+    impl LoadingAi {
+        async fn look(&self, _question: String, _can: Vec<String>) -> String {
+            String::new()
+        }
+
+        async fn complete(&self, _system: String, _context: String, _prompt: String) -> zbus::fdo::Result<u32> {
+            Err(zbus::fdo::Error::Failed("The model is still loading.".into()))
+        }
+    }
+
+    /// Needs a session bus and agents' folders of its own, as `jobs_made_up_after_a_sleep_run_one_at_a_time`.
+    #[test]
+    #[ignore = "needs a private bus and XDG folders: AGENTD_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    fn a_job_whose_answer_cant_start_is_tried_again_then_given_up() {
+        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+            return;
+        }
+        let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(std::env::var_os("XDG_CONFIG_HOME").is_some() && std::env::var_os("XDG_STATE_HOME").is_some(), "set private XDG folders");
+        let agent = agents::create("waker", "", "", &[], &[], &[]).unwrap();
+        let path = agents::jobs_path(&agent.id).unwrap();
+        jobs::add(&path, &When::parse("every day at 0:00").unwrap(), "Summarise my day", now_local() - chrono::Duration::days(1)).unwrap();
+        async_io::block_on(async {
+            let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", LoadingAi).build().await.unwrap();
+            let connection = zbus::connection::Builder::session().build().await.unwrap();
+            let shared = Arc::new(Shared::new(Events::new(agents::state_base().join("events.jsonl"))));
+            let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
+            for _ in 1..TRIES {
+                run_due(&shared, &connection, &emitter).await;
+                // Not noted as run, so it is made up when the model is ready.
+                assert_eq!(jobs::due(&path, now_local()).len(), 1, "a run that couldn't start was noted as run");
+                // The next try waits a while; here it is due at once.
+                for tried in shared.core().tries.values_mut() {
+                    tried.1 = Instant::now().checked_sub(RETRY + Duration::from_secs(1)).unwrap();
+                }
+            }
+            run_due(&shared, &connection, &emitter).await;
+            assert!(jobs::due(&path, now_local()).is_empty(), "given up on after {TRIES} tries");
+            assert!(shared.core().tries.is_empty());
+        });
+        agents::delete(&agent.id).unwrap();
     }
 
     #[test]
@@ -1140,7 +1454,7 @@ mod tests {
     #[test]
     fn an_answer_to_handed_over_work_goes_back_to_the_agent_that_asked() {
         let team = [linked("atlas", &["raven"]), linked("raven", &[])];
-        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
         let mut core = handoff_core(&team, "raven", "", meta.clone());
         core.hear(5, Heard::Piece("Rain, 28 degrees.".into()), &team);
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
@@ -1155,7 +1469,7 @@ mod tests {
     #[test]
     fn an_answer_that_hands_on_after_being_handed_work_does_both() {
         let team = [linked("atlas", &["raven"]), linked("raven", &["quill"]), linked("quill", &[])];
-        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+        let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()), scheduled: false };
         let mut core = handoff_core(&team, "raven", "Ask QUILL too.\nHANDOFF quill: find my trip notes", meta);
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
         assert_eq!(ended.delivery.as_ref().map(|delivery| delivery.meta.depth), Some(2));

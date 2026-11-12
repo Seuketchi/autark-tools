@@ -150,6 +150,12 @@ window.kith .titlebar {
   color: @danger;
 }
 
+.job-when {
+  color: @text3;
+  font-size: 12px;
+  min-width: 130px;
+}
+
 .handoff {
   margin: 4px 20px;
   color: @text3;

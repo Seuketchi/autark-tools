@@ -146,6 +146,7 @@ name = "autark-agentd"
 version = "0.0.0"
 dependencies = [
  "async-io",
+ "chrono",
  "futures-util",
  "serde",
  "serde_json",

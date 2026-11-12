@@ -6,12 +6,14 @@ mod ai;
 mod chat;
 mod events;
 mod files;
+mod jobs;
 mod mailbox;
 mod memory;
 mod notes;
 mod prompt;
 mod remember;
 mod service;
+mod when;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -41,6 +41,7 @@ of one. Files an earlier version left readable by others are narrowed when the d
 | An agent: name, colour, job, soul, `can`, `skills`, `links` | `~/.config/autark-agentd/agents/<id>/agent.toml` |
 | Its conversation (a week) | `~/.local/state/autark-agentd/agents/<id>/chat.json` |
 | Its memory | `~/.config/autark-agentd/agents/<id>/memory.toml` |
+| Its scheduled jobs (at most 5) | `~/.config/autark-agentd/agents/<id>/jobs.toml` |
 | The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
 
 The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
@@ -50,11 +51,12 @@ conversation says its answer was cut off, and the agent that asked gets no reply
 An id is a short slug, so it can't name a path outside the agents' folders. A folder keeps its id even when its
 `agent.toml` can't be read, so a new agent never moves in on another's memory.
 
-`agent.toml`, `memory.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of their format
-wrote them. A file from a newer version is read but never written over. An entry of a kind this version doesn't know
-is kept as it is. A `chat.json` that can't be understood is moved aside to `chat.json.bad-<seconds>` before a new one
-is begun; a `memory.toml` that can't be read is left as it is, and Memory, Remember and Forget say why until it is
-fixed. An entry's `id` is never given twice in a conversation.
+`agent.toml`, `memory.toml`, `jobs.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of
+their format wrote them. A file from a newer version is read but never written over (a `jobs.toml` from one runs no
+jobs, and Jobs says why). An entry of a kind this version doesn't know is kept as it is. A `chat.json` or `jobs.toml`
+that can't be understood is moved aside to `<name>.bad-<seconds>` before a new one is begun; a `memory.toml` that can't
+be read is left as it is, and Memory, Remember and Forget say why until it is fixed. An entry's `id` is never given
+twice in a conversation.
 
 ## Memory
 
@@ -109,11 +111,33 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
 
 ## Schedule
 
-An agent can have jobs: a prompt and a time (every morning at 8; weekdays at 17:30). The daemon runs them through the
-same path as a message from you, in that agent's conversation, so the result is waiting when you open the roster, and
-a missed run is made up on waking. Each agent may also have a **heartbeat**, as OpenClaw's: it wakes every so often,
-code runs the cheap checks first (is there new mail? has the calendar changed?), and only when something changed does
-the model get called. This is what makes a 4B model usable for standing work.
+An agent can have jobs (up to 5): a time and what to do, which the daemon does as if you had said it, in that agent's
+conversation, so the result is waiting when you open the roster. A job is shown there as your request with "Scheduled ·
+weekdays at 8:00" over it.
+
+- **Code reads the time, not the model.** `every day at 8`, `weekdays at 17:30`, `weekends at 10am`, `every monday at 9`,
+  `the 1st of every month at 9` (the 1st to the 28th, so every month has it), or `every morning` (8), `every evening` (18),
+  `every night` (21). With a part of the day a bare hour is read in it (`every evening at 7` is 19:00, `every night at
+  12` midnight), and a time that contradicts it (`every morning at 7pm`) is refused. A time that can't be read says what
+  can be said. A 4B model gets dates wrong, and a job on the wrong day is worse than none.
+- **Set from the roster** (**⋯ › Schedule…**: when, what, an on/off switch, Run now, remove) **or by saying it:** "every
+  weekday at 8, tell me who has written" (or the same with the time last) answers with a card, **Schedule** or **Don't
+  schedule**, and only on Schedule is a job made. A sentence about yourself ("I go to the gym every day at 6") or a
+  question isn't one.
+- **A missed run is made up once.** Each job keeps the time it was last due and run (`jobs.toml`). Every half minute, and
+  soon after the daemon starts, anything due after that runs once, however many times it came while the laptop slept. A job
+  made now doesn't run for a time before it was made, and one switched back on starts from then. Jobs run one at a time:
+  none starts while another's answer is being written, so a dozen made up after a sleep don't ask the model at once. An
+  answer's five minutes without a word count from its first word, so time spent waiting its turn isn't held against it.
+- **An agent that is busy answering waits:** the run happens at the next look after it is free. A run whose answer can't be
+  started (the model is off or still loading after a wake) is tried again two minutes later, up to three times, and then
+  waits for its next time; a run that started and failed is not tried again.
+- **It is read-only like any answer:** the agent looks only at its `can` list, and a job can hand work on, within the
+  mailbox's limits.
+
+Heartbeats, as OpenClaw's, are next: an agent wakes every so often, code runs the cheap checks first (is there new mail? has
+the calendar changed?), and only when something changed does the model get called. That is what makes a 4B model usable for
+standing work, and it needs those checks to exist in `autark-ai` first.
 
 ## API: `org.autark.Agents1` at `/org/autark/Agents1`
 
@@ -124,6 +148,7 @@ the model get called. This is what makes a 4B model usable for standing work.
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation; `Say` returns the answer's id and its entry |
 | `AnswerFact(id, entry, save)` / `AnswerAdd(id, entry, add)` | Save a proposed fact or not; add a proposed line to a note or not |
 | `Memory(id)` / `Remember(id, text)` / `Forget(id, text)` | Its memory; a fact is forgotten by its words |
+| `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, job)` / `SetJobEnabled(id, job, on)` / `RunJob(id, job)` | Its schedule; `Jobs` is a JSON array of `{"id","when","prompt","enabled","next","last"}`, and a job is called by its `id`, which no other job of the agent is ever given |
 | `Events(since)` / `EventsAfter(seq)` | What happened, from a time or after an event's number, as a JSON array of `{"seq","time","kind","agent","text"}` |
 | signals `AgentChanged(id)`, `AgentsChanged()`, `AnswerPiece(answer, offset, text)` | What clients follow |
 
@@ -137,6 +162,7 @@ the model get called. This is what makes a 4B model usable for standing work.
 | `add` | `note`, `items`, `state` (as for `fact`): lines it proposes to add to a note |
 | `handoff` | `to`, `name`, `brief`, `refused` (empty when it went): work it handed to another agent |
 | `from` | `from`, `name`, `text`, `reply`: a message from another agent, or (`reply`) its answer to work handed to it |
+| `job` | `when`, `prompt`, `state` (as for `fact`): a job it proposes to run on a schedule |
 
 A client shows an entry of a kind it doesn't know as nothing, not as an error: later steps add kinds.
 
@@ -155,5 +181,5 @@ answer only its length.
    Kith stays `autark-ai`'s: a message to it from the roster goes through its own `Chat` and `ChatAnswer`, and what it
    would do as an action is left to the launcher's panel, where it asks first.
 2. **The mailbox** (stacked on the first): `links`, `HANDOFF`, depth limit, both chats showing it.
-3. **The schedule and heartbeat.**
+3. **The schedule** (stacked on the mailbox), then **heartbeats**.
 4. **Clients:** the launcher and the bar show a waiting agent; a Kitchen agent that reads `kitchend`.
