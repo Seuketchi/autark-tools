@@ -4,10 +4,11 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use futures_util::future::BoxFuture;
+use futures_util::stream::FuturesUnordered;
 use serde_json::{Value, json};
 use zbus::object_server::SignalEmitter;
 
@@ -123,11 +124,33 @@ struct Core {
 pub struct Shared {
     core: Mutex<Core>,
     events: Events,
+    /// Work handed on and waiting to be started, and the task to wake for it.
+    mailbox: Mutex<(VecDeque<Delivery>, Option<Waker>)>,
 }
 
 impl Shared {
     pub fn new(events: Events) -> Self {
-        Self { core: Mutex::new(Core::default()), events }
+        Self { core: Mutex::new(Core::default()), events, mailbox: Mutex::default() }
+    }
+
+    /// Leaves work handed on to be started by `follow`, so whoever settled the answer that handed it on never waits for
+    /// a model to start.
+    fn post(&self, delivery: Delivery) {
+        let mut mailbox = self.mailbox.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        mailbox.0.push_back(delivery);
+        if let Some(waker) = mailbox.1.take() {
+            waker.wake();
+        }
+    }
+
+    /// The work waiting to be started, or `Pending` until some is.
+    fn collect(&self, cx: &mut Context<'_>) -> Poll<Vec<Delivery>> {
+        let mut mailbox = self.mailbox.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if mailbox.0.is_empty() {
+            mailbox.1 = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+        Poll::Ready(mailbox.0.drain(..).collect())
     }
 
     fn core(&self) -> MutexGuard<'_, Core> {
@@ -504,7 +527,7 @@ impl Agents {
         match start_answer(&self.shared, connection, &agent, entry, &text, &conversation, None, meta).await {
             Ok((answer, ended)) => {
                 // An answer that failed at once has ended by now.
-                settle(self.shared.clone(), connection.clone(), emitter.into_owned(), ended).await;
+                settle(&self.shared, &emitter, ended).await;
                 Ok((answer, entry))
             }
             Err(why) => {
@@ -668,7 +691,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 }
                 let team = agents::all();
                 let ended = shared.core().finish(answer, "The model didn't answer in time.", &team);
-                settle(shared.clone(), connection.clone(), emitter.clone(), ended).await;
+                settle(&shared, &emitter, ended).await;
             }
         }
     };
@@ -690,18 +713,18 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                             }
                             shared.core().hear(id, Heard::Piece(text), &[]);
                         }
-                        Told::Kith => settle(shared.clone(), connection.clone(), emitter.clone(), Some(Ended::of(KITH, "", String::new()))).await,
+                        Told::Kith => settle(&shared, &emitter, Some(Ended::of(KITH, "", String::new()))).await,
                         Told::Restarted => {
                             let team = agents::all();
                             let ended = shared.core().ai_restarted(&team);
                             for ended in ended {
-                                settle(shared.clone(), connection.clone(), emitter.clone(), Some(ended)).await;
+                                settle(&shared, &emitter, Some(ended)).await;
                             }
                         }
                         Told::Done(id, error) => {
                             let team = agents::all();
                             let ended = shared.core().hear(id, Heard::Done(error), &team);
-                            settle(shared.clone(), connection.clone(), emitter.clone(), ended).await;
+                            settle(&shared, &emitter, ended).await;
                         }
                     }
                 }
@@ -713,7 +736,21 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
             async_io::Timer::after(Duration::from_secs(3)).await;
         }
     };
-    futures_util::future::join(watch, listen).await;
+    // Work handed on starts here, beside the listener, so a model slow to start one never holds up the others' words.
+    let deliveries = async {
+        let mut running = FuturesUnordered::new();
+        loop {
+            let posted = std::future::poll_fn(|cx| {
+                while let Poll::Ready(Some(())) = running.poll_next_unpin(cx) {}
+                shared.collect(cx)
+            })
+            .await;
+            for delivery in posted {
+                running.push(deliver(&shared, &connection, &emitter, delivery));
+            }
+        }
+    };
+    futures_util::future::join3(watch, listen, deliveries).await;
 }
 
 /// Asks `autark-ai` for an agent's answer: what it may look at that the question is about, then the answer itself under the
@@ -789,35 +826,38 @@ fn as_mine(text: &str) -> String {
 }
 
 /// What follows an answer's end: it is logged, clients are told which conversations changed, and work it handed on is
-/// started.
-fn settle(shared: Arc<Shared>, connection: zbus::Connection, emitter: SignalEmitter<'static>, ended: Option<Ended>) -> BoxFuture<'static, ()> {
-    Box::pin(async move {
-        let Some(ended) = ended else { return };
-        if !ended.kind.is_empty() {
-            shared.events.record(chat::now(), ended.kind, &ended.agent, &ended.said);
+/// left for `follow` to start.
+async fn settle(shared: &Shared, emitter: &SignalEmitter<'_>, ended: Option<Ended>) {
+    let Some(ended) = ended else { return };
+    if !ended.kind.is_empty() {
+        shared.events.record(chat::now(), ended.kind, &ended.agent, &ended.said);
+    }
+    for (kind, agent, what) in &ended.logged {
+        shared.events.record(chat::now(), kind, agent, what);
+    }
+    for id in std::iter::once(&ended.agent).chain(&ended.changed) {
+        if let Err(err) = Agents::agent_changed(emitter, id).await {
+            eprintln!("agentd: sending a change: {err}");
         }
-        for (kind, agent, what) in &ended.logged {
-            shared.events.record(chat::now(), kind, agent, what);
-        }
-        for id in std::iter::once(&ended.agent).chain(&ended.changed) {
-            if let Err(err) = Agents::agent_changed(&emitter, id).await {
+    }
+    if let Some(delivery) = ended.delivery {
+        shared.post(delivery);
+    }
+}
+
+/// Starts the answer to work handed on, and settles it if it has ended already.
+async fn deliver(shared: &Shared, connection: &zbus::Connection, emitter: &SignalEmitter<'_>, delivery: Delivery) {
+    let Delivery { from, to, entry, brief, conversation, meta } = delivery;
+    match start_answer(shared, connection, &to, entry, &brief, &conversation, Some(&from.name), meta).await {
+        Ok((_, ended)) => settle(shared, emitter, ended).await,
+        Err(why) => {
+            shared.core().fail(&to, entry, &why);
+            shared.events.record(chat::now(), "failed", &to.id, &why);
+            if let Err(err) = Agents::agent_changed(emitter, &to.id).await {
                 eprintln!("agentd: sending a change: {err}");
             }
         }
-        if let Some(delivery) = ended.delivery {
-            let Delivery { from, to, entry, brief, conversation, meta } = delivery;
-            match start_answer(&shared, &connection, &to, entry, &brief, &conversation, Some(&from.name), meta).await {
-                Ok((_, ended)) => settle(shared, connection, emitter, ended).await,
-                Err(why) => {
-                    shared.core().fail(&to, entry, &why);
-                    shared.events.record(chat::now(), "failed", &to.id, &why);
-                    if let Err(err) = Agents::agent_changed(&emitter, &to.id).await {
-                        eprintln!("agentd: sending a change: {err}");
-                    }
-                }
-            }
-        }
-    })
+    }
 }
 
 #[cfg(test)]
@@ -969,6 +1009,43 @@ mod tests {
 
     fn in_chain(ids: &[&str], depth: u8) -> Meta {
         Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None }
+    }
+
+    /// An `autark-ai` whose `Look` never answers, as one loading a model on a busy laptop.
+    struct SlowAi;
+
+    #[zbus::interface(name = "org.autark.AI1")]
+    impl SlowAi {
+        async fn look(&self, _question: String, _can: Vec<String>) -> String {
+            std::future::pending().await
+        }
+    }
+
+    /// Needs a session bus of its own, so it never touches yours: run under `dbus-run-session` with
+    /// `AGENTD_PRIVATE_BUS=1` and private `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
+    #[test]
+    #[ignore = "needs a private bus: AGENTD_PRIVATE_BUS=1 dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    fn settling_a_handoff_does_not_wait_for_its_answer_to_start() {
+        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("agentd-settle-{}", std::process::id()));
+        async_io::block_on(async {
+            let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", SlowAi).build().await.unwrap();
+            let connection = zbus::connection::Builder::session().build().await.unwrap();
+            let shared = Arc::new(Shared::new(Events::new(dir.join("events.jsonl"))));
+            let emitter = SignalEmitter::new(&connection, PATH).unwrap().into_owned();
+            let mut ended = Ended::of("atlas", "answered", String::new());
+            let meta = Meta { depth: 1, chain: vec!["atlas".into(), "raven".into()], origin: Some("atlas".into()) };
+            ended.delivery = Some(Delivery { from: agent("atlas"), to: agent("raven"), entry: 1, brief: "forecast?".into(), conversation: String::new(), meta });
+            // The listener settles every answer that ends: one waiting on a slow model would hold up every other answer.
+            let settled = std::pin::pin!(settle(&shared, &emitter, Some(ended)));
+            let first = futures_util::future::select(settled, async_io::Timer::after(Duration::from_secs(3))).await;
+            assert!(matches!(first, futures_util::future::Either::Left(_)), "settle waited for the handoff's answer to start");
+            // It is left for `follow` to start.
+            assert_eq!(shared.mailbox.lock().unwrap().0.len(), 1);
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
