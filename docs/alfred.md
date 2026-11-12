@@ -12,7 +12,7 @@ one daemon owns the state and the rules, and every window or tool is a client of
 
 | Name | Stands for | What it does |
 |---|---|---|
-| ALFRED | Assistant that Lists, Files, Reminds, and Edits Drafts | The front of the house: answers what it can and hands the rest to the right specialist; it only drafts, you decide |
+| ALFRED | Assistant that Lists, Files, Reminds, and Edits Drafts | The front of the house: answers what it can and tells you which specialist in Kith to ask for the rest; it only drafts, you decide |
 | LUCIUS | Lines Up Calendar, Issues and Urgent Steps | Plans your day from the calendar, the task board and your notes, first thing first |
 | GORDON | Gathers Others' Requests, Decides Order, Never sends | Keeps the inbox at zero: who has written and what needs a reply, most urgent first; only reads |
 | ORACLE | Online Research, Answers Cited, Links Every fact | Looks things up on the web and says which site each fact comes from |

@@ -119,7 +119,7 @@ fn kith() -> Agent {
         id: KITH.to_owned(),
         name: "Alfred".to_owned(),
         colour: 0,
-        job: "The front of the house: it answers what it can and hands the rest to the right specialist. It only drafts; you decide.".to_owned(),
+        job: "The front of the house: it answers what it can and tells you which specialist in Kith to ask for the rest. It only drafts; you decide.".to_owned(),
         soul: String::new(),
         can: ABILITIES.map(str::to_owned).to_vec(),
         skills: Vec::new(),
