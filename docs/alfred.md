@@ -8,6 +8,24 @@ where each agent's job, conversation and memory live, a way for agents to hand w
 schedule, and a record of what happened. `autark-alfred` is that backend, in the manner of agent-kitchen's `kitchend`:
 one daemon owns the state and the rules, and every window or tool is a client of its API.
 
+## The team
+
+| Name | Stands for | What it does |
+|---|---|---|
+| ALFRED | Assistant that Lists, Files, Reminds, and Edits Drafts | The front of the house: answers what it can and hands the rest to the right specialist; it only drafts, you decide |
+| LUCIUS | Lines Up Calendar, Issues and Urgent Steps | Plans your day from the calendar, the task board and your notes, first thing first |
+| GORDON | Gathers Others' Requests, Decides Order, Never sends | Keeps the inbox at zero: who has written and what needs a reply, most urgent first; only reads |
+| ORACLE | Online Research, Answers Cited, Links Every fact | Looks things up on the web and says which site each fact comes from |
+| QUILL | Quotes Unaltered, Indexes Lifelong Logs | Finds what you wrote or said before in your notes and conversations, word for word |
+| FORGE | Failures and Options, Reasoned like a Good Engineer | Works a design or failure problem in a professional engineer's order |
+| GAVEL | Guides A Very Early Legal look | Thinks a legal question through the way a lawyer opens a matter |
+| HAVEN | Hears And Validates, Evaluates, Never diagnoses | Works a mental-health question the way a psychiatrist opens an evaluation |
+| LEDGER | Looks at Entries, Debits, Gains, Expenses, Reconciles | Works a books or financial-statements question the way an accountant does |
+| LEVY | Lowers Exposure, Verifies Yearly filings | Works a tax question the way a tax advisor does |
+| PULSE | Points to Urgency, Lists Steps, Escalates | Works a health question the way a physician does, and never diagnoses |
+
+The profession lenses (FORGE to PULSE) are made when their skill is on this machine.
+
 ## What goes where
 
 ```
