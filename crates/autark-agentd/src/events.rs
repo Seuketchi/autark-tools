@@ -28,7 +28,7 @@ impl Events {
         let line = json!({ "time": time, "kind": kind, "agent": agent, "text": first });
         let result = (|| {
             if let Some(dir) = self.path.parent() {
-                std::fs::create_dir_all(dir)?;
+                crate::files::private_dir(dir)?;
             }
             let mut file = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(&self.path)?;
             writeln!(file, "{line}")

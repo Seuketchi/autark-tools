@@ -1,7 +1,6 @@
 //! An agent's conversation: what you said and what it answered, kept a week in its own `chat.json`, readable only by
 //! you. The entries are shaped as Kith's own are (`kind` is `you` or `answer`), so a client reads both the same way.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -166,19 +165,11 @@ impl Chat {
         lines.join("\n")
     }
 
-    /// Writes the conversation through a temporary file, only you able to read it.
+    /// Writes the conversation whole, only you able to read it.
     pub fn save(&mut self) {
         self.prune();
         let Some(path) = self.path.clone() else { return };
-        let result = (|| {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            let temporary = path.with_extension("json.saving");
-            std::fs::write(&temporary, serde_json::to_vec(&self.entries)?)?;
-            std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))?;
-            std::fs::rename(&temporary, &path)
-        })();
+        let result = serde_json::to_vec(&self.entries).map_err(std::io::Error::other).and_then(|bytes| crate::files::write(&path, &bytes));
         if let Err(err) = result {
             eprintln!("agentd: saving the conversation to {}: {err}", path.display());
         }
@@ -227,6 +218,8 @@ mod tests {
         let mut chat = Chat::load(path.clone(), "A");
         chat.push(What::Answer { answer: 3, text: "Par".into(), writing: true, error: String::new() });
         chat.save();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         let mut again = Chat::load(path, "A");
         assert!(!again.writing());
         assert!(matches!(&again.entries()[0].what, What::Answer { error, text, .. } if error.contains("cut off") && text == "Par"));

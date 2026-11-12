@@ -211,10 +211,9 @@ fn linked(links: &[String], existing: &[Agent], own: &str) -> Result<Vec<String>
 fn write(root: &Path, agent: &Agent) -> Result<(), String> {
     let file =
         File { name: agent.name.clone(), colour: agent.colour, job: agent.job.clone(), soul: agent.soul.clone(), can: agent.can.clone(), skills: agent.skills.clone(), links: agent.links.clone() };
-    let dir = root.join(&agent.id);
-    std::fs::create_dir_all(&dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
+    let path = root.join(&agent.id).join("agent.toml");
     let text = toml::to_string(&file).map_err(|err| err.to_string())?;
-    std::fs::write(dir.join("agent.toml"), text).map_err(|err| format!("writing {}: {err}", dir.display()))
+    crate::files::write(&path, text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))
 }
 
 fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], skills: &[String], links: &[String]) -> Result<Agent, String> {
@@ -404,6 +403,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("agentd-agents-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn an_agents_file_and_folder_are_only_yours() {
+        let root = folder("mode");
+        let agent = create_in(&root, "Piper", "", "", &[], &[], &[]).unwrap();
+        assert_eq!((mode(&root.join(&agent.id)), mode(&root.join(&agent.id).join("agent.toml"))), (0o700, 0o600));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

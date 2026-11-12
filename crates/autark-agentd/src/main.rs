@@ -5,6 +5,7 @@ mod agents;
 mod ai;
 mod chat;
 mod events;
+mod files;
 mod memory;
 mod notes;
 mod prompt;

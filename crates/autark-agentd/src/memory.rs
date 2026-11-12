@@ -30,11 +30,8 @@ pub fn load(path: &Path) -> Vec<Fact> {
 }
 
 fn save(path: &Path, facts: Vec<Fact>) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|err| format!("making {}: {err}", dir.display()))?;
-    }
     let text = toml::to_string(&File { fact: facts }).map_err(|err| err.to_string())?;
-    std::fs::write(path, text).map_err(|err| format!("writing {}: {err}", path.display()))
+    crate::files::write(path, text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))
 }
 
 /// Adds a fact, or says why it can't be.
@@ -100,6 +97,16 @@ mod tests {
         forget(&p, 0).unwrap();
         assert_eq!(load(&p).len(), 1);
         assert!(forget(&p, 5).is_err());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn the_memory_file_and_its_folder_are_only_yours() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = path("mode");
+        add(&p, "Lives in Cebu", 1).unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!((mode(p.parent().unwrap()), mode(&p)), (0o700, 0o600));
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
