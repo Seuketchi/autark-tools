@@ -62,6 +62,8 @@ struct Pending {
     agent: String,
     heard: Instant,
     meta: Meta,
+    /// You stopped it: what was written so far is kept, and a handoff cut off in it is not made.
+    stopped: bool,
 }
 
 /// Work handed to an agent, put in its conversation and waiting to be started.
@@ -155,7 +157,7 @@ impl Core {
         if let Some(What::Answer { answer: id, .. }) = chat.get_mut(entry) {
             *id = answer;
         }
-        self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now(), meta });
+        self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now(), meta, stopped: false });
         let mut finished = None;
         let early = std::mem::take(&mut self.early);
         for (id, heard, when) in early {
@@ -172,6 +174,11 @@ impl Core {
             }
         }
         finished
+    }
+
+    /// Marks an answer of an agent here as stopped by you. Returns whether it is one.
+    fn stopping(&mut self, answer: u32) -> bool {
+        self.pending.get_mut(&answer).map(|pending| pending.stopped = true).is_some()
     }
 
     fn append(&mut self, answer: u32, piece: &str) {
@@ -203,7 +210,8 @@ impl Core {
                 *why = "No answer came back.".to_owned();
             }
             well = why.is_empty();
-            if well {
+            // A stopped answer is kept as it was written: a handoff line in it may be cut off, and you stopped it anyway.
+            if well && !pending.stopped {
                 // A handoff the last line asks for is not part of what is said.
                 let (visible, handoff) = mailbox::split(text);
                 if handoff.is_some() {
@@ -524,8 +532,10 @@ impl Agents {
         Ok(())
     }
 
-    /// Stops an answer still being written; it ends with what was written so far and no error.
+    /// Stops an answer still being written; it ends with what was written so far and no error, and hands nothing on.
     async fn stop(&self, #[zbus(connection)] connection: &zbus::Connection, answer: u32) -> Result<(), Error> {
+        // Marked before autark-ai is told, so its AnswerDone always finds the mark.
+        self.shared.core().stopping(answer);
         ai(connection).await?.stop(answer).await.map_err(engine)
     }
 
@@ -959,6 +969,19 @@ mod tests {
 
     fn in_chain(ids: &[&str], depth: u8) -> Meta {
         Meta { depth, chain: ids.iter().map(|id| (*id).to_owned()).collect(), origin: None }
+    }
+
+    #[test]
+    fn a_stopped_answer_hands_nothing_on() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let mut core = handoff_core(&team, "atlas", "Asking RAVEN.\nHANDOFF raven: forecast for", in_chain(&["atlas"], 0));
+        assert!(core.stopping(5));
+        // autark-ai ends a stopped answer with what was written and no error.
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert!(ended.delivery.is_none() && ended.changed.is_empty());
+        assert_eq!(core.chat(&team[0]).entries().len(), 1);
+        assert!(core.chat(&team[1]).entries().is_empty());
+        assert!(!core.stopping(6));
     }
 
     #[test]

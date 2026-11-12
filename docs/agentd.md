@@ -99,7 +99,8 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
 - **Code routes, not the model.** An agent with links is told who they are and to end its reply with a line
   `HANDOFF <id>: <what to ask>`. The daemon reads that line itself (only on the last line, at its start or after a
   sentence ends there, and only when well formed, so a quoted email can't hand work on), takes it out of what is shown,
-  checks the link, the depth, the chain and whether the other agent is busy, and delivers. A model
+  checks the link, the depth, the chain and whether the other agent is busy, and delivers. An answer you stop hands
+  nothing on: it is kept as it was written. A model
   that gets the line wrong hands nothing on, and one that claims it handed something without the line is wrong in a way
   you can see: there is no "Asked …" line.
 
