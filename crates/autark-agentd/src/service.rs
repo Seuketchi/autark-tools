@@ -236,8 +236,8 @@ fn engine(error: zbus::Error) -> Error {
 
 #[zbus::interface(name = "org.autark.Agents1")]
 impl Agents {
-    /// The team as JSON, Kith first: `[{"id","name","colour","job","last","time","writing"}]`. `last` is what was said
-    /// last in its conversation and `time` when, in seconds since the epoch (0 for nothing yet).
+    /// The team as JSON, Kith first: `[{"id","name","colour","job","can","skills","links","last","time","writing"}]`.
+    /// `last` is what was said last in its conversation and `time` when, in seconds since the epoch (0 for nothing yet).
     async fn agents(&self, #[zbus(connection)] connection: &zbus::Connection) -> Result<String, Error> {
         let team = agents::all();
         let kith = match team.iter().any(|agent| agent.id == KITH) {
@@ -306,8 +306,9 @@ impl Agents {
         Ok(())
     }
 
-    /// An agent's conversation, as a JSON array of entries: `{"id","time","kind":"you","text"}` and
-    /// `{"id","time","kind":"answer","answer","text","writing","error"}`.
+    /// An agent's conversation, as a JSON array of entries: `{"id","time","kind":"you","text"}`,
+    /// `{"id","time","kind":"answer","answer","text","writing","error"}`, `{"id","time","kind":"fact","text","state"}` and
+    /// `{"id","time","kind":"add","note","items","state"}`.
     async fn history(&self, #[zbus(connection)] connection: &zbus::Connection, id: String) -> Result<String, Error> {
         let agent = find(&id)?;
         if agent.id == KITH {
