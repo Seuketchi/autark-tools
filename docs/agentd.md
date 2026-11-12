@@ -34,7 +34,7 @@ a new kind of socket. The API is typed and listed below, and the daemon needs no
 
 Files, like the rest of Autark, so you can read and back them up. All under your own account, files mode 0600 in
 folders mode 0700, and each is replaced whole (a temporary file beside it, then a rename), so a crash never leaves half
-of one.
+of one. Files an earlier version left readable by others are narrowed when the daemon starts (links are not followed).
 
 | What | Where |
 |---|---|
