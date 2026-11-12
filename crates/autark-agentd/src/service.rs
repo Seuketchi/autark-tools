@@ -488,9 +488,15 @@ impl Agents {
         Ok(())
     }
 
-    /// What happened since `since` (seconds since the epoch), as a JSON array of `{"time","kind","agent","text"}`.
+    /// What happened since `since` (seconds since the epoch), as a JSON array of `{"seq","time","kind","agent","text"}`.
     async fn events(&self, since: u64) -> String {
         self.shared.events.since(since)
+    }
+
+    /// What happened after the event numbered `seq` (0 for all), as `Events` gives it: a client that keeps the last
+    /// `seq` it saw misses nothing and sees nothing twice, however many events share a second.
+    async fn events_after(&self, seq: u64) -> String {
+        self.shared.events.after(seq)
     }
 
     #[zbus(signal)]

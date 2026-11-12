@@ -1,10 +1,12 @@
 //! The event log: one JSON line for each thing that happened (an agent made or deleted, a message said, an answer
 //! given or failed), kept 14 days in `events.jsonl`, readable only by you. It holds who, what kind, when and the first
-//! words of a message, never a whole answer.
+//! words of a message, never a whole answer. Each event has a number, `seq`, larger than any before it, so a client can
+//! ask for what came after the last one it saw.
 
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use serde_json::{Value, json};
 
@@ -15,17 +17,30 @@ const WORDS: usize = 80;
 
 pub struct Events {
     path: PathBuf,
+    /// The last event's number. Held while the file is written, so numbers go in order and a prune loses none.
+    last: Mutex<u64>,
 }
 
 impl Events {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        let events = Self { path, last: Mutex::new(0) };
+        let last = events.read().iter().filter_map(|event| event["seq"].as_u64()).max().unwrap_or(0);
+        *events.lock() = last;
+        events
+    }
+
+    fn lock(&self) -> MutexGuard<'_, u64> {
+        self.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Appends an event.
     pub fn record(&self, time: u64, kind: &str, agent: &str, text: &str) {
         let first: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(WORDS).collect();
-        let line = json!({ "time": time, "kind": kind, "agent": agent, "text": first });
+        let mut last = self.lock();
+        // A thousand a second from the time, so numbers keep growing when the log has been pruned empty and the daemon
+        // started again; one more than the last when they come faster.
+        let seq = (*last + 1).max(time.saturating_mul(1000));
+        let line = json!({ "seq": seq, "time": time, "kind": kind, "agent": agent, "text": first });
         let result = (|| {
             if let Some(dir) = self.path.parent() {
                 crate::files::private_dir(dir)?;
@@ -33,14 +48,21 @@ impl Events {
             let mut file = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(&self.path)?;
             writeln!(file, "{line}")
         })();
-        if let Err(err) = result {
-            eprintln!("agentd: writing the event log: {err}");
+        match result {
+            Ok(()) => *last = seq,
+            Err(err) => eprintln!("agentd: writing the event log: {err}"),
         }
     }
 
     /// The events at or after `since`, as a JSON array.
     pub fn since(&self, since: u64) -> String {
         let events: Vec<Value> = self.read().into_iter().filter(|event| event["time"].as_u64().unwrap_or(0) >= since).collect();
+        Value::Array(events).to_string()
+    }
+
+    /// The events numbered after `seq`, as a JSON array.
+    pub fn after(&self, seq: u64) -> String {
+        let events: Vec<Value> = self.read().into_iter().filter(|event| event["seq"].as_u64().unwrap_or(0) > seq).collect();
         Value::Array(events).to_string()
     }
 
@@ -81,6 +103,26 @@ mod tests {
         let later: Vec<Value> = serde_json::from_str(&events.since(150)).unwrap();
         assert_eq!(later.len(), 1);
         assert_eq!(later[0]["kind"], "answered");
+        let _ = std::fs::remove_dir_all(events.path.parent().unwrap());
+    }
+
+    #[test]
+    fn each_event_has_a_number_that_only_grows_even_across_a_restart() {
+        let events = log("seq");
+        events.record(100, "said", "piper", "a");
+        events.record(100, "answered", "piper", "b");
+        let all: Vec<Value> = serde_json::from_str(&events.since(0)).unwrap();
+        let first = all[0]["seq"].as_u64().unwrap();
+        let second = all[1]["seq"].as_u64().unwrap();
+        assert!(second > first);
+        // Two events in the same second are told apart by their numbers.
+        let after: Vec<Value> = serde_json::from_str(&events.after(first)).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0]["kind"], "answered");
+        let again = Events::new(events.path.clone());
+        again.record(50, "said", "piper", "c");
+        let after: Vec<Value> = serde_json::from_str(&again.after(second)).unwrap();
+        assert_eq!(after.len(), 1);
         let _ = std::fs::remove_dir_all(events.path.parent().unwrap());
     }
 

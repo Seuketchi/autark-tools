@@ -104,7 +104,7 @@ the model get called. This is what makes a 4B model usable for standing work.
 | `CreateAgent(name, job, soul, can, skills, links)` / `DeleteAgent(id)` / `SetAgent(id, json)` | Make, remove, change |
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation |
 | `Memory(id)` / `Remember(id, text)` / `Forget(id, text)` | Its memory; a fact is forgotten by its words |
-| `Events(since)` | What happened, as JSON lines |
+| `Events(since)` / `EventsAfter(seq)` | What happened, from a time or after an event's number, as a JSON array |
 | signals `AgentChanged(id)`, `AgentsChanged()`, `AnswerPiece(answer, offset, text)` | What clients follow |
 
 ## Privacy
