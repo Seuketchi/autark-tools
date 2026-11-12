@@ -70,8 +70,9 @@ impl Events {
         std::fs::read_to_string(&self.path).unwrap_or_default().lines().filter_map(|line| serde_json::from_str(line).ok()).collect()
     }
 
-    /// Drops what is older than 14 days.
+    /// Drops what is older than 14 days, writing the log whole, with no event recorded meanwhile.
     pub fn prune(&self, now: u64) {
+        let _last = self.lock();
         let oldest = now.saturating_sub(KEPT);
         let all = self.read();
         let kept: Vec<&Value> = all.iter().filter(|event| event["time"].as_u64().unwrap_or(0) >= oldest).collect();
@@ -79,7 +80,7 @@ impl Events {
             return;
         }
         let text: String = kept.iter().map(|event| format!("{event}\n")).collect();
-        if let Err(err) = std::fs::write(&self.path, text) {
+        if let Err(err) = crate::files::write(&self.path, text.as_bytes()) {
             eprintln!("agentd: pruning the event log: {err}");
         }
     }
@@ -144,6 +145,19 @@ mod tests {
         let kept: Vec<Value> = serde_json::from_str(&events.since(0)).unwrap();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0]["kind"], "new");
+        let _ = std::fs::remove_dir_all(events.path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_pruned_log_is_written_whole_and_only_yours() {
+        use std::os::unix::fs::PermissionsExt;
+        let events = log("prune-mode");
+        events.record(10, "old", "a", "");
+        events.record(KEPT + 100, "new", "a", "");
+        std::fs::set_permissions(&events.path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        events.prune(KEPT + 200);
+        assert_eq!(std::fs::metadata(&events.path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(events.path.parent().unwrap()).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(events.path.parent().unwrap());
     }
 }

@@ -24,6 +24,8 @@ pub const PATH: &str = "/org/autark/Agents1";
 /// How long an answer may go without a word before it is given up on: a model on a busy laptop can take a while to
 /// start, but not this long.
 const IDLE: Duration = Duration::from_secs(300);
+/// How often the event log is pruned.
+const PRUNE: Duration = Duration::from_secs(60 * 60);
 /// How many words that arrive before the call that started them has returned are kept to be matched.
 const EARLY: usize = 256;
 
@@ -529,8 +531,14 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
         }
     };
     let watch = async {
+        let mut pruned = Instant::now();
         loop {
             async_io::Timer::after(Duration::from_secs(30)).await;
+            // The log is kept to 14 days while the daemon runs, not only when it starts.
+            if pruned.elapsed() > PRUNE {
+                shared.prune();
+                pruned = Instant::now();
+            }
             let idle: Vec<u32> = shared.core().pending.iter().filter(|(_, pending)| pending.heard.elapsed() > IDLE).map(|(id, _)| *id).collect();
             for answer in idle {
                 if let Ok(proxy) = AiProxy::new(&connection).await {
