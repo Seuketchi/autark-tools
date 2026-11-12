@@ -271,7 +271,8 @@ impl Core {
         }
         if let Some(from) = &from {
             self.reply_back(from, &pending.meta, well, reply.clone(), team, &mut ended);
-            if pending.meta.scheduled && pending.meta.origin.is_none() {
+            // One that handed work on is news when the reply lands, as that reply's card, not twice.
+            if pending.meta.scheduled && pending.meta.origin.is_none() && ended.delivery.is_none() {
                 ended.news.push(notify::scheduled(&from.id, &from.name, &reply, well));
                 self.unread.insert(from.id.clone());
             }
@@ -1447,6 +1448,16 @@ mod tests {
         let ended = failed.hear(5, Heard::Done("Ollama isn't running".into()), &team).unwrap();
         assert_eq!(ended.news[0].body, "Couldn't run: Ollama isn't running");
         assert!(failed.unread.contains("piper"));
+    }
+
+    #[test]
+    fn a_scheduled_answer_that_hands_work_on_is_news_only_when_the_reply_lands() {
+        let team = [linked("atlas", &["raven"]), linked("raven", &[])];
+        let meta = Meta { depth: 0, chain: vec!["atlas".into()], origin: None, scheduled: true };
+        let mut core = handoff_core(&team, "atlas", "Asking RAVEN.\nHANDOFF raven: forecast?", meta);
+        let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
+        assert!(ended.delivery.is_some());
+        assert!(ended.news.is_empty() && core.unread.is_empty());
     }
 
     #[test]
