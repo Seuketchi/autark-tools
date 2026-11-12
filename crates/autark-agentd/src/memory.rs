@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_FACTS: usize = 12;
 pub const MAX_CHARS: usize = 2000;
+/// The version of `memory.toml` this writes.
+const VERSION: u32 = 1;
 /// One fact may not be longer than this, so a single note can't use the whole memory.
 const FACT: usize = 300;
 
@@ -19,10 +21,17 @@ pub struct Fact {
     pub added: u64,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct File {
+    /// Missing in the first files, which are version 1.
+    #[serde(default = "first")]
+    version: u32,
     #[serde(default)]
     fact: Vec<Fact>,
+}
+
+fn first() -> u32 {
+    1
 }
 
 /// The facts kept at `path`, none when it hasn't been made. A file that can't be read or understood is an error, so it
@@ -33,11 +42,15 @@ pub fn load(path: &Path) -> Result<Vec<Fact>, String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(format!("its memory.toml can't be read: {err}")),
     };
-    toml::from_str::<File>(&text).map(|file| file.fact).map_err(|err| format!("its memory.toml can't be understood, so it is left as it is: {err}"))
+    let file = toml::from_str::<File>(&text).map_err(|err| format!("its memory.toml can't be understood, so it is left as it is: {err}"))?;
+    if file.version > VERSION {
+        return Err(format!("its memory.toml is from a newer version (format {}), so it is left as it is", file.version));
+    }
+    Ok(file.fact)
 }
 
 fn save(path: &Path, facts: Vec<Fact>) -> Result<(), String> {
-    let text = toml::to_string(&File { fact: facts }).map_err(|err| err.to_string())?;
+    let text = toml::to_string(&File { version: VERSION, fact: facts }).map_err(|err| err.to_string())?;
     crate::files::write(path, text.as_bytes()).map_err(|err| format!("writing {}: {err}", path.display()))
 }
 
@@ -118,6 +131,19 @@ mod tests {
         assert!(std::fs::read_to_string(&p).unwrap().contains("not toml at all"));
         // A memory not made yet is an empty one.
         assert_eq!(load(&path("none")).unwrap(), []);
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn a_memory_says_its_version_and_one_from_a_newer_version_is_left_alone() {
+        let p = path("version");
+        add(&p, "Lives in Cebu", 1).unwrap();
+        assert!(std::fs::read_to_string(&p).unwrap().starts_with(&format!("version = {VERSION}\n")));
+        let newer = format!("version = {}\n\n[[fact]]\ntext = \"Lives in Cebu\"\n", VERSION + 1);
+        std::fs::write(&p, &newer).unwrap();
+        assert!(load(&p).is_err());
+        assert!(add(&p, "Prefers short answers", 1).is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), newer);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
