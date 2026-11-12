@@ -47,6 +47,12 @@ of one. Files an earlier version left readable by others are narrowed when the d
 | Its scheduled jobs (at most 5) | `~/.config/autark-alfred/agents/<id>/jobs.toml` |
 | The event log (14 days) | `~/.local/state/autark-alfred/events.jsonl` |
 
+A team made while the daemon was `autark-agentd` is moved once, when it starts and has its bus name, before the
+starter team is made: `~/.config/autark-agentd` becomes `~/.config/autark-alfred` when it holds agents
+(`agents/<id>/agent.toml`), and `~/.local/state/autark-agentd` becomes `~/.local/state/autark-alfred` when its
+`events.jsonl` is this daemon's log. Nothing is moved when the new folder is there already, and folders another program
+of the old name keeps are left alone.
+
 The mailbox (work handed on and waiting for its answer to start) has no file: it is kept while the daemon runs, and
 each handoff in it starts within moments. One that a restart catches before its answer ends is lost; the receiver's
 conversation says its answer was cut off, and the agent that asked gets no reply.

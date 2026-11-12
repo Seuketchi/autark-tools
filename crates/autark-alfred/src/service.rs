@@ -802,7 +802,7 @@ impl Agents {
     async fn agent_changed(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn agents_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    pub async fn agents_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     /// A piece of answer `answer`, which starts at byte `offset` of the answer's text.
     #[zbus(signal)]
