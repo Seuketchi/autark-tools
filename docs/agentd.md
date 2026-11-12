@@ -129,8 +129,9 @@ weekdays at 8:00" over it.
   made now doesn't run for a time before it was made, and one switched back on starts from then. Jobs run one at a time:
   none starts while another's answer is being written, so a dozen made up after a sleep don't ask the model at once. An
   answer's five minutes without a word count from its first word, so time spent waiting its turn isn't held against it.
-- **An agent that is busy answering waits:** the run happens at the next look after it is free. A run that fails (the model
-  is off) is not tried again until its next time.
+- **An agent that is busy answering waits:** the run happens at the next look after it is free. A run whose answer can't be
+  started (the model is off or still loading after a wake) is tried again two minutes later, up to three times, and then
+  waits for its next time; a run that started and failed is not tried again.
 - **It is read-only like any answer:** the agent looks only at its `can` list, and a job can hand work on, within the
   mailbox's limits.
 
