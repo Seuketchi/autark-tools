@@ -1,6 +1,6 @@
 [package]
-name = "autark-agentd"
-description = "The team's backend (org.autark.Agents1): Kith's agents, their conversations, memory and event log."
+name = "autark-alfred"
+description = "The team's backend (org.autark.Alfred1): Kith's agents, their conversations, memory and event log."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

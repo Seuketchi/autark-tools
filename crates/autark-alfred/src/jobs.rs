@@ -68,7 +68,7 @@ fn read(path: &Path) -> Result<File, String> {
         Ok(file) => file,
         Err(err) => {
             let aside = crate::files::set_aside(path, crate::chat::now()).map_err(|moving| format!("its jobs.toml can't be understood ({err}) or moved aside: {moving}"))?;
-            eprintln!("agentd: {} couldn't be understood, so it was moved to {}: {err}", path.display(), aside.display());
+            eprintln!("alfred: {} couldn't be understood, so it was moved to {}: {err}", path.display(), aside.display());
             File::default()
         }
     };
@@ -161,12 +161,12 @@ pub fn due(path: &Path, now: NaiveDateTime) -> Vec<(u32, NaiveDateTime)> {
 pub fn ran(path: &Path, id: u32, due: NaiveDateTime) {
     let mut file = match read(path) {
         Ok(file) => file,
-        Err(err) => return eprintln!("agentd: noting a job's run: {err}"),
+        Err(err) => return eprintln!("alfred: noting a job's run: {err}"),
     };
     if let Some(job) = file.job.iter_mut().find(|job| job.id == id) {
         job.last = due.format(FORMAT).to_string();
         if let Err(err) = save(path, file) {
-            eprintln!("agentd: noting a job's run: {err}");
+            eprintln!("alfred: noting a job's run: {err}");
         }
     }
 }
@@ -191,7 +191,7 @@ mod tests {
     use super::*;
 
     fn path(test: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentd-jobs-{test}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-jobs-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("jobs.toml")
     }

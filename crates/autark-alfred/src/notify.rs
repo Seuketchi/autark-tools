@@ -66,7 +66,7 @@ pub async fn send(connection: &zbus::Connection, news: &News) {
     hints.insert("desktop-entry", "autark-kith".into());
     let sent = async { NotificationsProxy::new(connection).await?.notify("Kith", 0, "autark-kith", &news.title, &news.body, &[], hints, -1).await };
     if let Err(err) = sent.await {
-        eprintln!("agentd: telling you about {}'s answer: {err}", news.agent);
+        eprintln!("alfred: telling you about {}'s answer: {err}", news.agent);
     }
 }
 

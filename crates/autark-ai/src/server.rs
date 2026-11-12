@@ -693,12 +693,12 @@ impl Ai {
         Ok(())
     }
 
-    /// A streamed answer for the team's backend (`autark-agentd`): `prompt` answered under `system`, with `context`
-    /// before it, as `AnswerPiece` signals and then `AnswerDone`. It goes in no conversation here: `autark-agentd`
+    /// A streamed answer for the team's backend (`autark-alfred`): `prompt` answered under `system`, with `context`
+    /// before it, as `AnswerPiece` signals and then `AnswerDone`. It goes in no conversation here: `autark-alfred`
     /// keeps each agent's own. Returns the answer's id.
     async fn complete(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, system: String, context: String, prompt: String) -> Result<u32, Error> {
         self.allowed(self.config().features.ask, "ask")?;
-        Ok(self.answer(emitter, Ask { system, prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({ "for": "agentd" })))
+        Ok(self.answer(emitter, Ask { system, prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({ "for": "alfred" })))
     }
 
     /// What `question` is about, as far as the team's agent may look: the subjects in `can` (any of mail, calendar,

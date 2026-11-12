@@ -50,7 +50,7 @@ impl Events {
         })();
         match result {
             Ok(()) => *last = seq,
-            Err(err) => eprintln!("agentd: writing the event log: {err}"),
+            Err(err) => eprintln!("alfred: writing the event log: {err}"),
         }
     }
 
@@ -81,7 +81,7 @@ impl Events {
         }
         let text: String = kept.iter().map(|event| format!("{event}\n")).collect();
         if let Err(err) = crate::files::write(&self.path, text.as_bytes()) {
-            eprintln!("agentd: pruning the event log: {err}");
+            eprintln!("alfred: pruning the event log: {err}");
         }
     }
 }
@@ -91,7 +91,7 @@ mod tests {
     use super::*;
 
     fn log(test: &str) -> Events {
-        let dir = std::env::temp_dir().join(format!("agentd-events-{test}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-events-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         Events::new(dir.join("events.jsonl"))
     }

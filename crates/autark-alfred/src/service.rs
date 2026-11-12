@@ -1,4 +1,4 @@
-//! `org.autark.Agents1`: the team's API. It decides which agent answers, what the agent may look at and what it is told;
+//! `org.autark.Alfred1`: the team's API. It decides which agent answers, what the agent may look at and what it is told;
 //! `autark-ai` reads what it is allowed to read and runs the model. A client (the roster, later the launcher or the bar)
 //! talks to this and nothing else.
 
@@ -25,7 +25,7 @@ use crate::prompt;
 use crate::remember;
 use crate::when::{self, When};
 
-pub const PATH: &str = "/org/autark/Agents1";
+pub const PATH: &str = "/org/autark/Alfred1";
 
 /// How long an answer may go without a word before it is given up on: a model on a busy laptop can take a while to
 /// start, but not this long.
@@ -46,7 +46,7 @@ const EARLY: usize = 256;
 const EARLY_KEPT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.autark.Agents1.Error")]
+#[zbus(prefix = "org.autark.Alfred1.Error")]
 pub enum Error {
     #[zbus(error)]
     ZBus(zbus::Error),
@@ -455,7 +455,7 @@ fn engine(error: zbus::Error) -> Error {
     Error::Failed(ai::said(&error))
 }
 
-#[zbus::interface(name = "org.autark.Agents1")]
+#[zbus::interface(name = "org.autark.Alfred1")]
 impl Agents {
     /// The team as JSON, Kith first: `[{"id","name","colour","job","can","skills","links","last","time","writing"}]`.
     /// `last` is what was said last in its conversation and `time` when, in seconds since the epoch (0 for nothing yet).
@@ -802,7 +802,7 @@ impl Agents {
     async fn agent_changed(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn agents_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    pub async fn agents_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     /// A piece of answer `answer`, which starts at byte `offset` of the answer's text.
     #[zbus(signal)]
@@ -815,7 +815,7 @@ fn now_local() -> chrono::NaiveDateTime {
 
 fn jobs_of(id: &str) -> Result<std::path::PathBuf, Error> {
     if id == KITH {
-        return failed("Kith's jobs are its tasks, in the launcher's panel");
+        return failed("Alfred's jobs are its tasks, in the launcher's panel");
     }
     find(id)?;
     agents::jobs_path(id).ok_or_else(|| Error::Failed(format!("there is no agent {id}")))
@@ -839,7 +839,7 @@ async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitte
     };
     shared.events.record(chat::now(), "scheduled-run", &agent.id, &prompt);
     if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
-        eprintln!("agentd: sending a change: {err}");
+        eprintln!("alfred: sending a change: {err}");
     }
     let meta = Meta { depth: 0, chain: vec![agent.id.clone()], origin: None, scheduled: true };
     match start_answer(&shared, &connection, &agent, entry, &prompt, &conversation, None, meta).await {
@@ -851,7 +851,7 @@ async fn run_scheduled(shared: Arc<Shared>, connection: zbus::Connection, emitte
             shared.core().fail(&agent, entry, &why);
             shared.events.record(chat::now(), "failed", &agent.id, &why);
             if let Err(err) = Agents::agent_changed(&emitter, &agent.id).await {
-                eprintln!("agentd: sending a change: {err}");
+                eprintln!("alfred: sending a change: {err}");
             }
             Ok(Err(why))
         }
@@ -899,7 +899,7 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
 
 fn memory_of(id: &str) -> Result<std::path::PathBuf, Error> {
     if id == KITH {
-        return failed("Kith's memory is kept in the launcher's panel");
+        return failed("Alfred's memory is kept in the launcher's panel");
     }
     find(id)?;
     agents::memory_path(id).ok_or_else(|| Error::Failed(format!("there is no agent {id}")))
@@ -911,7 +911,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
     let emitter = match SignalEmitter::new(&connection, PATH) {
         Ok(emitter) => emitter,
         Err(err) => {
-            eprintln!("agentd: {err}");
+            eprintln!("alfred: {err}");
             return;
         }
     };
@@ -957,7 +957,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                         // Passed on at once, whoever started it: the roster follows Kith's answers too.
                         Told::Piece(id, offset, text) => {
                             if let Err(err) = Agents::answer_piece(&emitter, id, offset, &text).await {
-                                eprintln!("agentd: sending a piece: {err}");
+                                eprintln!("alfred: sending a piece: {err}");
                             }
                             shared.core().hear(id, Heard::Piece(text), &[]);
                         }
@@ -979,7 +979,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 zbus::Result::Ok(())
             };
             if let Err(err) = result.await {
-                eprintln!("agentd: following autark-ai: {err}");
+                eprintln!("alfred: following autark-ai: {err}");
             }
             async_io::Timer::after(Duration::from_secs(3)).await;
         }
@@ -1029,7 +1029,7 @@ async fn start_answer(
     let seen = match proxy.look(&asked, &can).await {
         Ok(seen) => seen,
         Err(err) => {
-            eprintln!("agentd: looking for {}: {}", agent.name, ai::said(&err));
+            eprintln!("alfred: looking for {}: {}", agent.name, ai::said(&err));
             String::new()
         }
     };
@@ -1037,7 +1037,7 @@ async fn start_answer(
         Some(Ok(facts)) => facts,
         Some(Err(err)) => {
             // It answers without its memory rather than not at all; Memory() shows you why.
-            eprintln!("agentd: {}: {err}", agent.name);
+            eprintln!("alfred: {}: {err}", agent.name);
             Vec::new()
         }
         None => Vec::new(),
@@ -1091,7 +1091,7 @@ async fn settle(shared: &Shared, emitter: &SignalEmitter<'_>, ended: Option<Ende
     }
     for id in std::iter::once(&ended.agent).chain(&ended.changed) {
         if let Err(err) = Agents::agent_changed(emitter, id).await {
-            eprintln!("agentd: sending a change: {err}");
+            eprintln!("alfred: sending a change: {err}");
         }
     }
     for news in ended.news {
@@ -1300,15 +1300,15 @@ mod tests {
     }
 
     /// Needs a session bus of its own, so it never touches yours: run under `dbus-run-session` with
-    /// `AGENTD_PRIVATE_BUS=1` and private `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
+    /// `ALFRED_PRIVATE_BUS=1` and private `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
     #[test]
-    #[ignore = "needs a private bus: AGENTD_PRIVATE_BUS=1 dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    #[ignore = "needs a private bus: ALFRED_PRIVATE_BUS=1 dbus-run-session -- cargo test -p autark-alfred -- --ignored"]
     fn settling_a_handoff_does_not_wait_for_its_answer_to_start() {
-        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+        if std::env::var_os("ALFRED_PRIVATE_BUS").is_none() {
             return;
         }
         let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let dir = std::env::temp_dir().join(format!("agentd-settle-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-settle-{}", std::process::id()));
         async_io::block_on(async {
             let _ai = zbus::connection::Builder::session().name("org.autark.AI1").serve_at("/org/autark/AI1", SlowAi).build().await.unwrap();
             let connection = zbus::connection::Builder::session().build().await.unwrap();
@@ -1355,12 +1355,12 @@ mod tests {
         }
     }
 
-    /// Needs a session bus and agents' folders of its own: run under `dbus-run-session` with `AGENTD_PRIVATE_BUS=1` and
+    /// Needs a session bus and agents' folders of its own: run under `dbus-run-session` with `ALFRED_PRIVATE_BUS=1` and
     /// private `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
     #[test]
-    #[ignore = "needs a private bus and XDG folders: AGENTD_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    #[ignore = "needs a private bus and XDG folders: ALFRED_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-alfred -- --ignored"]
     fn jobs_made_up_after_a_sleep_run_one_at_a_time() {
-        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+        if std::env::var_os("ALFRED_PRIVATE_BUS").is_none() {
             return;
         }
         let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1407,9 +1407,9 @@ mod tests {
 
     /// Needs a session bus and agents' folders of its own, as `jobs_made_up_after_a_sleep_run_one_at_a_time`.
     #[test]
-    #[ignore = "needs a private bus and XDG folders: AGENTD_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    #[ignore = "needs a private bus and XDG folders: ALFRED_PRIVATE_BUS=1 XDG_CONFIG_HOME=… XDG_STATE_HOME=… dbus-run-session -- cargo test -p autark-alfred -- --ignored"]
     fn a_job_whose_answer_cant_start_is_tried_again_then_given_up() {
-        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+        if std::env::var_os("ALFRED_PRIVATE_BUS").is_none() {
             return;
         }
         let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1451,13 +1451,13 @@ mod tests {
 
     /// Needs a session bus of its own, as `settling_a_handoff_does_not_wait_for_its_answer_to_start`.
     #[test]
-    #[ignore = "needs a private bus: AGENTD_PRIVATE_BUS=1 dbus-run-session -- cargo test -p autark-agentd -- --ignored"]
+    #[ignore = "needs a private bus: ALFRED_PRIVATE_BUS=1 dbus-run-session -- cargo test -p autark-alfred -- --ignored"]
     fn settling_news_does_not_wait_for_the_notification_centre() {
-        if std::env::var_os("AGENTD_PRIVATE_BUS").is_none() {
+        if std::env::var_os("ALFRED_PRIVATE_BUS").is_none() {
             return;
         }
         let _bus = PRIVATE_BUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let dir = std::env::temp_dir().join(format!("agentd-news-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alfred-news-{}", std::process::id()));
         async_io::block_on(async {
             let _centre = zbus::connection::Builder::session().name("org.freedesktop.Notifications").serve_at("/org/freedesktop/Notifications", SlowNotifications).build().await.unwrap();
             let connection = zbus::connection::Builder::session().build().await.unwrap();

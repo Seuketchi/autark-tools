@@ -1,8 +1,8 @@
-//! The team's backend (`autark-agentd`), over one connection for the whole app.
+//! The team's backend (`autark-alfred`), over one connection for the whole app.
 
 use std::cell::RefCell;
 
-#[zbus::proxy(interface = "org.autark.Agents1", default_service = "org.autark.Agents1", default_path = "/org/autark/Agents1")]
+#[zbus::proxy(interface = "org.autark.Alfred1", default_service = "org.autark.Alfred1", default_path = "/org/autark/Alfred1")]
 pub trait Agents {
     fn agents(&self) -> zbus::Result<String>;
     fn create_agent(&self, name: &str, job: &str, soul: &str, can: &[&str], skills: &[&str], links: &[&str]) -> zbus::Result<String>;
@@ -53,7 +53,7 @@ pub async fn proxy() -> zbus::Result<AgentsProxy<'static>> {
 pub fn said(error: &zbus::Error) -> String {
     match error {
         zbus::Error::MethodError(_, Some(detail), _) => detail.clone(),
-        zbus::Error::MethodError(..) | zbus::Error::InputOutput(_) => "The team's backend isn't running. Start autark-agentd and try again.".to_owned(),
+        zbus::Error::MethodError(..) | zbus::Error::InputOutput(_) => "The team's backend isn't running. Start autark-alfred and try again.".to_owned(),
         other => other.to_string(),
     }
 }
