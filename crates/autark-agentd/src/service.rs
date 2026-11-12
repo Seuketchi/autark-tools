@@ -29,6 +29,9 @@ pub const PATH: &str = "/org/autark/Agents1";
 /// How long an answer may go without a word before it is given up on: a model on a busy laptop can take a while to
 /// start, but not this long.
 const IDLE: Duration = Duration::from_secs(300);
+/// How long an answer may wait for its first word: behind other answers in `autark-ai`'s queue, such as jobs made up after
+/// a sleep, and a model loading. Its `IDLE` clock starts at that word.
+const FIRST_WORD: Duration = Duration::from_secs(30 * 60);
 /// How often the event log is pruned.
 const PRUNE: Duration = Duration::from_secs(60 * 60);
 /// How many words that arrive before the call that started them has returned are kept to be matched.
@@ -63,7 +66,10 @@ struct Meta {
 /// An answer being written by an agent here.
 struct Pending {
     agent: String,
-    heard: Instant,
+    /// When it was started.
+    started: Instant,
+    /// When a word of it was last heard; `None` until the first.
+    heard: Option<Instant>,
     meta: Meta,
     /// You stopped it: what was written so far is kept, and a handoff cut off in it is not made.
     stopped: bool,
@@ -182,7 +188,7 @@ impl Core {
         if let Some(What::Answer { answer: id, .. }) = chat.get_mut(entry) {
             *id = answer;
         }
-        self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now(), meta, stopped: false });
+        self.pending.insert(answer, Pending { agent: agent.id.clone(), started: Instant::now(), heard: None, meta, stopped: false });
         let mut finished = None;
         let early = std::mem::take(&mut self.early);
         for (id, heard, when) in early {
@@ -208,7 +214,7 @@ impl Core {
 
     fn append(&mut self, answer: u32, piece: &str) {
         let Some(pending) = self.pending.get_mut(&answer) else { return };
-        pending.heard = Instant::now();
+        pending.heard = Some(Instant::now());
         let agent = pending.agent.clone();
         if let Some(chat) = self.chats.get_mut(&agent)
             && let Some(What::Answer { text, .. }) = chat.answer_mut(answer)
@@ -319,6 +325,11 @@ impl Core {
             *error = why.to_owned();
         }
         chat.save();
+    }
+
+    /// The answers to give up on: quiet for too long since their last word, or with no word long after they were started.
+    fn idle(&self) -> Vec<u32> {
+        self.pending.iter().filter(|(_, pending)| pending.heard.map_or(pending.started.elapsed() > FIRST_WORD, |heard| heard.elapsed() > IDLE)).map(|(id, _)| *id).collect()
     }
 
     /// `autark-ai` has gone or been replaced: the answers it was writing won't end, and the ids of what was heard early
@@ -832,7 +843,7 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 shared.prune();
                 pruned = Instant::now();
             }
-            let idle: Vec<u32> = shared.core().pending.iter().filter(|(_, pending)| pending.heard.elapsed() > IDLE).map(|(id, _)| *id).collect();
+            let idle = shared.core().idle();
             for answer in idle {
                 if let Ok(proxy) = AiProxy::new(&connection).await {
                     let _ = proxy.stop(answer).await;
@@ -1080,6 +1091,26 @@ mod tests {
         let next = core.chat(&a).push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
         core.register(4, &a, next, Meta::default(), &[]);
         assert!(core.early.is_empty());
+    }
+
+    #[test]
+    fn an_answer_waiting_its_turn_is_not_given_up_on_until_it_has_begun_and_gone_quiet() {
+        let a = agent("piper");
+        let (mut core, entry) = core_with(&a);
+        core.register(3, &a, entry, Meta::default(), &[]);
+        let long_ago = Instant::now().checked_sub(IDLE + Duration::from_secs(60)).unwrap();
+        // Six minutes behind other answers in autark-ai, or a model loading, before its first word.
+        core.pending.get_mut(&3).unwrap().started = long_ago;
+        assert!(core.idle().is_empty());
+        // Once it has begun, six minutes without a word is too long.
+        core.hear(3, Heard::Piece("Hel".into()), &[]);
+        core.pending.get_mut(&3).unwrap().heard = Some(long_ago);
+        assert_eq!(core.idle(), [3]);
+        // One that never begins is given up on too, later.
+        let next = core.chat(&a).push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+        core.register(4, &a, next, Meta::default(), &[]);
+        core.pending.get_mut(&4).unwrap().started = Instant::now().checked_sub(FIRST_WORD + Duration::from_secs(60)).unwrap();
+        assert!(core.idle().contains(&4));
     }
 
     #[test]
