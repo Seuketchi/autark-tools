@@ -36,6 +36,7 @@ fn main() {
         agents::seed();
         agents::seed_lenses();
         agents::seed_links();
+        agents::rename_starters();
         // A client that asked for the team while it was being made asks again.
         let emitter = zbus::object_server::SignalEmitter::new(&connection, service::PATH)?;
         if let Err(err) = service::Agents::agents_changed(&emitter).await {

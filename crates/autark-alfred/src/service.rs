@@ -815,7 +815,7 @@ fn now_local() -> chrono::NaiveDateTime {
 
 fn jobs_of(id: &str) -> Result<std::path::PathBuf, Error> {
     if id == KITH {
-        return failed("Kith's jobs are its tasks, in the launcher's panel");
+        return failed("Alfred's jobs are its tasks, in the launcher's panel");
     }
     find(id)?;
     agents::jobs_path(id).ok_or_else(|| Error::Failed(format!("there is no agent {id}")))
@@ -899,7 +899,7 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
 
 fn memory_of(id: &str) -> Result<std::path::PathBuf, Error> {
     if id == KITH {
-        return failed("Kith's memory is kept in the launcher's panel");
+        return failed("Alfred's memory is kept in the launcher's panel");
     }
     find(id)?;
     agents::memory_path(id).ok_or_else(|| Error::Failed(format!("there is no agent {id}")))

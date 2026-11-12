@@ -3,8 +3,8 @@
 ALFRED is the Assistant that Lists, Files, Reminds, and Edits Drafts: the daemon behind Kith's team. It was called
 `autark-agentd` (`org.autark.Agents1`) until it was renamed to stop sharing a name with an unrelated program.
 
-Kith's agents (ATLAS, PIPER, the profession lenses and the ones you make) need what a team needs: a place where each
-agent's job, conversation and memory live, a way for agents to hand work to each other, work that happens on a
+Kith's agents (Alfred, Lucius, Gordon, the profession lenses and the ones you make) need what a team needs: a place
+where each agent's job, conversation and memory live, a way for agents to hand work to each other, work that happens on a
 schedule, and a record of what happened. `autark-alfred` is that backend, in the manner of agent-kitchen's `kitchend`:
 one daemon owns the state and the rules, and every window or tool is a client of its API.
 
@@ -100,13 +100,13 @@ The rules are Kitchen's, because they are the ones that keep a team from tying i
   behalf, never because a model claimed it. A message from you says so.
 - **Only linked agents.** An agent's `links` names the agents it may hand work to ("Hands work to…" in the roster's
   **⋯**, or when making an agent). No link, no handoff, and the refusal is shown in the sender's chat so you can see why.
-  Kith can't be linked: it takes requests in the launcher's panel, where it asks first. A new install links ATLAS to
-  PIPER, RAVEN and QUILL, and LEDGER and LEVY to each other, once.
+  Alfred can't be linked: it takes requests in the launcher's panel, where it asks first. A new install links Lucius to
+  Gordon, Oracle and QUILL, and LEDGER and LEVY to each other, once.
 - **A depth limit, and no loops.** A handoff carries how many handoffs led to it; an answer three deep can't hand on,
   and a chain never returns to an agent already in it, so two agents can't keep passing a question back and forth. An
   agent that is busy answering isn't handed work: the refusal says so.
-- **Visible.** A handoff is a line in the sender's conversation ("Asked RAVEN: …") and a message "ATLAS asked" in the
-  receiver's, which answers like any other; its answer goes back to the sender's conversation as "RAVEN replied". Each is
+- **Visible.** A handoff is a line in the sender's conversation ("Asked Oracle: …") and a message "Lucius asked" in the
+  receiver's, which answers like any other; its answer goes back to the sender's conversation as "Oracle replied". Each is
   an event in the log. The sender doesn't answer again: you read the reply where it lands, and may follow up.
 - **Read-only.** What is handed over is a request to look something up and answer. The receiver looks at no more than
   its own `can` list, and nothing it can do goes beyond reading, apart from the additions to a note you tap Add on.
@@ -149,7 +149,7 @@ weekdays at 8:00" over it.
 An answer you didn't ask for just now is the one you'd miss: a scheduled run's, or an agent's reply to work it handed on.
 When one lands, `autark-alfred` puts a card in the notification centre, quietly (the same `x-autark-quiet` card Kith's
 other suggestions are: no banner, no chime, so Focus and a presentation are not broken into), titled with the agent
-("QUILL · scheduled", or the asker's name for a reply) and holding the first 140 characters: "RAVEN replied: Friday is
+("QUILL · scheduled", or the asker's name for a reply) and holding the first 140 characters: "Oracle replied: Friday is
 free." A run that failed says so ("Couldn't run: Ollama isn't running"), so a job doesn't go quiet. The roster puts a dot and
 bold words on that agent's row until you open the conversation with the window in front (or come back to it with that
 conversation open); `MarkRead` is what tells the daemon. An answer to what you said yourself is never news, and neither
@@ -164,7 +164,7 @@ standing work, and it needs those checks to exist in `autark-ai` first.
 
 | Call | Does |
 |---|---|
-| `Agents()` | The team as a JSON array, Kith first: `{"id","name","colour","job","can","skills","links","last","time","writing","unread"}`, where `last` is what was said last and `time` when (0 for nothing yet) |
+| `Agents()` | The team as a JSON array, Alfred (id `kith`) first: `{"id","name","colour","job","can","skills","links","last","time","writing","unread"}`, where `last` is what was said last and `time` when (0 for nothing yet) |
 | `CreateAgent(name, job, soul, can, skills, links)` / `DeleteAgent(id)` / `SetAgent(id, json)` | Make, remove, change; `SetAgent`'s JSON has any of `job`, `soul`, `can`, `skills`, `links` |
 | `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation; `Say` returns the answer's id and its entry |
 | `AnswerFact(id, entry, save)` / `AnswerAdd(id, entry, add)` | Save a proposed fact or not; add a proposed line to a note or not |

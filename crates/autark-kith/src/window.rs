@@ -758,7 +758,7 @@ impl Kith {
             return;
         };
         if id == "kith" {
-            self.fail("Kith can't be deleted.");
+            self.fail("Alfred can't be deleted.");
             return;
         }
         let name = self.title.label();
@@ -783,7 +783,7 @@ impl Kith {
             return;
         };
         if id == "kith" {
-            self.fail("Kith's scheduled work is its tasks, in the launcher's panel.");
+            self.fail("Alfred's scheduled work is its tasks, in the launcher's panel.");
             return;
         }
         let name = self.title.label();
@@ -852,7 +852,7 @@ impl Kith {
             return;
         };
         if id == "kith" {
-            self.fail("Kith takes requests in the launcher's panel, not handoffs.");
+            self.fail("Alfred takes requests in the launcher's panel, not handoffs.");
             return;
         }
         let members = self.members.borrow().clone();
@@ -905,7 +905,7 @@ impl Kith {
             return;
         };
         if id == "kith" {
-            self.fail("Kith's memory is kept in the launcher's panel.");
+            self.fail("Alfred's memory is kept in the launcher's panel.");
             return;
         }
         let name = self.title.label();

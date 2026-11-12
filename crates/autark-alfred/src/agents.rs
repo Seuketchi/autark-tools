@@ -117,9 +117,9 @@ fn valid(id: &str) -> bool {
 fn kith() -> Agent {
     Agent {
         id: KITH.to_owned(),
-        name: "Kith".to_owned(),
+        name: "Alfred".to_owned(),
         colour: 0,
-        job: "Your assistant: it answers, does small things on the laptop and remembers what you tell it.".to_owned(),
+        job: "The front of the house: it answers what it can and hands the rest to the right specialist. It only drafts; you decide.".to_owned(),
         soul: String::new(),
         can: ABILITIES.map(str::to_owned).to_vec(),
         skills: Vec::new(),
@@ -178,7 +178,7 @@ pub fn update(id: &str, patch: &Patch) -> Result<Agent, String> {
 
 fn update_in(root: &Path, id: &str, patch: &Patch) -> Result<Agent, String> {
     if id == KITH {
-        return Err("Kith's job and soul are kept in its own files".to_owned());
+        return Err("Alfred's job and soul are kept in its own files".to_owned());
     }
     let existing = all_in(root);
     let mut agent = existing.iter().find(|agent| agent.id == id).cloned().ok_or_else(|| format!("there is no agent {id}"))?;
@@ -223,7 +223,7 @@ fn linked(links: &[String], existing: &[Agent], own: &str) -> Result<Vec<String>
             return Err("an agent can't be linked to itself".to_owned());
         }
         if link == KITH {
-            return Err("work can't be handed to Kith: ask it in the launcher's panel".to_owned());
+            return Err("work can't be handed to Alfred: ask it in the launcher's panel".to_owned());
         }
         if !existing.iter().any(|agent| agent.id == link) {
             return Err(format!("there is no agent {link} to link to"));
@@ -284,9 +284,9 @@ fn create_in(root: &Path, name: &str, job: &str, soul: &str, can: &[String], ski
 /// The team a new install starts with, once: a folder marks that it was made, so an agent deleted later stays gone.
 /// Each looks at only what its job needs.
 const STARTERS: [(&str, &str, &str, &[&str]); 4] = [
-    ("ATLAS", "Plan the user's day: what is on the calendar and the task board, and what to do first. Be brief and put the first thing first.", "Calm and decisive.", &["calendar", "tasks", "notes"]),
-    ("PIPER", "Keep the user's inbox at zero: say who has written and what needs a reply, most urgent first. You only read; you never send.", "Brisk and dry.", &["mail"]),
-    ("RAVEN", "Look things up on the web for the user and say which site each fact comes from.", "Curious and exact.", &["web"]),
+    ("Lucius", "Plan the user's day: what is on the calendar and the task board, and what to do first. Be brief and put the first thing first.", "Calm and decisive.", &["calendar", "tasks", "notes"]),
+    ("Gordon", "Keep the user's inbox at zero: say who has written and what needs a reply, most urgent first. You only read; you never send.", "Brisk and dry.", &["mail"]),
+    ("Oracle", "Look things up on the web for the user and say which site each fact comes from.", "Curious and exact.", &["web"]),
     ("QUILL", "Find what the user has written or said before in their notes and conversations, and bring it back word for word.", "Quiet and precise.", &["notes"]),
 ];
 
@@ -326,7 +326,7 @@ fn seed_lenses_in(root: &Path, dirs: &[PathBuf]) {
 
 /// Who the starter team may hand work to: the planner to the ones that read mail, the web and notes, and the accountant and
 /// the tax advisor to each other. Given once, to an agent that has no links yet, so what you set yourself stays.
-const STARTER_LINKS: [(&str, &[&str]); 3] = [("atlas", &["piper", "raven", "quill"]), ("ledger", &["levy"]), ("levy", &["ledger"])];
+const STARTER_LINKS: [(&str, &[&str]); 3] = [("lucius", &["gordon", "oracle", "quill"]), ("ledger", &["levy"]), ("levy", &["ledger"])];
 
 pub fn seed_links() {
     seed_links_in(&config_root());
@@ -402,6 +402,37 @@ pub fn seed() {
     seed_in(&config_root());
 }
 
+/// The starters' first names, and what they are called now.
+const RENAMED: [(&str, &str); 3] = [("ATLAS", "Lucius"), ("PIPER", "Gordon"), ("RAVEN", "Oracle")];
+
+/// Gives the starters an install made under their first names their new ones, once. Only the name changes: the id, and
+/// so the folder, memory, conversation and links, stay. One you renamed yourself, or whose new name another agent has,
+/// is left as it is.
+pub fn rename_starters() {
+    rename_starters_in(&config_root());
+}
+
+fn rename_starters_in(root: &Path) {
+    let marker = root.join(".renamed-starters");
+    if marker.exists() || !root.is_dir() {
+        return;
+    }
+    for (old, new) in RENAMED {
+        let team = all_in(root);
+        if team.iter().any(|agent| agent.name.eq_ignore_ascii_case(new)) {
+            continue;
+        }
+        let Some(mut agent) = team.into_iter().find(|agent| agent.id != KITH && agent.name == old) else { continue };
+        agent.name = new.to_owned();
+        if let Err(err) = write(root, &agent) {
+            eprintln!("alfred: renaming {old} to {new}: {err}");
+        }
+    }
+    if std::fs::write(marker, "").is_err() {
+        eprintln!("alfred: marking the starters as renamed in {}", root.display());
+    }
+}
+
 fn seed_in(root: &Path) {
     let marker = root.join(".seeded");
     if marker.exists() {
@@ -425,7 +456,7 @@ pub fn delete(id: &str) -> Result<(), String> {
 
 fn delete_in(root: &Path, state: &Path, id: &str) -> Result<(), String> {
     if id == KITH {
-        return Err("Kith can't be deleted".to_owned());
+        return Err("Alfred can't be deleted".to_owned());
     }
     if !valid(id) || !root.join(id).join("agent.toml").is_file() {
         return Err(format!("there is no agent {id}"));
@@ -515,7 +546,7 @@ mod tests {
         create_in(&root, "Sales Outbound", "Draft outreach.", "", &[], &[], &[]).unwrap();
         create_in(&root, "Inbox Manager", "Keep the inbox at zero.", "Brisk.", &[], &[], &[]).unwrap();
         let names: Vec<String> = all_in(&root).into_iter().map(|agent| agent.name).collect();
-        assert_eq!(names, ["Kith", "Inbox Manager", "Sales Outbound"]);
+        assert_eq!(names, ["Alfred", "Inbox Manager", "Sales Outbound"]);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -575,8 +606,8 @@ mod tests {
         let root = folder("seed");
         seed_in(&root);
         let names: Vec<String> = all_in(&root).into_iter().map(|agent| agent.name).collect();
-        assert_eq!(names, ["Kith", "ATLAS", "PIPER", "QUILL", "RAVEN"]);
-        delete_in(&root, &root, "raven").unwrap();
+        assert_eq!(names, ["Alfred", "Gordon", "Lucius", "Oracle", "QUILL"]);
+        delete_in(&root, &root, "oracle").unwrap();
         seed_in(&root);
         assert_eq!(all_in(&root).len(), 4);
         let _ = std::fs::remove_dir_all(root);
@@ -649,7 +680,7 @@ mod tests {
         let raven = create_in(&root, "Raven", "", "", &[], &[], &[]).unwrap();
         let atlas = create_in(&root, "Atlas", "", "", &[], &[], &["piper".to_owned(), raven.id.clone(), "piper".to_owned()]).unwrap();
         assert_eq!(atlas.links, ["piper", "raven"]);
-        assert!(create_in(&root, "Quill", "", "", &[], &[], &["kith".to_owned()]).unwrap_err().contains("Kith"));
+        assert!(create_in(&root, "Quill", "", "", &[], &[], &["kith".to_owned()]).unwrap_err().contains("Alfred"));
         assert!(create_in(&root, "Scout", "", "", &[], &[], &["nobody".to_owned()]).is_err());
         assert!(update_in(&root, "atlas", &Patch { links: Some(vec!["atlas".to_owned()]), ..Patch::default() }).is_err());
         assert_eq!(all_in(&root).iter().find(|agent| agent.id == "atlas").unwrap().links, ["piper", "raven"]);
@@ -683,13 +714,47 @@ mod tests {
         create_in(&root, "Levy", "", "", &[], &[], &["ledger".to_owned()]).unwrap();
         seed_links_in(&root);
         let links = |id: &str| all_in(&root).into_iter().find(|agent| agent.id == id).unwrap().links;
-        assert_eq!(links("atlas"), ["piper", "raven", "quill"]);
+        assert_eq!(links("lucius"), ["gordon", "oracle", "quill"]);
         assert_eq!(links("ledger"), ["levy"]);
         // One that had links of its own keeps them, and nothing is given a second time.
         assert_eq!(links("levy"), ["ledger"]);
-        update_in(&root, "atlas", &Patch { links: Some(vec![]), ..Patch::default() }).unwrap();
+        update_in(&root, "lucius", &Patch { links: Some(vec![]), ..Patch::default() }).unwrap();
         seed_links_in(&root);
-        assert!(links("atlas").is_empty());
+        assert!(links("lucius").is_empty());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_old_starter_names_are_changed_once_and_only_where_still_kept() {
+        let root = folder("renamed");
+        for name in ["ATLAS", "PIPER", "RAVEN", "QUILL"] {
+            create_in(&root, name, "Its job.", "", &[], &[], &[]).unwrap();
+        }
+        update_in(&root, "atlas", &Patch { links: Some(vec!["piper".to_owned()]), ..Patch::default() }).unwrap();
+        // One you renamed yourself keeps your name, as does one whose new name another agent has.
+        rename_raw(&root, "piper", "Mailman");
+        create_in(&root, "oracle", "", "", &[], &[], &[]).unwrap();
+        std::fs::create_dir_all(root.join("atlas")).unwrap();
+        std::fs::write(root.join("atlas/memory.toml"), "[[fact]]\ntext = \"Mine\"\n").unwrap();
+        rename_starters_in(&root);
+        let team = all_in(&root);
+        let agent = |id: &str| team.iter().find(|agent| agent.id == id).unwrap().clone();
+        let atlas = agent("atlas");
+        assert_eq!((atlas.name.as_str(), atlas.job.as_str(), atlas.links.as_slice()), ("Lucius", "Its job.", ["piper".to_owned()].as_slice()));
+        assert_eq!(std::fs::read_to_string(root.join("atlas/memory.toml")).unwrap(), "[[fact]]\ntext = \"Mine\"\n");
+        assert_eq!(agent("piper").name, "Mailman");
+        assert_eq!(agent("raven").name, "RAVEN");
+        assert_eq!(agent("quill").name, "QUILL");
+        // Once: an agent called ATLAS made later stays ATLAS.
+        rename_raw(&root, "atlas", "ATLAS");
+        rename_starters_in(&root);
+        assert_eq!(all_in(&root).iter().find(|agent| agent.id == "atlas").unwrap().name, "ATLAS");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn rename_raw(root: &Path, id: &str, name: &str) {
+        let mut agent = all_in(root).into_iter().find(|agent| agent.id == id).unwrap();
+        agent.name = name.to_owned();
+        write(root, &agent).unwrap();
     }
 }
