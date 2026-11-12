@@ -97,9 +97,17 @@ impl Core {
         self.chats.entry(agent.id.clone()).or_insert_with(|| Chat::load(agents::chat_path(&agent.id).unwrap_or_default(), &agent.name))
     }
 
+    /// The conversation of an agent that is loaded here: `None` once the agent has been deleted, so an answer still on
+    /// its way never makes its conversation again.
+    fn loaded(&mut self, id: &str) -> Option<&mut Chat> {
+        self.chats.get_mut(id)
+    }
+
     /// Gives an answer its id, and applies what was heard of it already. Returns how it ended, if that was heard.
     fn register(&mut self, answer: u32, agent: &Agent, entry: u64) -> Option<(String, &'static str, String)> {
-        if let Some(What::Answer { answer: id, .. }) = self.chat(agent).get_mut(entry) {
+        // Deleted while the answer was being started: what comes of it has nowhere to go.
+        let chat = self.loaded(&agent.id)?;
+        if let Some(What::Answer { answer: id, .. }) = chat.get_mut(entry) {
             *id = answer;
         }
         self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now() });
@@ -400,11 +408,13 @@ impl Agents {
             }
             Err(err) => {
                 let why = ai::said(&err);
-                if let Some(What::Answer { writing, error, .. }) = self.shared.core().chat(&agent).get_mut(entry) {
-                    *writing = false;
-                    *error = why.clone();
+                if let Some(chat) = self.shared.core().loaded(&agent.id) {
+                    if let Some(What::Answer { writing, error, .. }) = chat.get_mut(entry) {
+                        *writing = false;
+                        *error = why.clone();
+                    }
+                    chat.save();
                 }
-                self.shared.core().chat(&agent).save();
                 self.shared.events.record(chat::now(), "failed", &agent.id, &why);
                 Self::agent_changed(&emitter, &agent.id).await?;
                 Err(Error::Failed(why))
@@ -691,6 +701,18 @@ mod tests {
         let next = core.chat(&a).push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
         core.register(4, &a, next);
         assert!(core.early.is_empty());
+    }
+
+    #[test]
+    fn an_answer_for_an_agent_deleted_meanwhile_brings_nothing_back() {
+        // An id that names no folder, so nothing on disk is read even if the conversation were loaded again.
+        let a = agent("deleted/");
+        let (mut core, entry) = core_with(&a);
+        core.chats.remove(&a.id);
+        assert!(core.register(5, &a, entry).is_none());
+        assert!(core.pending.is_empty());
+        assert!(!core.chats.contains_key(&a.id));
+        assert!(core.loaded(&a.id).is_none());
     }
 
     #[test]
