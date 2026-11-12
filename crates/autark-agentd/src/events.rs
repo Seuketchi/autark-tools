@@ -1,7 +1,7 @@
 //! The event log: one JSON line for each thing that happened (an agent made or deleted, a message said, an answer
 //! given or failed), kept 14 days in `events.jsonl`, readable only by you. It holds who, what kind, when and the first
-//! words of a message, never a whole answer. Each event has a number, `seq`, larger than any before it, so a client can
-//! ask for what came after the last one it saw.
+//! words of what you said; of an answer only its length, never its words. Each event has a number, `seq`, larger than
+//! any before it, so a client can ask for what came after the last one it saw.
 
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;

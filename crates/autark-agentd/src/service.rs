@@ -154,7 +154,8 @@ impl Core {
                 *why = "No answer came back.".to_owned();
             }
             well = why.is_empty();
-            said = if well { text.clone() } else { why.clone() };
+            // The event log keeps an answer's length, never its words; a failure's reason is the daemon's own.
+            said = if well { format!("{} characters", text.chars().count()) } else { why.clone() };
         }
         chat.save();
         Some((pending.agent, if well { "answered" } else { "failed" }, said))
@@ -658,7 +659,8 @@ mod tests {
         assert!(core.hear(7, Heard::Piece("Hel".into())).is_none());
         core.hear(7, Heard::Piece("lo.".into()));
         let ended = core.hear(7, Heard::Done(String::new())).unwrap();
-        assert_eq!((ended.0.as_str(), ended.1, ended.2.as_str()), ("piper", "answered", "Hello."));
+        // The log says how long an answer was, never what it said.
+        assert_eq!((ended.0.as_str(), ended.1, ended.2.as_str()), ("piper", "answered", "6 characters"));
         assert_eq!(text_of(&mut core, &a), ("Hello.".to_owned(), false, String::new()));
         assert!(core.pending.is_empty());
     }
