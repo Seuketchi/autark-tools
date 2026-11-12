@@ -349,6 +349,22 @@ impl Core {
     }
 
     /// Whether an answer a schedule started is still being written: the next job waits for it.
+    /// Counts a try of a job whose answer couldn't be started. After `TRIES` it is given up on until its next time, and
+    /// that is news: a "Couldn't run" card, and the agent unread.
+    fn start_failed(&mut self, agent: &Agent, job: u32, why: &str) -> Option<Ended> {
+        let key = (agent.id.clone(), job);
+        let tried = self.tries.entry(key.clone()).or_insert((0, Instant::now()));
+        *tried = (tried.0 + 1, Instant::now());
+        if tried.0 < TRIES {
+            return None;
+        }
+        self.tries.remove(&key);
+        let mut ended = Ended::of(&agent.id, "", String::new());
+        ended.news.push(notify::scheduled(&agent.id, &agent.name, why, false));
+        self.unread.insert(agent.id.clone());
+        Some(ended)
+    }
+
     fn scheduled_running(&self) -> bool {
         self.pending.values().any(|pending| pending.meta.scheduled)
     }
@@ -860,14 +876,11 @@ async fn run_due(shared: &Arc<Shared>, connection: &zbus::Connection, emitter: &
                     shared.core().tries.remove(&key);
                     jobs::ran(&path, id, due);
                 }
-                Ok(Err(_)) => {
-                    let mut core = shared.core();
-                    let tried = core.tries.entry(key.clone()).or_insert((0, Instant::now()));
-                    *tried = (tried.0 + 1, Instant::now());
-                    if tried.0 >= TRIES {
-                        core.tries.remove(&key);
-                        drop(core);
+                Ok(Err(why)) => {
+                    let given_up = shared.core().start_failed(&agent, id, &why);
+                    if given_up.is_some() {
                         jobs::ran(&path, id, due);
+                        settle(shared, emitter, given_up).await;
                     }
                 }
             }
@@ -1537,6 +1550,18 @@ mod tests {
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
         assert!(ended.delivery.is_some());
         assert!(ended.news.is_empty() && core.unread.is_empty());
+    }
+
+    #[test]
+    fn a_job_given_up_on_after_its_tries_is_news() {
+        let a = agent("piper");
+        let mut core = Core::default();
+        for _ in 1..TRIES {
+            assert!(core.start_failed(&a, 2, "The model is still loading.").is_none());
+        }
+        let ended = core.start_failed(&a, 2, "The model is still loading.").unwrap();
+        assert_eq!(ended.news.iter().map(|news| (news.title.as_str(), news.body.as_str())).collect::<Vec<_>>(), [("PIPER · scheduled", "Couldn't run: The model is still loading.")]);
+        assert!(core.unread.contains("piper") && core.tries.is_empty());
     }
 
     #[test]
