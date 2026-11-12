@@ -28,8 +28,13 @@ pub const PATH: &str = "/org/autark/Agents1";
 /// How long an answer may go without a word before it is given up on: a model on a busy laptop can take a while to
 /// start, but not this long.
 const IDLE: Duration = Duration::from_secs(300);
+/// How often the event log is pruned.
+const PRUNE: Duration = Duration::from_secs(60 * 60);
 /// How many words that arrive before the call that started them has returned are kept to be matched.
 const EARLY: usize = 256;
+/// How long such words are kept: the call returns within moments of them, and words older than this are another
+/// answer's, such as one of Kith's own, whose id a later answer may reuse.
+const EARLY_KEPT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, zbus::DBusError)]
 #[zbus(prefix = "org.autark.Agents1.Error")]
@@ -103,14 +108,16 @@ enum Told {
     Done(u32, String),
     /// Kith's own conversation changed.
     Kith,
+    /// `autark-ai` started, stopped or was replaced: its answer ids start again.
+    Restarted,
 }
 
 #[derive(Default)]
 struct Core {
     chats: HashMap<String, Chat>,
     pending: HashMap<u32, Pending>,
-    /// What `autark-ai` said of an answer before its id reached `say`.
-    early: VecDeque<(u32, Heard)>,
+    /// What `autark-ai` said of an answer before its id reached `say`, and when.
+    early: VecDeque<(u32, Heard, Instant)>,
 }
 
 pub struct Shared {
@@ -137,17 +144,28 @@ impl Core {
         self.chats.entry(agent.id.clone()).or_insert_with(|| Chat::load(agents::chat_path(&agent.id).unwrap_or_default(), &agent.name))
     }
 
+    /// The conversation of an agent that is loaded here: `None` once the agent has been deleted, so an answer still on
+    /// its way never makes its conversation again.
+    fn loaded(&mut self, id: &str) -> Option<&mut Chat> {
+        self.chats.get_mut(id)
+    }
+
     /// Gives an answer its id, and applies what was heard of it already. Returns how it ended, if that was heard.
     fn register(&mut self, answer: u32, agent: &Agent, entry: u64, meta: Meta, team: &[Agent]) -> Option<Ended> {
-        if let Some(What::Answer { answer: id, .. }) = self.chat(agent).get_mut(entry) {
+        // Deleted while the answer was being started: what comes of it has nowhere to go.
+        let chat = self.loaded(&agent.id)?;
+        if let Some(What::Answer { answer: id, .. }) = chat.get_mut(entry) {
             *id = answer;
         }
         self.pending.insert(answer, Pending { agent: agent.id.clone(), heard: Instant::now(), meta });
         let mut finished = None;
         let early = std::mem::take(&mut self.early);
-        for (id, heard) in early {
+        for (id, heard, when) in early {
+            if when.elapsed() > EARLY_KEPT {
+                continue;
+            }
             if id != answer {
-                self.early.push_back((id, heard));
+                self.early.push_back((id, heard, when));
                 continue;
             }
             match heard {
@@ -176,6 +194,7 @@ impl Core {
         let pending = self.pending.remove(&answer)?;
         let chat = self.chats.get_mut(&pending.agent)?;
         let mut said = String::new();
+        let mut reply = String::new();
         let mut well = false;
         let mut asked = None;
         if let Some(What::Answer { text, writing, error: why, .. }) = chat.answer_mut(answer) {
@@ -194,7 +213,9 @@ impl Core {
                 }
                 asked = handoff;
             }
-            said = if well { text.clone() } else { why.clone() };
+            reply = if well { text.clone() } else { why.clone() };
+            // The event log keeps an answer's length, never its words; a failure's reason is the daemon's own.
+            said = if well { format!("{} characters", text.chars().count()) } else { why.clone() };
         }
         let mut ended = Ended::of(&pending.agent, if well { "answered" } else { "failed" }, String::new());
         let from = team.iter().find(|agent| agent.id == pending.agent).cloned();
@@ -207,7 +228,7 @@ impl Core {
         if let (Some(origin), Some(from)) = (&pending.meta.origin, &from)
             && let Some(asker) = team.iter().find(|agent| &agent.id == origin)
         {
-            let text = if well { said.clone() } else { format!("(couldn't answer: {said})") };
+            let text = if well { reply } else { format!("(couldn't answer: {reply})") };
             let chat = self.chat(asker);
             chat.push(What::From { from: from.id.clone(), name: from.name.clone(), text, reply: true });
             chat.save();
@@ -246,9 +267,9 @@ impl Core {
         }
     }
 
-    /// An answer that couldn't be started: its entry says why.
+    /// An answer that couldn't be started: its entry says why, unless its agent has been deleted meanwhile.
     fn fail(&mut self, agent: &Agent, entry: u64, why: &str) {
-        let chat = self.chat(agent);
+        let Some(chat) = self.loaded(&agent.id) else { return };
         if let Some(What::Answer { writing, error, .. }) = chat.get_mut(entry) {
             *writing = false;
             *error = why.to_owned();
@@ -256,9 +277,17 @@ impl Core {
         chat.save();
     }
 
+    /// `autark-ai` has gone or been replaced: the answers it was writing won't end, and the ids of what was heard early
+    /// will be given again to other answers. Ends each answer and returns how each ended.
+    fn ai_restarted(&mut self, team: &[Agent]) -> Vec<Ended> {
+        self.early.clear();
+        let answers: Vec<u32> = self.pending.keys().copied().collect();
+        answers.into_iter().filter_map(|answer| self.finish(answer, "Kith's model stopped before the answer was finished.", team)).collect()
+    }
+
     fn hear(&mut self, answer: u32, heard: Heard, team: &[Agent]) -> Option<Ended> {
         if !self.pending.contains_key(&answer) {
-            self.early.push_back((answer, heard));
+            self.early.push_back((answer, heard, Instant::now()));
             while self.early.len() > EARLY {
                 self.early.pop_front();
             }
@@ -323,8 +352,8 @@ fn engine(error: zbus::Error) -> Error {
 
 #[zbus::interface(name = "org.autark.Agents1")]
 impl Agents {
-    /// The team as JSON, Kith first: `[{"id","name","colour","job","last","time","writing"}]`. `last` is what was said
-    /// last in its conversation and `time` when, in seconds since the epoch (0 for nothing yet).
+    /// The team as JSON, Kith first: `[{"id","name","colour","job","can","skills","links","last","time","writing"}]`.
+    /// `last` is what was said last in its conversation and `time` when, in seconds since the epoch (0 for nothing yet).
     async fn agents(&self, #[zbus(connection)] connection: &zbus::Connection) -> Result<String, Error> {
         let team = agents::all();
         let kith = match team.iter().any(|agent| agent.id == KITH) {
@@ -393,8 +422,9 @@ impl Agents {
         Ok(())
     }
 
-    /// An agent's conversation, as a JSON array of entries: `{"id","time","kind":"you","text"}` and
-    /// `{"id","time","kind":"answer","answer","text","writing","error"}`.
+    /// An agent's conversation, as a JSON array of entries: `{"id","time","kind":"you","text"}`,
+    /// `{"id","time","kind":"answer","answer","text","writing","error"}`, `{"id","time","kind":"fact","text","state"}` and
+    /// `{"id","time","kind":"add","note","items","state"}`.
     async fn history(&self, #[zbus(connection)] connection: &zbus::Connection, id: String) -> Result<String, Error> {
         let agent = find(&id)?;
         if agent.id == KITH {
@@ -501,10 +531,11 @@ impl Agents {
         ai(connection).await?.stop(answer).await.map_err(engine)
     }
 
-    /// An agent's memory as JSON: `[{"text","added"}]`, at most 12 facts and 2,000 characters in all.
+    /// An agent's memory as JSON: `[{"text","added"}]`, at most 12 facts and 2,000 characters in all, or why its file
+    /// can't be read.
     async fn memory(&self, id: String) -> Result<String, Error> {
         let path = memory_of(&id)?;
-        serde_json::to_string(&memory::load(&path)).map_err(|err| Error::Failed(err.to_string()))
+        serde_json::to_string(&memory::load(&path).map_err(Error::Failed)?).map_err(|err| Error::Failed(err.to_string()))
     }
 
     /// Adds a fact to an agent's memory, or says why it can't: the memory is full, or the fact is too long.
@@ -515,9 +546,9 @@ impl Agents {
         Ok(())
     }
 
-    /// Forgets the `n`th fact of an agent's memory, counting from 0.
-    async fn forget(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, n: u32) -> Result<(), Error> {
-        memory::forget(&memory_of(&id)?, n as usize).map_err(Error::Failed)?;
+    /// Forgets the fact of an agent's memory with these words, as `Memory` gives them.
+    async fn forget(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, id: String, text: String) -> Result<(), Error> {
+        memory::forget(&memory_of(&id)?, &text).map_err(Error::Failed)?;
         self.shared.events.record(chat::now(), "forgot", &id, "");
         Self::agent_changed(&emitter, &id).await?;
         Ok(())
@@ -636,9 +667,15 @@ impl Agents {
         Ok(())
     }
 
-    /// What happened since `since` (seconds since the epoch), as a JSON array of `{"time","kind","agent","text"}`.
+    /// What happened since `since` (seconds since the epoch), as a JSON array of `{"seq","time","kind","agent","text"}`.
     async fn events(&self, since: u64) -> String {
         self.shared.events.since(since)
+    }
+
+    /// What happened after the event numbered `seq` (0 for all), as `Events` gives it: a client that keeps the last
+    /// `seq` it saw misses nothing and sees nothing twice, however many events share a second.
+    async fn events_after(&self, seq: u64) -> String {
+        self.shared.events.after(seq)
     }
 
     #[zbus(signal)]
@@ -739,8 +776,14 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
         }
     };
     let watch = async {
+        let mut pruned = Instant::now();
         loop {
             async_io::Timer::after(Duration::from_secs(30)).await;
+            // The log is kept to 14 days while the daemon runs, not only when it starts.
+            if pruned.elapsed() > PRUNE {
+                shared.prune();
+                pruned = Instant::now();
+            }
             let idle: Vec<u32> = shared.core().pending.iter().filter(|(_, pending)| pending.heard.elapsed() > IDLE).map(|(id, _)| *id).collect();
             for answer in idle {
                 if let Ok(proxy) = AiProxy::new(&connection).await {
@@ -759,7 +802,8 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                 let pieces = proxy.receive_answer_piece().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Told::Piece(args.id, args.offset, args.text))));
                 let done = proxy.receive_answer_done().await?.filter_map(|signal| std::future::ready(signal.args().ok().map(|args| Told::Done(args.id, args.error))));
                 let kith = proxy.receive_history_changed().await?.map(|_| Told::Kith);
-                let mut heard = futures_util::stream::select(futures_util::stream::select(pieces, done), kith);
+                let restarted = proxy.inner().receive_owner_changed().await?.map(|_| Told::Restarted);
+                let mut heard = futures_util::stream::select(futures_util::stream::select(pieces, done), futures_util::stream::select(kith, restarted));
                 while let Some(heard) = heard.next().await {
                     match heard {
                         // Passed on at once, whoever started it: the roster follows Kith's answers too.
@@ -770,6 +814,13 @@ pub async fn follow(shared: Arc<Shared>, connection: zbus::Connection) {
                             shared.core().hear(id, Heard::Piece(text), &[]);
                         }
                         Told::Kith => settle(shared.clone(), connection.clone(), emitter.clone(), Some(Ended::of(KITH, "", String::new()))).await,
+                        Told::Restarted => {
+                            let team = agents::all();
+                            let ended = shared.core().ai_restarted(&team);
+                            for ended in ended {
+                                settle(shared.clone(), connection.clone(), emitter.clone(), Some(ended)).await;
+                            }
+                        }
                         Told::Done(id, error) => {
                             let team = agents::all();
                             let ended = shared.core().hear(id, Heard::Done(error), &team);
@@ -814,7 +865,15 @@ async fn start_answer(
             String::new()
         }
     };
-    let facts = agents::memory_path(&agent.id).map(|path| memory::load(&path)).unwrap_or_default();
+    let facts = match agents::memory_path(&agent.id).map(|path| memory::load(&path)) {
+        Some(Ok(facts)) => facts,
+        Some(Err(err)) => {
+            // It answers without its memory rather than not at all; Memory() shows you why.
+            eprintln!("agentd: {}: {err}", agent.name);
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
     let skills: Vec<(String, String)> = agent.skills.iter().filter_map(|name| agents::skill_text(name).map(|text| (name.clone(), text))).collect();
     let team = agents::all();
     let links: Vec<Agent> = agent.links.iter().filter_map(|link| team.iter().find(|other| &other.id == link).cloned()).collect();
@@ -914,7 +973,8 @@ mod tests {
         assert!(core.hear(7, Heard::Piece("Hel".into()), &[]).is_none());
         core.hear(7, Heard::Piece("lo.".into()), &[]);
         let ended = core.hear(7, Heard::Done(String::new()), &[]).unwrap();
-        assert_eq!((ended.agent.as_str(), ended.kind, ended.said.as_str()), ("piper", "answered", "Hello."));
+        // The log says how long an answer was, never what it said.
+        assert_eq!((ended.agent.as_str(), ended.kind, ended.said.as_str()), ("piper", "answered", "6 characters"));
         assert_eq!(text_of(&mut core, &a), ("Hello.".to_owned(), false, String::new()));
         assert!(core.pending.is_empty());
     }
@@ -930,6 +990,45 @@ mod tests {
         assert_eq!(text_of(&mut core, &a), ("Early".to_owned(), false, String::new()));
         // What belongs to others stays to be matched.
         assert_eq!(core.early.len(), 1);
+    }
+
+    #[test]
+    fn words_heard_too_long_ago_are_not_matched() {
+        let a = agent("piper");
+        let (mut core, entry) = core_with(&a);
+        core.hear(9, Heard::Piece("from another answer 9".into()), &[]);
+        core.early[0].2 = Instant::now().checked_sub(EARLY_KEPT + Duration::from_secs(1)).unwrap();
+        assert!(core.register(9, &a, entry, Meta::default(), &[]).is_none());
+        assert_eq!(text_of(&mut core, &a), (String::new(), true, String::new()));
+        assert!(core.early.is_empty());
+    }
+
+    #[test]
+    fn when_autark_ai_restarts_what_was_heard_is_dropped_and_answers_end() {
+        let a = agent("piper");
+        let (mut core, entry) = core_with(&a);
+        core.register(3, &a, entry, Meta::default(), &[]);
+        core.hear(4, Heard::Piece("Kith's".into()), &[]);
+        let ended = core.ai_restarted(&[]);
+        assert_eq!(ended.iter().map(|ended| (ended.agent.as_str(), ended.kind)).collect::<Vec<_>>(), [("piper", "failed")]);
+        assert!(core.early.is_empty() && core.pending.is_empty());
+        assert!(!text_of(&mut core, &a).1);
+        // Ids start again at 1 in a new autark-ai: answer 4 there is not the one heard before.
+        let next = core.chat(&a).push(What::Answer { answer: 0, text: String::new(), writing: true, error: String::new() });
+        core.register(4, &a, next, Meta::default(), &[]);
+        assert!(core.early.is_empty());
+    }
+
+    #[test]
+    fn an_answer_for_an_agent_deleted_meanwhile_brings_nothing_back() {
+        // An id that names no folder, so nothing on disk is read even if the conversation were loaded again.
+        let a = agent("deleted/");
+        let (mut core, entry) = core_with(&a);
+        core.chats.remove(&a.id);
+        assert!(core.register(5, &a, entry, Meta::default(), &[]).is_none());
+        assert!(core.pending.is_empty());
+        assert!(!core.chats.contains_key(&a.id));
+        assert!(core.loaded(&a.id).is_none());
     }
 
     #[test]
@@ -1000,7 +1099,8 @@ mod tests {
         let team = [linked("atlas", &["raven"]), linked("raven", &[])];
         let mut core = handoff_core(&team, "atlas", "Rain is likely.\nHANDOFF raven: forecast for Cebu tomorrow?", in_chain(&["atlas"], 0));
         let ended = core.hear(5, Heard::Done(String::new()), &team).unwrap();
-        assert_eq!(ended.said, "Rain is likely.");
+        // The log says how long the answer was, without the handoff line.
+        assert_eq!(ended.said, "15 characters");
         let delivery = ended.delivery.unwrap();
         assert_eq!((delivery.to.id.as_str(), delivery.brief.as_str(), delivery.meta.depth), ("raven", "forecast for Cebu tomorrow?", 1));
         assert_eq!(delivery.meta.chain, ["atlas", "raven"]);

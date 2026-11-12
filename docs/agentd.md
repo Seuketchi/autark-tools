@@ -32,7 +32,9 @@ a new kind of socket. The API is typed and listed below, and the daemon needs no
 
 ## State
 
-Files, like the rest of Autark, so you can read and back them up. All under your own account, mode 0600.
+Files, like the rest of Autark, so you can read and back them up. All under your own account, files mode 0600 in
+folders mode 0700, and each is replaced whole (a temporary file beside it, then a rename), so a crash never leaves half
+of one.
 
 | What | Where |
 |---|---|
@@ -42,7 +44,14 @@ Files, like the rest of Autark, so you can read and back them up. All under your
 | The event log (14 days) | `~/.local/state/autark-agentd/events.jsonl` |
 | The mailbox (what is waiting to be delivered) | `~/.local/state/autark-agentd/mailbox.json` |
 
-An id is a short slug, so it can't name a path outside the agents' folders.
+An id is a short slug, so it can't name a path outside the agents' folders. A folder keeps its id even when its
+`agent.toml` can't be read, so a new agent never moves in on another's memory.
+
+`agent.toml`, `memory.toml` and `chat.json` (`{"version", "next", "entries"}`) say which `version` of their format
+wrote them. A file from a newer version is read but never written over. An entry of a kind this version doesn't know
+is kept as it is. A `chat.json` that can't be understood is moved aside to `chat.json.bad-<seconds>` before a new one
+is begun; a `memory.toml` that can't be read is left as it is, and Memory, Remember and Forget say why until it is
+fixed. An entry's `id` is never given twice in a conversation.
 
 ## Memory
 
@@ -123,20 +132,35 @@ standing work, and it needs those checks to exist in `autark-ai` first.
 
 | Call | Does |
 |---|---|
-| `Agents()` | The team as JSON: each agent, its last words and time, whether it is writing |
-| `CreateAgent(name, job, soul, can, skills, links)` / `DeleteAgent(id)` / `SetAgent(id, json)` | Make, remove, change (`links` too) |
-| `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation |
-| `Memory(id)` / `Remember(id, text)` / `Forget(id, n)` | Its memory |
+| `Agents()` | The team as a JSON array, Kith first: `{"id","name","colour","job","can","skills","links","last","time","writing"}`, where `last` is what was said last and `time` when (0 for nothing yet) |
+| `CreateAgent(name, job, soul, can, skills, links)` / `DeleteAgent(id)` / `SetAgent(id, json)` | Make, remove, change; `SetAgent`'s JSON has any of `job`, `soul`, `can`, `skills`, `links` |
+| `History(id)` / `Say(id, text)` / `Clear(id)` / `Stop(answer)` | The conversation; `Say` returns the answer's id and its entry |
+| `AnswerFact(id, entry, save)` / `AnswerAdd(id, entry, add)` | Save a proposed fact or not; add a proposed line to a note or not |
+| `Memory(id)` / `Remember(id, text)` / `Forget(id, text)` | Its memory; a fact is forgotten by its words |
 | `Jobs(id)` / `AddJob(id, when, prompt)` / `RemoveJob(id, n)` / `SetJobEnabled(id, n, on)` / `RunJob(id, n)` | Its schedule |
-| `Events(since)` | What happened, as JSON lines |
+| `Events(since)` / `EventsAfter(seq)` | What happened, from a time or after an event's number, as a JSON array of `{"seq","time","kind","agent","text"}` |
 | signals `AgentChanged(id)`, `AgentsChanged()`, `AnswerPiece(answer, offset, text)` | What clients follow |
+
+`History` is a JSON array of entries, each with `id`, `time` (seconds since the epoch) and a `kind`:
+
+| `kind` | Its fields |
+|---|---|
+| `you` | `text`: what you said |
+| `answer` | `answer` (the model's answer id, 0 for one code gave), `text`, `writing`, `error` |
+| `fact` | `text`, `state` (`proposed`, `saved` or `dismissed`): a fact it proposes to remember |
+| `add` | `note`, `items`, `state` (as for `fact`): lines it proposes to add to a note |
+| `handoff` | `to`, `name`, `brief`, `refused` (empty when it went): work it handed to another agent |
+| `from` | `from`, `name`, `text`, `reply`: a message from another agent, or (`reply`) its answer to work handed to it |
+| `job` | `when`, `prompt`, `state` (as for `fact`): a job it proposes to run on a schedule |
+
+A client shows an entry of a kind it doesn't know as nothing, not as an error: later steps add kinds.
 
 ## Privacy
 
 Nothing leaves the laptop unless you have switched a cloud engine on in `ai.toml`, as before. The daemon keeps what you
 said under your account only. A skill or an agent's job can't widen what it may look at: `can` is checked by code
-before anything is read. The event log keeps who, what kind and when, and the first words of a message, never an
-agent's whole answer.
+before anything is read. The event log keeps who, what kind and when, and the first words of what you said; of an
+answer only its length.
 
 ## Order of work
 
