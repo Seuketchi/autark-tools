@@ -1,5 +1,4 @@
-//! `autark-ai`'s calls as the launcher and the Assistant panel use them, and what they share in showing Kith's
-//! actions and errors.
+//! `autark-ai`'s calls as Ask Kith uses them, and how it shows Kith's actions and errors.
 
 use std::cell::RefCell;
 
@@ -7,16 +6,9 @@ use serde_json::Value;
 
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
 pub trait Ai {
-    fn chat(&self, text: &str) -> zbus::Result<String>;
-    fn chat_answer(&self, question: &str, files: &[&str]) -> zbus::Result<(u32, u64, Vec<(String, String)>)>;
-    fn chat_act(&self, entry: u64, chosen: &[u32]) -> zbus::Result<Vec<String>>;
-    fn remember(&self, entry: u64, text: &str, save: bool) -> zbus::Result<()>;
-    fn save_skill(&self, entry: u64, name: &str, save: bool) -> zbus::Result<()>;
-    fn create_task(&self, entry: u64, task: &str) -> zbus::Result<(String, u64)>;
-    fn cancel_task(&self, entry: u64) -> zbus::Result<()>;
-    fn answer_suggestion(&self, entry: u64, answer: &str) -> zbus::Result<String>;
-    fn history(&self) -> zbus::Result<String>;
-    fn clear_history(&self) -> zbus::Result<()>;
+    fn route(&self, text: &str) -> zbus::Result<String>;
+    fn act(&self, actions: &str) -> zbus::Result<Vec<String>>;
+    fn ask(&self, prompt: &str, context: &str) -> zbus::Result<u32>;
     fn stop(&self, id: u32) -> zbus::Result<()>;
     #[zbus(property(emits_changed_signal = "false"))]
     fn state(&self) -> zbus::Result<String>;
@@ -26,8 +18,6 @@ pub trait Ai {
     fn answer_piece(&self, id: u32, offset: u32, text: String) -> zbus::Result<()>;
     #[zbus(signal)]
     fn answer_done(&self, id: u32, error: String) -> zbus::Result<()>;
-    #[zbus(signal)]
-    fn history_changed(&self) -> zbus::Result<()>;
 }
 
 thread_local! {
@@ -93,7 +83,7 @@ pub fn said(error: zbus::Error) -> String {
 }
 
 /// Adds a piece of an answer that starts at byte `offset` of it, to `text` holding what's come so far: a piece
-/// already in it is skipped, so text read from `History` and the pieces arriving meanwhile join up.
+/// already in it is skipped, so a piece sent twice is shown once.
 pub fn merge(text: &mut String, offset: u32, piece: &str) {
     let offset = offset as usize;
     let have = text.len();

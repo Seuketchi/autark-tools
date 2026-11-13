@@ -8,7 +8,6 @@
 mod actions;
 mod ai;
 mod apps;
-mod assistant;
 mod clipboard;
 mod config;
 mod face;
@@ -26,7 +25,6 @@ use search::{Hit, Icon, Index, Target};
 
 fn main() -> glib::ExitCode {
     let daemon = std::env::args().any(|arg| arg == "--daemon");
-    let assistant = std::env::args().any(|arg| arg == "--assistant");
     let apps = std::env::args().any(|arg| arg == "--apps");
     let clipboard = std::env::args().any(|arg| arg == "--clipboard");
     let app = gtk::Application::builder()
@@ -38,19 +36,7 @@ fn main() -> glib::ExitCode {
         let launcher = launcher.clone();
         move |app: &gtk::Application| launcher.borrow_mut().get_or_insert_with(|| Launcher::new(app)).clone()
     };
-    // `--assistant` opens or closes the Assistant panel, in the launcher already running if there is one.
-    let toggle_assistant = gio::SimpleAction::new("assistant", None);
-    toggle_assistant.connect_activate({
-        let (app, get) = (app.downgrade(), get.clone());
-        move |_, _| {
-            let Some(app) = app.upgrade() else { return };
-            let launcher = get(&app);
-            // From an open launcher it carries on there, as Follow up does.
-            if launcher.window.is_visible() { launcher.follow_up() } else { launcher.panel.toggle() }
-        }
-    });
-    app.add_action(&toggle_assistant);
-    // `--apps` does the same for the Apps view.
+    // `--apps` opens or closes the Apps view, in the launcher already running if there is one.
     let toggle_apps = gio::SimpleAction::new("apps", None);
     toggle_apps.connect_activate({
         let (app, get) = (app.downgrade(), get.clone());
@@ -71,19 +57,19 @@ fn main() -> glib::ExitCode {
     });
     app.add_action(&toggle_clipboard);
     // Started hidden, the first activation is the daemon's own and shows nothing.
-    let skip = Cell::new(daemon || assistant || apps || clipboard);
+    let skip = Cell::new(daemon || apps || clipboard);
     app.connect_activate(move |app| {
         let launcher = get(app);
         if !skip.replace(false) {
             launcher.toggle();
         }
     });
-    if assistant || apps || clipboard {
+    if apps || clipboard {
         if let Err(err) = app.register(None::<&gio::Cancellable>) {
             eprintln!("launcher: {err}");
             return glib::ExitCode::FAILURE;
         }
-        app.activate_action(if assistant { "assistant" } else if clipboard { "clipboard" } else { "apps" }, None);
+        app.activate_action(if clipboard { "clipboard" } else { "apps" }, None);
         if app.is_remote() {
             // The call goes out before this exits; the app is left as it is rather than torn down unrun.
             if let Some(connection) = app.dbus_connection()
@@ -114,7 +100,6 @@ struct Launcher {
     footer: gtk::Box,
     kith_hint: gtk::Label,
     kith: Rc<kith::View>,
-    panel: Rc<assistant::Panel>,
     /// `ai.toml` as of opening.
     ai: Cell<kith::Settings>,
     /// Showing Kith's view rather than results.
@@ -204,26 +189,7 @@ impl Launcher {
         });
         dialog.append(&grid.root);
         dialog.append(&footer);
-        // Built once the launcher is, as its Open button closes the launcher.
-        let hide: Rc<RefCell<std::rc::Weak<Launcher>>> = Rc::default();
-        let kith = kith::View::new(
-            {
-                let hide = hide.clone();
-                move || {
-                    if let Some(launcher) = hide.borrow().upgrade() {
-                        launcher.hide();
-                    }
-                }
-            },
-            {
-                let hide = hide.clone();
-                move || {
-                    if let Some(launcher) = hide.borrow().upgrade() {
-                        launcher.follow_up();
-                    }
-                }
-            },
-        );
+        let kith = kith::View::new();
         kith.root.set_visible(false);
         kith.footer.set_visible(false);
         dialog.insert_child_after(&kith.root, Some(&header));
@@ -247,7 +213,6 @@ impl Launcher {
             footer,
             kith_hint,
             kith,
-            panel: assistant::Panel::new(app),
             ai: Cell::new(kith::Settings::load()),
             asking: Cell::new(false),
             index: RefCell::new(Index::load()),
@@ -257,7 +222,6 @@ impl Launcher {
             rows: RefCell::default(),
             selected: Cell::new(0),
         });
-        *hide.borrow_mut() = Rc::downgrade(&launcher);
         // What's copied arrives from a thread of its own; this looks for it a few times a second.
         let copies = clipboard::watch();
         glib::timeout_add_local(std::time::Duration::from_millis(250), {
@@ -315,15 +279,13 @@ impl Launcher {
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed({
             let launcher = Rc::downgrade(&launcher);
-            move |_, key, _, modifiers| {
+            move |_, key, _, _| {
                 let Some(launcher) = launcher.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
-                let control = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
                 let count = launcher.hits.borrow().len();
                 match key {
                     gdk::Key::Escape => launcher.hide(),
-                    gdk::Key::Return | gdk::Key::KP_Enter if control && launcher.asking.get() => launcher.follow_up(),
                     gdk::Key::Tab if !launcher.asking.get() && launcher.kith_row().is_some() => launcher.select(launcher.kith_row().unwrap_or(0)),
                     _ if launcher.asking.get() => return glib::Propagation::Proceed,
                     gdk::Key::Down if launcher.browsing.get() && launcher.entry.has_focus() => launcher.grid.focus(),
@@ -481,13 +443,6 @@ impl Launcher {
         self.kith.root.set_visible(true);
         self.kith.footer.set_visible(true);
         self.kith.start(text, self.ai.get());
-    }
-
-    /// Carries on from Ask Kith in the Assistant panel, the answer still being written there.
-    fn follow_up(&self) {
-        self.kith.detach();
-        self.hide();
-        self.panel.open();
     }
 
     fn leave_kith(&self) {
