@@ -6,7 +6,7 @@ How each tool behaves, in detail: what the bar, dock, launcher, notifications, l
 
 ## Kith's team
 
-`autark-butler` is a window onto a self-hosted Alfred: **Approvals** (Yes or No on what waits for the owner), **Memory** (each fact, with Forget after a confirmation), **Today** (one of the owner's lists, picked from a menu), **Turns** (the last 50: channel, model, tokens, time and outcome, never the words) and **Linked**. It keeps nothing: each refresh is one SSH connection to `alfred window` with a key locked to that command (`host` and `key` in `~/.config/autark/butler.toml`).
+`autark-butler` is a window onto a self-hosted Alfred: **Approvals** (Yes or No on what waits for the owner), **Memory** (each fact, with Forget after a confirmation), **Today** (one of the owner's lists, picked from a menu), **Turns** (the last 50: channel, model, tokens, time and outcome, never the words) and **Linked**. It keeps nothing: each refresh is one SSH connection to `alfred window` with a key locked to that command (`host` and `key` in `~/.config/autark/butler.toml`); a key with a passphrase has to be in ssh-agent, since it can't ask. A round trip that takes over 30 seconds is given up, and ssh's reason for failing shows in the header.
 
 `autark-kith` is the team's window: a roster of agents on the left, each with a face in its colour, its last words and the time (or "Typing…" while it writes), and the conversation with the one you pick on the right, where an answer grows in its bubble as it is written. **+** makes an agent from a name, a job (said as an instruction to it), how it should sound and what it may look at; **⋯** opens the agent's memory, clears its conversation or deletes it. It talks to `autark-alfred` only; `docs/alfred.md` has the design.
 

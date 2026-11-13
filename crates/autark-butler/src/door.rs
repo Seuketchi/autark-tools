@@ -2,8 +2,9 @@
 //! command. Each refresh opens one connection, sends its requests one JSON line each and reads one answer a line.
 //! Nothing is kept here: the window shows what comes back and forgets it.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,6 +21,8 @@ pub const NOT_SET: &str = "Not set up: put host and key (locked to `alfred windo
 pub struct Door {
     program: String,
     args: Vec<String>,
+    /// How long one round trip may take before it's given up (a stuck server never leaves the window asking).
+    wait: Duration,
 }
 
 impl Door {
@@ -31,33 +34,53 @@ impl Door {
         let mut args = vec!["-T".to_owned(), "-i".to_owned(), key.clone()];
         args.extend(options.iter().flat_map(|o| ["-o".to_owned(), (*o).to_owned()]));
         args.extend(["--".to_owned(), host.clone(), "window".to_owned()]);
-        Ok(Door { program: "ssh".into(), args })
+        Ok(Door { program: "ssh".into(), args, wait: Duration::from_secs(30) })
     }
 
-    /// Each request's answer, in order: its `ok` or its `error`. Err when Alfred couldn't be reached at all.
+    /// Each request's answer, in order: its `ok` or its `error`. Err when Alfred couldn't be reached at all, or in time.
     pub fn ask(&self, requests: &[Value]) -> Result<Vec<Result<Value, String>>, String> {
         let unreachable = |e: &dyn std::fmt::Display| format!("Couldn't reach Alfred: {e}");
         let mut child = Command::new(&self.program)
             .args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| unreachable(&e))?;
         let lines: String = requests.iter().map(|r| format!("{r}\n")).collect();
         let sent = child.stdin.take().map(|mut stdin| stdin.write_all(lines.as_bytes()));
-        let out = child.wait_with_output().map_err(|e| unreachable(&e))?;
-        let answers: Vec<Value> = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect();
-        if !matches!(sent, Some(Ok(()))) || answers.len() != requests.len() {
-            return Err(unreachable(&"no answer (is the server up, and the key set up?)"));
+        let read = |pipe: Option<Box<dyn Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                pipe.map(|mut p| p.read_to_string(&mut text));
+                text
+            })
+        };
+        let out = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+        let err = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+        let started = Instant::now();
+        while matches!(child.try_wait(), Ok(None)) {
+            if started.elapsed() > self.wait {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(unreachable(&format!("no answer in {} seconds", self.wait.as_secs())));
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        Ok(answers.into_iter().map(|a| match a.get("ok") {
-            Some(ok) => Ok(ok.clone()),
-            None => Err(a["error"].as_str().unwrap_or("no answer").to_owned()),
-        }).collect())
+        let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+        let answers: Vec<Value> = out.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+        if !matches!(sent, Some(Ok(()))) || answers.len() != requests.len() {
+            // ssh's own last words say why (a key that needs its passphrase in ssh-agent, an unknown host key).
+            let why = err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("no answer (is the server up?)");
+            return Err(unreachable(&why));
+        }
+        Ok(answers
+            .into_iter()
+            .map(|a| match a.get("ok") {
+                Some(ok) => Ok(ok.clone()),
+                None => Err(a["error"].as_str().unwrap_or("no answer").to_owned()),
+            })
+            .collect())
     }
 }
 
@@ -76,7 +99,7 @@ mod tests {
     use serde_json::json;
 
     fn fake(script: &str) -> Door {
-        Door { program: "sh".into(), args: vec!["-c".into(), script.into()] }
+        Door { program: "sh".into(), args: vec!["-c".into(), script.into()], wait: Duration::from_secs(10) }
     }
 
     #[test]
@@ -92,8 +115,18 @@ mod tests {
     fn a_missing_answer_or_door_is_unreachable_not_an_empty_list() {
         let short = fake(r#"read -r l; echo '{"ok":[]}'"#);
         assert!(short.ask(&[json!({"op": "approvals"}), json!({"op": "memory"})]).is_err());
-        let gone = Door { program: "/nonexistent/ssh".into(), args: vec![] };
+        let denied = fake(r#"echo 'me@server: Permission denied (publickey).' >&2; exit 255"#);
+        assert_eq!(denied.ask(&[json!({"op": "memory"})]).unwrap_err(), "Couldn't reach Alfred: me@server: Permission denied (publickey).");
+        let gone = Door { program: "/nonexistent/ssh".into(), ..fake("") };
         assert!(gone.ask(&[json!({"op": "approvals"})]).unwrap_err().starts_with("Couldn't reach Alfred"));
+    }
+
+    #[test]
+    fn a_server_that_never_answers_is_given_up_on() {
+        let stuck = Door { wait: Duration::from_secs(1), ..fake("sleep 600") };
+        let started = Instant::now();
+        assert!(stuck.ask(&[json!({"op": "memory"})]).unwrap_err().contains("no answer in 1 seconds"));
+        assert!(started.elapsed() < Duration::from_secs(5), "and the stuck ssh is ended, not waited on");
     }
 
     #[test]

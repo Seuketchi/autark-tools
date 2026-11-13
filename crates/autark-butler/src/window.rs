@@ -1,6 +1,7 @@
 //! The window: a sidebar of pages (Approvals, Memory, Today, Turns, Linked) and a refresh button. Every page is
 //! rebuilt from one round trip through the door; a yes, a no or a forget is one more trip, then a refresh.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -22,6 +23,8 @@ pub struct Butler {
     pick: gtk::DropDown,
     turns: gtk::Box,
     linked: gtk::Label,
+    /// The latest refresh: an older one that lands late is dropped, so a page never shows what wasn't asked last.
+    asked: Cell<u64>,
 }
 
 fn page(stack: &gtk::Stack, name: &str, title: &str, child: &impl IsA<gtk::Widget>) {
@@ -80,6 +83,7 @@ impl Butler {
             pick,
             turns: column(),
             linked: text(""),
+            asked: Cell::new(0),
         });
         me.status.add_css_class("dim");
         header.pack_start(&me.status);
@@ -99,16 +103,22 @@ impl Butler {
         let again = Rc::downgrade(&me);
         refresh.connect_clicked(move |_| {
             if let Some(me) = again.upgrade() {
-                me.refresh();
+                me.refresh(String::new());
             }
         });
         let again = Rc::downgrade(&me);
         me.pick.connect_selected_notify(move |_| {
             if let Some(me) = again.upgrade() {
-                me.refresh();
+                me.refresh(String::new());
             }
         });
-        me.refresh();
+        // The handlers hold the window weakly; this keeps it alive until it's closed.
+        let keep = Rc::clone(&me);
+        me.window.connect_close_request(move |_| {
+            let _ = &keep;
+            glib::Propagation::Proceed
+        });
+        me.refresh(String::new());
         me
     }
 
@@ -129,16 +139,19 @@ impl Butler {
             .await
             .unwrap_or_else(|_| Err("Asking Alfred stopped unexpectedly.".into()));
             match asked {
-                Ok(answers) => {
-                    me.status.set_label("");
-                    done(&me, answers);
+                Ok(answers) => done(&me, answers),
+                Err(e) => {
+                    me.status.set_label(&e);
+                    me.status.set_tooltip_text(Some(&e));
                 }
-                Err(e) => me.status.set_label(&e),
             }
         });
     }
 
-    fn refresh(self: &Rc<Self>) {
+    /// Fetches every page again; `note` (Alfred's answer to a change, or nothing) shows in the header once it lands.
+    fn refresh(self: &Rc<Self>, note: String) {
+        let this = self.asked.get() + 1;
+        self.asked.set(this);
         let requests = vec![
             json!({"op": "approvals"}),
             json!({"op": "memory"}),
@@ -146,7 +159,11 @@ impl Butler {
             json!({"op": "turns", "n": 50}),
             json!({"op": "linked"}),
         ];
-        self.ask(requests, |me, a| {
+        self.ask(requests, move |me, a| {
+            if me.asked.get() != this {
+                return;
+            }
+            me.status.set_label(&note);
             me.show_approvals(&a[0]);
             me.show_memory(&a[1]);
             me.today.set_label(&said(&a[2]));
@@ -157,10 +174,7 @@ impl Butler {
 
     /// One change (a yes, a no, a forget): Alfred's answer shows in the header, then everything is fetched again.
     fn change(self: &Rc<Self>, request: Value) {
-        self.ask(vec![request], |me, a| {
-            me.refresh();
-            me.status.set_label(&said(&a[0]));
-        });
+        self.ask(vec![request], |me, a| me.refresh(said(&a[0])));
     }
 
     fn show_approvals(self: &Rc<Self>, answer: &Result<Value, String>) {
@@ -175,7 +189,9 @@ impl Butler {
             yes.add_css_class("suggested-action");
             for (button, answer) in [(&yes, true), (&no, false)] {
                 let me = Rc::downgrade(self);
-                button.connect_clicked(move |_| {
+                button.connect_clicked(move |button| {
+                    // One answer per request: the row stops taking clicks until the refresh replaces it.
+                    button.parent().inspect(|row| row.set_sensitive(false));
                     if let Some(me) = me.upgrade() {
                         me.change(json!({"op": "decide", "id": id, "yes": answer}));
                     }
