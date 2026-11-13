@@ -185,6 +185,10 @@ pub fn build_ended(path: &Path) -> Option<Event> {
 
 /// The last `bytes` of a file, from a line's start.
 fn tail(path: &Path, bytes: u64) -> Option<String> {
+    // A log is a plain file: never a link to something else, and never a pipe that would hang the read.
+    if !std::fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
     let mut file = std::fs::File::open(path).ok()?;
     let length = file.metadata().ok()?.len();
     file.seek(SeekFrom::Start(length.saturating_sub(bytes))).ok()?;

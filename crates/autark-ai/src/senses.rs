@@ -32,7 +32,7 @@ pub fn build(folder: &Path) -> String {
         entries
             .flatten()
             .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "log"))
-            .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+            .filter_map(|entry| Some((std::fs::symlink_metadata(entry.path()).ok().filter(std::fs::Metadata::is_file)?.modified().ok()?, entry.path())))
             .max()
     });
     let Some((_, path)) = newest else {

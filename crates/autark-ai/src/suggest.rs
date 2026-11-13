@@ -190,8 +190,9 @@ impl Policy {
                 std::fs::create_dir_all(dir)?;
             }
             let temporary = path.with_extension("json.saving");
-            std::fs::write(&temporary, serde_json::to_vec(&self.kept)?)?;
-            std::fs::set_permissions(&temporary, <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600))?;
+            let _ = std::fs::remove_file(&temporary);
+            let mut file = <std::fs::OpenOptions as std::os::unix::fs::OpenOptionsExt>::mode(std::fs::OpenOptions::new().write(true).create_new(true), 0o600).open(&temporary)?;
+            std::io::Write::write_all(&mut file, &serde_json::to_vec(&self.kept)?)?;
             std::fs::rename(&temporary, &path)
         })();
         if let Err(err) = result {
@@ -339,6 +340,18 @@ mod tests {
 
     fn event(kind: Kind, subject: &str) -> Event {
         Event { kind, subject: subject.into(), label: String::new(), facts: String::new(), offer: Some((Action::Mute { on: true }, "Mute".into())) }
+    }
+
+    #[test]
+    fn an_id_is_never_given_twice_even_after_answering_and_reloading() {
+        let shown = || Open { id: 0, time: 0, event: Kind::Battery, key: "battery".into(), label: String::new(), text: String::new(), offer: None, offer_label: String::new(), worth: 1.0, notification: 0 };
+        let mut policy = Policy::default();
+        let first = policy.open(shown());
+        let second = policy.open(shown());
+        assert!(policy.answer(second, 0).is_some() && policy.answer(first, 0).is_some());
+        let kept = serde_json::to_vec(&policy.kept).unwrap();
+        let mut reloaded = Policy { kept: serde_json::from_slice(&kept).unwrap(), ..Policy::default() };
+        assert!(reloaded.open(shown()) > second);
     }
 
     #[test]

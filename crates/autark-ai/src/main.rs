@@ -19,12 +19,18 @@ mod server;
 mod suggest;
 
 fn main() {
+    // Kith's tasks and MCP server are gone: an old task timer or MCP client starting `autark-ai task <id>` or
+    // `autark-ai mcp` must not start a second daemon.
+    if std::env::args().len() > 1 {
+        eprintln!("ai: autark-ai takes no arguments (Kith's tasks and MCP server were removed)");
+        std::process::exit(2);
+    }
     let config: config::Ai = autark_common::config::load("ai");
     if !config.enabled {
         eprintln!("ai: AI is off; only Check's built-in rules answer (set `enabled = true` in ai.toml)");
     }
     let result = async_io::block_on(async {
-        let connection = zbus::connection::Builder::session().name("org.autark.AI1").serve_at(server::PATH, server::Ai::new(config)).build().await?;
+        let connection = zbus::connection::Builder::session().replace_existing_names(false).name("org.autark.AI1").serve_at(server::PATH, server::Ai::new(config)).build().await?;
         let suggestions = suggest::watch(connection.clone());
         // Settings and hand edits apply at once.
         let ai = connection.object_server().interface::<_, server::Ai>(server::PATH).await?;
