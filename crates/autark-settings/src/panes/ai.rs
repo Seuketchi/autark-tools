@@ -26,12 +26,10 @@ trait Ai {
 }
 
 /// Jev's features as `ai.toml`'s `[jev]` names them, with the design's words.
-const FEATURES: [(&str, &str, &str); 5] = [
+const FEATURES: [(&str, &str, &str); 3] = [
     ("launcher", "Launcher commands", "Turns what you type into actions"),
     ("notify", "Notification urgency", "Focus lets only urgent ones through"),
     ("terminal", "Terminal safety check", "Confirms destructive commands"),
-    ("files", "File search by meaning", "Ranks files by relevance"),
-    ("settings", "Settings search", "Finds the right pane from a sentence"),
 ];
 
 /// The call log's last rows shown.
@@ -190,7 +188,7 @@ impl AiPane {
         let on = ui::switch(enabled, move |on| ai.set("enabled", on));
         on.set_widget_name("ai:enabled");
         on.update_property(&[gtk::accessible::Property::Label("AI")]);
-        let note = if enabled { "Answers in the launcher, the terminal and search" } else { "Off: nothing is asked of a model. Destructive commands are still checked by rule" };
+        let note = if enabled { "Answers in the launcher and the terminal" } else { "Off: nothing is asked of a model. Destructive commands are still checked by rule" };
         self.top.append(&ui::row("AI", Some(note), &on));
 
         let ai = self.clone();
@@ -781,7 +779,6 @@ fn call(line: &Value) -> Call {
     let answer = &line["answer"];
     let feature = match line["call"].as_str().unwrap_or_default() {
         "route" => "Launcher",
-        "rank" => "Ranking",
         "check" => "Terminal",
         "ask" => "Answer",
         other => other,
@@ -807,15 +804,6 @@ fn call(line: &Value) -> Call {
                 (text, score(&answer["confidence"]))
             }
             "check" => (format!("{}: {}", line["input"].as_str().unwrap_or_default(), answer["reason"].as_str().unwrap_or("no risk seen")), score(&answer["risk"])),
-            "rank" => {
-                let items = line["input"]["items"].as_array().cloned().unwrap_or_default();
-                let scores: Vec<f64> = answer["scores"].as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
-                let best = scores.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1));
-                match best {
-                    Some((at, value)) => (format!("Top: {}", items.get(at).and_then(Value::as_str).unwrap_or_default()), format!("{value:.2}")),
-                    None => ("No items".to_owned(), "n/a".to_owned()),
-                }
-            }
             _ => (answer.as_str().map_or_else(|| answer.to_string(), |text| text.split_whitespace().collect::<Vec<_>>().join(" ")), "n/a".to_owned()),
         }
     };
@@ -850,7 +838,5 @@ mod tests {
         assert_eq!(call(&check).answer, "rm -rf ~: deletes your home");
         let failed = json!({ "time": 7, "call": "ask", "engine": "ollama", "input": {}, "answer": null, "error": "Ollama at http://localhost:11434: refused" });
         assert_eq!(call(&failed).answer, "Failed: Ollama at http://localhost:11434: refused");
-        let rank = json!({ "time": 8, "call": "rank", "engine": "ollama", "input": { "query": "q", "items": ["Night light", "Sound"] }, "answer": { "scores": [0.9, 0.1] }, "error": null });
-        assert_eq!((call(&rank).answer, call(&rank).score), ("Top: Night light".to_owned(), "0.90".to_owned()));
     }
 }

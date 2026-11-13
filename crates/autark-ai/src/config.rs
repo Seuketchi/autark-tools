@@ -1,6 +1,8 @@
-//! `ai.toml`: every field is optional. AI stays off until `enabled = true`.
+//! `ai.toml`: every field is optional. AI stays off until `enabled = true`. Keys of features Kith no longer has are
+//! read and ignored, so an older file still loads; any other unknown key is an error.
 
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -41,7 +43,8 @@ impl Default for Ollama {
 #[serde(default, deny_unknown_fields)]
 pub struct Features {
     pub route: bool,
-    pub rank: bool,
+    #[serde(rename = "rank")]
+    _rank: IgnoredAny,
     pub check: bool,
     pub ask: bool,
     /// Kith's suggestion cards.
@@ -50,7 +53,7 @@ pub struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Self { route: true, rank: true, check: true, ask: true, suggest: true }
+        Self { route: true, _rank: IgnoredAny, check: true, ask: true, suggest: true }
     }
 }
 
@@ -65,10 +68,10 @@ pub struct Jev {
     pub notify: bool,
     /// Check: the terminal's safety check.
     pub terminal: bool,
-    /// Rank, for Files' search.
-    pub files: bool,
-    /// Rank, for Settings' search.
-    pub settings: bool,
+    #[serde(rename = "files")]
+    _files: IgnoredAny,
+    #[serde(rename = "settings")]
+    _settings: IgnoredAny,
 }
 
 /// `autark-ai mcp`. It only reads, unless you let it act.

@@ -221,26 +221,6 @@ impl Ai {
         result.map(|risk| risk.clamp(0.0, 1.0))
     }
 
-    /// `Rank`'s scores from Jev, one noul per item, logged like any call. The query and items leave the laptop,
-    /// which is why `[jev] files` and `[jev] settings` are off by default.
-    async fn jev_rank(&self, connection: &zbus::Connection, query: &str, items: &[String]) -> Result<Vec<f64>, String> {
-        let start = Instant::now();
-        let result = async {
-            let key = jev::key(connection).await?;
-            let state = format!("What the user searched for:\n{query}");
-            let questions: serde_json::Map<String, Value> = items
-                .iter()
-                .enumerate()
-                .map(|(n, item)| (n.to_string(), json!({ "type": "noul", "instructions": format!("“{item}” is a likely match for the search.") })))
-                .collect();
-            let answers = blocking::unblock(move || jev::ask(&key, &state, Value::Object(questions))).await?;
-            (0..items.len()).map(|n| jev::noul(&answers, &n.to_string()).map(|score| score.clamp(0.0, 1.0))).collect::<Result<Vec<f64>, String>>()
-        }
-        .await;
-        log::record("rank", "jev", json!({ "query": query, "items": items }), &result.clone().map(|scores| json!({ "scores": scores })), start.elapsed());
-        result
-    }
-
     /// `Route` from Jev, logged like any call. `None` when Jev can't route the sentence alone (see `route::jev_parse`).
     /// The sentence leaves the laptop, which is why `[jev] launcher` is off by default.
     async fn jev_route(&self, connection: &zbus::Connection, text: &str, conversation: &str) -> Result<Option<route::Routed>, String> {
@@ -875,47 +855,6 @@ impl Ai {
     /// Empties the conversation.
     async fn clear_history(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) {
         self.change(&emitter, Chat::clear).await;
-    }
-
-    /// How relevant each item is to the query, 0 to 1, in the items' order.
-    async fn rank(&self, #[zbus(connection)] connection: &zbus::Connection, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
-        self.rank_for(connection, String::new(), query, items).await
-    }
-
-    /// `Rank` for a caller that has its own Jev switch: `source` is "files" or "settings".
-    async fn rank_for(&self, #[zbus(connection)] connection: &zbus::Connection, source: String, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
-        self.allowed(self.config().features.rank, "rank")?;
-        if items.is_empty() {
-            return Ok(Vec::new());
-        }
-        let config = self.config();
-        let jev = match source.as_str() {
-            "files" => config.jev.files,
-            "settings" => config.jev.settings,
-            _ => false,
-        };
-        if jev && !config.local_only {
-            // If Jev can't answer, Ollama does, so search never loses its ranking.
-            match self.jev_rank(connection, &query, &items).await {
-                Ok(scores) => return Ok(scores),
-                Err(err) => eprintln!("ai: {err}; Ollama ranks it instead"),
-            }
-        }
-        let listed: Vec<String> = items.iter().enumerate().map(|(n, item)| format!("{}. {item}", n + 1)).collect();
-        let user = format!("Query: {query}\nItems:\n{}", listed.join("\n"));
-        let system = "Score how relevant each numbered item is to the query, from 0 (unrelated) to 1 (exactly what's meant). \
-                      Give one score per item, in order.";
-        let schema = json!({
-            "type": "object",
-            "properties": { "scores": { "type": "array", "items": { "type": "number" }, "minItems": items.len(), "maxItems": items.len() } },
-            "required": ["scores"],
-        });
-        let answer = self.json("rank", json!({ "query": query, "items": items }), system.to_owned(), user, schema).await.map_err(Error::Engine)?;
-        let scores: Vec<f64> = answer["scores"].as_array().into_iter().flatten().filter_map(Value::as_f64).map(|s| s.clamp(0.0, 1.0)).collect();
-        if scores.len() != items.len() {
-            return Err(Error::Engine(format!("got {} scores for {} items", scores.len(), items.len())));
-        }
-        Ok(scores)
     }
 
     /// How much a notification needs the user's attention now, 0 to 1, for Focus to let the urgent ones through.

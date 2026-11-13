@@ -315,7 +315,6 @@ dependencies = [
  "gtk4",
  "serde",
  "toml",
- "zbus",
 ]
 
 [[package]]
