@@ -123,20 +123,8 @@ impl Ai {
     /// numbers for a system question, search results for a look-up when search is on, and for anything Kith has no
     /// source for, a line saying so. Empty when the question is about none of these.
     async fn senses(&self, connection: &zbus::Connection, question: &str) -> String {
-        self.senses_for(connection, question, None).await
-    }
-
-    /// `senses`, for a caller that may look at only the `allowed` subjects (see `Subject::ability`): a subject it may
-    /// not look at is answered with a line saying so, and never read.
-    async fn senses_for(&self, connection: &zbus::Connection, question: &str, allowed: Option<&[String]>) -> String {
         let mut seen: Vec<String> = Vec::new();
         for subject in senses::subjects(question) {
-            if let Some(allowed) = allowed
-                && !allowed.iter().any(|can| can == subject.ability())
-            {
-                seen.push(format!("You are not set up to look at the user's {}. Say so in one sentence, and that Kith itself can; do not guess.", subject.ability()));
-                continue;
-            }
             seen.push(match subject {
                 senses::Subject::System => senses::system(),
                 senses::Subject::Web => self.looked_up(connection, question).await,
@@ -691,22 +679,6 @@ impl Ai {
         })
         .await;
         Ok(())
-    }
-
-    /// A streamed answer for the team's backend (`autark-alfred`): `prompt` answered under `system`, with `context`
-    /// before it, as `AnswerPiece` signals and then `AnswerDone`. It goes in no conversation here: `autark-alfred`
-    /// keeps each agent's own. Returns the answer's id.
-    async fn complete(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, system: String, context: String, prompt: String) -> Result<u32, Error> {
-        self.allowed(self.config().features.ask, "ask")?;
-        Ok(self.answer(emitter, Ask { system, prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({ "for": "alfred" })))
-    }
-
-    /// What `question` is about, as far as the team's agent may look: the subjects in `can` (any of mail, calendar,
-    /// tasks, notes, web and laptop), read now and read-only, as context for an answer. Other subjects the question
-    /// is about come back as a line saying the agent can't look at them. Empty when the question is about none.
-    async fn look(&self, #[zbus(connection)] connection: &zbus::Connection, question: String, can: Vec<String>) -> Result<String, Error> {
-        self.allowed(self.config().features.ask, "ask")?;
-        Ok(self.senses_for(connection, &question, Some(&can)).await)
     }
 
     /// `AskFiles` as part of the conversation: answered with what was said before and what Kith remembers, the
