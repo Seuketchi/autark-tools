@@ -6,6 +6,8 @@ How each tool behaves, in detail: what the bar, dock, launcher, notifications, l
 
 ## Kith's team
 
+`autark-butler` is a window onto a self-hosted Alfred: **Approvals** (Yes or No on what waits for the owner), **Memory** (each fact, with Forget after a confirmation), **Today** (one of the owner's lists, picked from a menu), **Turns** (the last 50: channel, model, tokens, time and outcome, never the words) and **Linked**. It keeps nothing: each refresh is one SSH connection to `alfred window` with a key locked to that command (`host` and `key` in `~/.config/autark/butler.toml`).
+
 `autark-kith` is the team's window: a roster of agents on the left, each with a face in its colour, its last words and the time (or "Typing…" while it writes), and the conversation with the one you pick on the right, where an answer grows in its bubble as it is written. **+** makes an agent from a name, a job (said as an instruction to it), how it should sound and what it may look at; **⋯** opens the agent's memory, clears its conversation or deletes it. It talks to `autark-alfred` only; `docs/alfred.md` has the design.
 
 `autark-alfred` keeps each agent as `~/.config/autark-alfred/agents/<id>/agent.toml` (`name`, `colour`, `job`, `soul`, `can`, `skills`, `links`) with its memory beside it in `memory.toml`, and its conversation in `~/.local/state/autark-alfred/agents/<id>/chat.json`, a week of it, readable only by you. Alfred (id `kith`) is always the first agent: it stays `autark-ai`'s own, its soul is `soul.md`, its conversation is the one the launcher's panel shows, and it may look at everything. A new install starts with Lucius (calendar, tasks, notes), Gordon (mail), Oracle (web) and QUILL (notes); a folder marks that they were made, so one you delete stays gone.

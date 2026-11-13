@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Butler
+GenericName=Assistant
+Comment=Alfred's approvals, memory and lists
+Exec=autark-butler
+Icon=autark-butler
+StartupWMClass=org.autark.Butler
+Terminal=false
+Categories=Utility;
+Keywords=alfred;assistant;approvals;memory;

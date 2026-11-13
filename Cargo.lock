@@ -205,6 +205,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark-butler"
+version = "0.0.0"
+dependencies = [
+ "autark-common",
+ "gtk4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autark-calc"
 version = "0.0.0"
 dependencies = [

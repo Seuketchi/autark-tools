@@ -1,0 +1,25 @@
+window.butler {
+  background-color: @surface;
+  color: @text;
+  font-family: "Geist", "Inter", sans-serif;
+  font-size: 14px;
+}
+
+window.butler stacksidebar {
+  background-color: @sidebar;
+  border-right: 1px solid @border;
+  min-width: 150px;
+}
+
+.page {
+  padding: 18px 22px;
+}
+
+.row {
+  padding: 10px 0;
+  border-bottom: 1px solid @border;
+}
+
+.dim {
+  opacity: 0.65;
+}
