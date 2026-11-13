@@ -191,18 +191,15 @@ fn quit(app: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("kill failed ({status})")) }
 }
 
-/// A file Kith may open: one it may read (see `files`), or an `autark-pkg` build log.
+/// A file Kith may open: an `autark-pkg` build log, the only file a suggestion offers.
 fn openable(path: &str) -> Result<std::path::PathBuf, String> {
     let config: crate::config::Ai = autark_common::config::load("ai");
     let logs = std::fs::canonicalize(&config.suggestions.build_logs).ok();
-    if let Ok(real) = std::fs::canonicalize(path)
-        && logs.is_some()
-        && real.parent() == logs.as_deref()
-        && real.extension().is_some_and(|extension| extension == "log")
-    {
-        return Ok(real);
+    match std::fs::canonicalize(path) {
+        Ok(real) if logs.is_some() && real.parent() == logs.as_deref() && real.extension().is_some_and(|extension| extension == "log") => Ok(real),
+        Ok(_) => Err(format!("{path}: Kith only opens build logs")),
+        Err(_) => Err(format!("{path}: there's no such file")),
     }
-    crate::files::allowed(path).map_err(|why| format!("{path}: {why}"))
 }
 
 /// A D-Bus error in words, naming the service when it isn't there.

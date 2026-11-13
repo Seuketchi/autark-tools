@@ -1,9 +1,9 @@
 //! AI: the switch that turns `autark-ai` on, local-only mode, the Ollama model (listed by `autark-ai`'s
 //! `Models`), Jev's API key (in the keyring) and which features Jev answers, all in `ai.toml`, which
-//! `autark-ai` rereads; Kith's tasks (systemd user timers); its suggestions, with what you said never to suggest
-//! again; what the assistant remembers (`memory.toml`); and the last calls from the call log. Until Jev's client is built, Ollama answers every feature.
+//! `autark-ai` rereads; Kith's suggestions, with what you said never to suggest again; and the last calls from
+//! the call log. Until Jev's client is built, Ollama answers every feature.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -14,8 +14,6 @@ use gtk::{gio, glib};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use crate::memory::{self, Fact};
-use crate::tasks::{self, Task};
 use crate::{bus, config, secrets, ui};
 
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
@@ -26,12 +24,10 @@ trait Ai {
 }
 
 /// Jev's features as `ai.toml`'s `[jev]` names them, with the design's words.
-const FEATURES: [(&str, &str, &str); 5] = [
+const FEATURES: [(&str, &str, &str); 3] = [
     ("launcher", "Launcher commands", "Turns what you type into actions"),
     ("notify", "Notification urgency", "Focus lets only urgent ones through"),
     ("terminal", "Terminal safety check", "Confirms destructive commands"),
-    ("files", "File search by meaning", "Ranks files by relevance"),
-    ("settings", "Settings search", "Finds the right pane from a sentence"),
 ];
 
 /// The call log's last rows shown.
@@ -49,23 +45,13 @@ enum Key {
 struct AiPane {
     top: gtk::Box,
     features: gtk::Box,
-    tasks: gtk::Box,
     suggestions: gtk::Box,
-    memory: gtk::Box,
     log: gtk::Box,
     status: gtk::Label,
     models: RefCell<Result<Vec<String>, String>>,
     key: RefCell<Key>,
-    task_list: RefCell<Result<Vec<Task>, String>>,
     /// What's never suggested again: each one's key and name.
     nevers: RefCell<Result<Vec<(String, String)>, String>>,
-    /// Tasks started with Run now that systemd hasn't reported running yet.
-    starting: RefCell<Vec<String>>,
-    /// The fact being corrected, by position, and the text typed so far.
-    editing: RefCell<Option<(usize, Fact)>>,
-    draft: RefCell<String>,
-    shown: Cell<bool>,
-    ticks: Cell<u32>,
 }
 
 pub fn build() -> gtk::Widget {
@@ -78,52 +64,20 @@ pub fn build() -> gtk::Widget {
     let ai = Rc::new(AiPane {
         top: ui::group(),
         features: gtk::Box::new(gtk::Orientation::Vertical, 0),
-        tasks: gtk::Box::new(gtk::Orientation::Vertical, 0),
         suggestions: gtk::Box::new(gtk::Orientation::Vertical, 0),
-        memory: gtk::Box::new(gtk::Orientation::Vertical, 0),
         log: gtk::Box::new(gtk::Orientation::Vertical, 0),
         status: status.clone(),
         models: RefCell::new(Ok(Vec::new())),
         key: RefCell::new(Key::Unknown),
-        task_list: RefCell::new(Ok(Vec::new())),
         nevers: RefCell::new(Ok(Vec::new())),
-        starting: RefCell::default(),
-        editing: RefCell::default(),
-        draft: RefCell::default(),
-        shown: Cell::new(false),
-        ticks: Cell::new(0),
     });
-    for part in [&ai.top, &ai.features, &ai.tasks, &ai.suggestions, &ai.memory, &ai.log] {
+    for part in [&ai.top, &ai.features, &ai.suggestions, &ai.log] {
         column.append(part);
     }
     column.append(&status);
     page.connect_map({
         let ai = ai.clone();
-        move |_| {
-            ai.shown.set(true);
-            ai.refresh();
-        }
-    });
-    page.connect_unmap({
-        let ai = ai.clone();
-        move |_| ai.shown.set(false)
-    });
-    // Tasks: often while one runs, so Run now's label comes back; otherwise every half minute for "next".
-    let weak = Rc::downgrade(&ai);
-    glib::timeout_add_local(Duration::from_secs(2), move || {
-        let Some(ai) = weak.upgrade() else { return glib::ControlFlow::Break };
-        if ai.shown.get() {
-            let ticks = ai.ticks.get() + 1;
-            ai.ticks.set(ticks);
-            let running = ai.task_list.borrow().as_ref().is_ok_and(|tasks| tasks.iter().any(|task| task.running)) || !ai.starting.borrow().is_empty();
-            if running || ticks % 15 == 0 {
-                glib::spawn_future_local({
-                    let ai = ai.clone();
-                    async move { ai.load_tasks().await }
-                });
-            }
-        }
-        glib::ControlFlow::Continue
+        move |_| ai.refresh()
     });
     page.upcast()
 }
@@ -132,9 +86,7 @@ impl AiPane {
     /// Everything afresh: the files at once, then what each daemon says as it answers, none waiting on another.
     fn refresh(self: &Rc<Self>) {
         self.render_top();
-        self.render_memory();
         self.render_log();
-        self.render_tasks();
         self.render_suggestions();
         let ai = self.clone();
         glib::spawn_future_local(async move { ai.load_nevers().await });
@@ -157,8 +109,6 @@ impl AiPane {
             };
             ai.render_top();
         });
-        let ai = self.clone();
-        glib::spawn_future_local(async move { ai.load_tasks().await });
     }
 
     fn report(&self, result: Result<(), String>) {
@@ -190,7 +140,7 @@ impl AiPane {
         let on = ui::switch(enabled, move |on| ai.set("enabled", on));
         on.set_widget_name("ai:enabled");
         on.update_property(&[gtk::accessible::Property::Label("AI")]);
-        let note = if enabled { "Answers in the launcher, the terminal and search" } else { "Off: nothing is asked of a model. Destructive commands are still checked by rule" };
+        let note = if enabled { "Answers in the launcher and the terminal" } else { "Off: nothing is asked of a model. Destructive commands are still checked by rule" };
         self.top.append(&ui::row("AI", Some(note), &on));
 
         let ai = self.clone();
@@ -352,83 +302,6 @@ impl AiPane {
         window.present();
     }
 
-    async fn load_tasks(self: &Rc<Self>) {
-        let list = match bus::session().await {
-            Ok(connection) => tasks::list(&connection).await.map_err(|error| bus::message(error, tasks::DAEMON)),
-            Err(error) => Err(error.to_string()),
-        };
-        if let Ok(list) = &list {
-            self.starting.borrow_mut().retain(|id| list.iter().any(|task| task.id == *id && !task.running));
-        }
-        *self.task_list.borrow_mut() = list;
-        self.render_tasks();
-    }
-
-    fn render_tasks(self: &Rc<Self>) {
-        ui::rebuild_keeping_focus(&[&self.tasks], || self.build_tasks());
-    }
-
-    fn build_tasks(self: &Rc<Self>) {
-        ui::clear(&self.tasks);
-        let group = ui::group();
-        let list = self.task_list.borrow().clone();
-        match list {
-            Err(error) => group.append(&empty_row(&format!("Tasks are systemd user timers, and {error}"))),
-            Ok(list) if list.is_empty() => group.append(&empty_row("No tasks. Ask the assistant to do something on a schedule.")),
-            Ok(list) => {
-                let now = glib::DateTime::now_local().ok();
-                for task in list {
-                    let schedule = task.calendar.as_deref().map(tasks::schedule).unwrap_or_else(|| "No schedule".to_owned());
-                    let next = if !task.on { "paused".to_owned() } else { now.as_ref().map(|now| format!("next: {}", when(task.next, now))).unwrap_or_default() };
-                    let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-                    line.add_css_class("row");
-                    line.append(&texts(&task.name, &format!("{schedule} · {next}")));
-                    let running = task.running || self.starting.borrow().contains(&task.id);
-                    let ai = self.clone();
-                    let started = task.clone();
-                    let run = ui::button(if running { "Running…" } else { "Run now" }, move |_| ai.run_task(started.clone()));
-                    run.set_sensitive(!running);
-                    run.set_widget_name(&format!("ai:run:{}", task.id));
-                    run.update_property(&[gtk::accessible::Property::Label(&format!("Run {} now", task.name))]);
-                    line.append(&run);
-                    let ai = self.clone();
-                    let toggled = task.clone();
-                    let switch = ui::switch(task.on, move |on| {
-                        let (ai, task) = (ai.clone(), toggled.clone());
-                        glib::spawn_future_local(async move {
-                            let result = async { tasks::set_on(&bus::session().await?, &task, on).await };
-                            ai.report(result.await.map_err(|error| bus::message(error, tasks::DAEMON)));
-                            ai.load_tasks().await;
-                        });
-                    });
-                    switch.set_widget_name(&format!("ai:task:{}", task.id));
-                    switch.update_property(&[gtk::accessible::Property::Label(&task.name)]);
-                    line.append(&switch);
-                    let ai = self.clone();
-                    let doomed = task.clone();
-                    let delete = ui::button("Delete", move |_| {
-                        let (ai, task) = (ai.clone(), doomed.clone());
-                        glib::spawn_future_local(async move {
-                            let result = match bus::session().await {
-                                Ok(connection) => tasks::delete(&connection, &task).await,
-                                Err(error) => Err(error.to_string()),
-                            };
-                            ai.report(result);
-                            ai.load_tasks().await;
-                        });
-                    });
-                    delete.add_css_class("danger");
-                    delete.set_widget_name(&format!("ai:delete:{}", task.id));
-                    delete.update_property(&[gtk::accessible::Property::Label(&format!("Delete task: {}", task.name))]);
-                    line.append(&delete);
-                    group.append(&line);
-                }
-            }
-        }
-        let aside = ui::note("Scheduled prompts, run on this laptop");
-        self.tasks.append(&ui::section("Tasks", Some(&aside), &group));
-    }
-
     async fn load_nevers(self: &Rc<Self>) {
         let nevers = async { AiProxy::new(&bus::session().await?).await?.never_suggested().await };
         *self.nevers.borrow_mut() = nevers.await.map_err(|error| bus::message(error, "autark-ai"));
@@ -477,140 +350,6 @@ impl AiPane {
         let per_hour = config::get_int(&document, "suggestions.per_hour").unwrap_or(3);
         let aside = ui::note(&format!("At most {per_hour} an hour, rated by Ollama"));
         self.suggestions.append(&ui::section("Suggestions", Some(&aside), &group));
-    }
-
-    fn run_task(self: &Rc<Self>, task: Task) {
-        self.starting.borrow_mut().push(task.id.clone());
-        self.render_tasks();
-        let ai = self.clone();
-        glib::spawn_future_local(async move {
-            let result = async { tasks::run(&bus::session().await?, &task).await };
-            let result = result.await.map_err(|error| bus::message(error, tasks::DAEMON));
-            if result.is_err() {
-                ai.starting.borrow_mut().retain(|id| *id != task.id);
-            }
-            ai.report(result);
-            ai.load_tasks().await;
-        });
-    }
-
-    fn render_memory(self: &Rc<Self>) {
-        ui::rebuild_keeping_focus(&[&self.memory], || self.build_memory());
-    }
-
-    fn build_memory(self: &Rc<Self>) {
-        ui::clear(&self.memory);
-        let facts = memory::read();
-        // A fact corrected elsewhere meanwhile ends the edit.
-        let editing = self.editing.borrow().clone().filter(|(index, fact)| facts.get(*index) == Some(fact));
-        *self.editing.borrow_mut() = editing.clone();
-        let group = ui::group();
-        let today = glib::DateTime::now_local().ok();
-        for (index, fact) in facts.iter().enumerate() {
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            line.add_css_class("row");
-            if editing.as_ref().is_some_and(|(at, _)| *at == index) {
-                let entry = gtk::Entry::builder().text(self.draft.borrow().as_str()).hexpand(true).build();
-                entry.add_css_class("field");
-                entry.set_widget_name("ai:memory:edit");
-                entry.update_property(&[gtk::accessible::Property::Label("Edit memory")]);
-                entry.connect_changed({
-                    let ai = self.clone();
-                    move |entry| *ai.draft.borrow_mut() = entry.text().to_string()
-                });
-                let save = {
-                    let (ai, fact) = (self.clone(), fact.clone());
-                    move || {
-                        let text = ai.draft.borrow().trim().to_owned();
-                        let result = if text.is_empty() { memory::forget(index, &fact) } else { memory::correct(index, &fact, &text) };
-                        ai.editing.borrow_mut().take();
-                        ai.report(result);
-                        ai.render_memory();
-                        ui::focus_named(&ai.memory, &format!("ai:memory:edit:{index}"));
-                    }
-                };
-                let save = Rc::new(save);
-                entry.connect_activate({
-                    let save = save.clone();
-                    move |_| save()
-                });
-                line.append(&entry);
-                let button = ui::button("Save", move |_| save());
-                button.set_widget_name("ai:memory:save");
-                line.append(&button);
-                let ai = self.clone();
-                let cancel = ui::button("Cancel", move |_| {
-                    ai.editing.borrow_mut().take();
-                    ai.render_memory();
-                    ui::focus_named(&ai.memory, &format!("ai:memory:edit:{index}"));
-                });
-                cancel.set_widget_name("ai:memory:cancel");
-                line.append(&cancel);
-                glib::idle_add_local_once({
-                    let entry = entry.downgrade();
-                    move || {
-                        if let Some(entry) = entry.upgrade().filter(|entry| !entry.has_focus()) {
-                            entry.grab_focus_without_selecting();
-                            entry.set_position(-1);
-                        }
-                    }
-                });
-            } else {
-                let text = gtk::Label::new(Some(&fact.text));
-                text.add_css_class("row-label");
-                text.set_xalign(0.0);
-                text.set_hexpand(true);
-                text.set_wrap(true);
-                line.append(&text);
-                line.append(&ui::note(&added(fact.added.as_deref(), today.as_ref())));
-                let ai = self.clone();
-                let corrected = fact.clone();
-                let edit = ui::button("Edit", move |_| {
-                    *ai.draft.borrow_mut() = corrected.text.clone();
-                    *ai.editing.borrow_mut() = Some((index, corrected.clone()));
-                    ai.render_memory();
-                });
-                edit.set_widget_name(&format!("ai:memory:edit:{index}"));
-                edit.update_property(&[gtk::accessible::Property::Label(&format!("Edit memory: {}", fact.text))]);
-                line.append(&edit);
-                let ai = self.clone();
-                let forgotten = fact.clone();
-                let forget = ui::button("Forget", move |_| {
-                    ai.report(memory::forget(index, &forgotten));
-                    ai.render_memory();
-                });
-                forget.add_css_class("danger");
-                forget.set_widget_name(&format!("ai:memory:forget:{index}"));
-                forget.update_property(&[gtk::accessible::Property::Label(&format!("Forget memory: {}", fact.text))]);
-                line.append(&forget);
-            }
-            group.append(&line);
-        }
-        if facts.is_empty() {
-            group.append(&empty_row("No memories. The assistant asks before saving anything."));
-        }
-        let foot = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let path = ui::note(&home_relative(&memory::path()));
-        path.add_css_class("code");
-        path.set_hexpand(true);
-        path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        foot.append(&path);
-        let ai = self.clone();
-        let all = ui::button("Forget all", move |_| {
-            ai.editing.borrow_mut().take();
-            ai.report(memory::forget_all());
-            ai.render_memory();
-        });
-        all.add_css_class("danger");
-        all.set_sensitive(!facts.is_empty());
-        all.set_widget_name("ai:memory:all");
-        foot.append(&all);
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        body.append(&group);
-        body.append(&foot);
-        let summary = format!("{} {}, each approved by you", facts.len(), if facts.len() == 1 { "fact" } else { "facts" });
-        let aside = (!facts.is_empty()).then(|| ui::note(&summary));
-        self.memory.append(&ui::section("Memory", aside.as_ref(), &body));
     }
 
     fn render_log(self: &Rc<Self>) {
@@ -690,21 +429,6 @@ fn empty_row(text: &str) -> gtk::Box {
     line
 }
 
-fn texts(title: &str, note: &str) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    column.set_hexpand(true);
-    column.set_valign(gtk::Align::Center);
-    let label = gtk::Label::new(Some(title));
-    label.add_css_class("row-label");
-    label.set_xalign(0.0);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    column.append(&label);
-    let note = ui::note(note);
-    note.set_wrap(true);
-    column.append(&note);
-    column
-}
-
 /// A path as the design writes it, with `~` for home.
 fn home_relative(path: &std::path::Path) -> String {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -726,19 +450,6 @@ fn when(micros: u64, now: &glib::DateTime) -> String {
         "%-d %b"
     };
     time.format(format).map(String::from).unwrap_or_default()
-}
-
-/// "Today", or the day it was added: "16 Oct".
-fn added(date: Option<&str>, today: Option<&glib::DateTime>) -> String {
-    let Some(date) = date else { return String::new() };
-    let parts: Vec<i32> = date.get(..10).unwrap_or(date).split('-').filter_map(|part| part.parse().ok()).collect();
-    let [year, month, day] = parts[..] else { return date.to_owned() };
-    let Ok(when) = glib::DateTime::from_local(year, month, day, 0, 0, 0.0) else { return date.to_owned() };
-    if today.is_some_and(|today| today.year() == year && today.day_of_year() == when.day_of_year()) {
-        return "Today".to_owned();
-    }
-    let format = if today.is_some_and(|today| today.year() == year) { "%-d %b" } else { "%-d %b %Y" };
-    when.format(format).map(String::from).unwrap_or_else(|_| date.to_owned())
 }
 
 fn log_path() -> PathBuf {
@@ -781,7 +492,6 @@ fn call(line: &Value) -> Call {
     let answer = &line["answer"];
     let feature = match line["call"].as_str().unwrap_or_default() {
         "route" => "Launcher",
-        "rank" => "Ranking",
         "check" => "Terminal",
         "ask" => "Answer",
         other => other,
@@ -807,15 +517,6 @@ fn call(line: &Value) -> Call {
                 (text, score(&answer["confidence"]))
             }
             "check" => (format!("{}: {}", line["input"].as_str().unwrap_or_default(), answer["reason"].as_str().unwrap_or("no risk seen")), score(&answer["risk"])),
-            "rank" => {
-                let items = line["input"]["items"].as_array().cloned().unwrap_or_default();
-                let scores: Vec<f64> = answer["scores"].as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
-                let best = scores.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1));
-                match best {
-                    Some((at, value)) => (format!("Top: {}", items.get(at).and_then(Value::as_str).unwrap_or_default()), format!("{value:.2}")),
-                    None => ("No items".to_owned(), "n/a".to_owned()),
-                }
-            }
             _ => (answer.as_str().map_or_else(|| answer.to_string(), |text| text.split_whitespace().collect::<Vec<_>>().join(" ")), "n/a".to_owned()),
         }
     };
@@ -850,7 +551,5 @@ mod tests {
         assert_eq!(call(&check).answer, "rm -rf ~: deletes your home");
         let failed = json!({ "time": 7, "call": "ask", "engine": "ollama", "input": {}, "answer": null, "error": "Ollama at http://localhost:11434: refused" });
         assert_eq!(call(&failed).answer, "Failed: Ollama at http://localhost:11434: refused");
-        let rank = json!({ "time": 8, "call": "rank", "engine": "ollama", "input": { "query": "q", "items": ["Night light", "Sound"] }, "answer": { "scores": [0.9, 0.1] }, "error": null });
-        assert_eq!((call(&rank).answer, call(&rank).score), ("Top: Night light".to_owned(), "0.90".to_owned()));
     }
 }

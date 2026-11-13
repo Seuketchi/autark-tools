@@ -91,7 +91,6 @@ const GROUPS: [&str; 6] = ["Apps", "Windows", "Workspaces", "Screen", "Sound and
 const KNOWN: &[(&str, &str, Is)] = &[
     ("Apps", "Launcher", Command("autark-launcher")),
     ("Apps", "All apps", Runs("autark-launcher --apps")),
-    ("Apps", "Ask Kith", Runs("autark-launcher --assistant")),
     ("Apps", "Clipboard history", Runs("autark-launcher --clipboard")),
     ("Apps", "Terminal", Command("foot")),
     ("Apps", "Terminal", Command("autark-terminal")),

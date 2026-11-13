@@ -1,9 +1,7 @@
-//! `Route`: a sentence typed into the launcher becomes the actions it asks for, each with how sure the model
-//! is, and the question it asks, with the files that question needs. "Dim the screen and mute, then tell me why
-//! my last build stopped" is two actions and a question. It also proposes a lasting fact about you to remember,
-//! which is kept only if you save it, and a task when the sentence asks for something on a schedule ("every
-//! morning at 8, summarise last night's build log"), created only once you confirm its card. The model only picks actions from the catalog below and files from the
-//! ones named or remembered; code checks every argument, and `Act` runs the actions you choose.
+//! `Route`: a sentence typed into the launcher becomes the laptop actions it asks for, each with how sure the model
+//! is, and the question it asks. "Dim the screen and mute, then tell me why my last build stopped" is two actions
+//! and a question. The model only picks actions from the catalog below; code checks every argument, and `Act` runs
+//! the actions you choose.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -13,13 +11,6 @@ pub struct Routed {
     pub actions: Vec<Chosen>,
     /// What's asked, put as a question on its own; empty when the sentence only asks for actions.
     pub question: String,
-    /// Files the question needs, as `~/…`, from the ones the sentence names or a memory points to.
-    pub files: Vec<String>,
-    /// A lasting fact about you to propose remembering: one you asked Kith to remember, or one it noticed.
-    /// Empty when there's none; it's saved only if you say so.
-    pub remember: String,
-    /// A task to propose, with the files picked for it and the https pages the sentence names.
-    pub task: Option<crate::tasks::Task>,
     /// How sure the model is of the whole, 0 to 1.
     pub confidence: f64,
     /// Who answered: `ollama` or `jev`.
@@ -92,67 +83,15 @@ const CATALOG: [(&str, &str); 10] = [
     ("open_url", "open a website in the browser (text: its address, such as youtube.com)"),
 ];
 
-/// Whether the sentence asks for something on a schedule. Only then is the model offered `task`: a small model
-/// handed the field fills it in for sentences that never asked, and every extra field costs generated tokens.
-fn wants_task(text: &str) -> bool {
-    let text = text.to_lowercase();
-    ["every ", "each ", "remind me", "daily", "weekly", "monthly", "nightly", "hourly", "weekday", "weekend", "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays"]
-        .iter()
-        .any(|word| text.contains(word))
-        || crate::schedule::once(&text, chrono::Local::now().naive_local()).is_some()
-}
-
-/// A one-off reminder ("remind me in 30 minutes to stretch") built by code, with no model: the time and the words
-/// are read from the sentence. `None` for anything else, which goes on to the model.
-pub fn reminder(text: &str, now: chrono::NaiveDateTime) -> Option<Routed> {
-    if !text.to_lowercase().contains("remind me") {
-        return None;
-    }
-    let at = crate::schedule::once(text, now)?;
-    let message: String = crate::schedule::message(text)?.chars().filter(|c| !c.is_control() && *c != '%').take(200).collect();
-    let name: String = format!("Reminder: {message}").chars().take(60).collect();
-    let when = crate::tasks::When { every: "once".to_owned(), date: at.date().to_string(), day: 0, time: at.format("%H:%M").to_string() };
-    let task = crate::tasks::Task { name, prompt: message, when, reads: Vec::new(), urls: Vec::new(), remind: true, skill: String::new() };
-    let task = crate::tasks::check_at(task, now).ok()?;
-    Some(Routed { actions: Vec::new(), question: String::new(), files: Vec::new(), remember: String::new(), task: Some(task), confidence: 1.0, engine: "code" })
-}
-
-/// Whether the sentence asks to remember something or says something lasting about the user; only then is the
-/// model offered `remember`, for the same reasons as `task`.
-fn wants_remember(text: &str) -> bool {
-    let text = text.to_lowercase();
-    ["remember", "keep in mind", "don't forget", "note that", "i am ", "i'm ", "i work", "i use ", "i prefer", "i like", "i live", "my name"]
-        .iter()
-        .any(|word| text.contains(word))
-}
-
-/// The instructions, with what Kith remembers about you, which is how "my last build" finds its log. `text` is
-/// the new sentence: the instructions cover `remember` and `task` only when it could mean them.
-pub fn system_prompt(facts: &[String], text: &str) -> String {
+/// The instructions.
+pub fn system_prompt() -> String {
     let actions: Vec<String> = CATALOG.iter().map(|(name, what)| format!("- {name}: {what}")).collect();
     let mut prompt = String::from(
         "You turn one sentence typed into a desktop launcher into JSON. A sentence can ask for actions, ask a question, or both.\n\
          actions: each change the sentence asks for that an action below can make, with its argument and your confidence from 0 to 1 \
          that it was asked for. None if it asks for no change.\n\
-         question: the part that asks something to be answered or explained, put as a question on its own. Empty if there's none.\n\
-         files: the files from the list given that are needed to answer the question. None if no list is given.\n",
+         question: the part that asks something to be answered or explained, put as a question on its own. Empty if there's none.\n",
     );
-    if wants_remember(text) {
-        prompt.push_str(
-            "remember: a lasting fact about the user worth keeping, put briefly as a note about them: what they ask you to remember, \
-             or something lasting they say about themselves, their work, their setup or their preferences. Empty if there's none, if it's \
-             already remembered, or if it's a password, key, code or anything secret.\n",
-        );
-    }
-    if wants_task(text) {
-        prompt.push_str(
-            "task: the sentence asks for something to be done later or on a schedule, including a reminder or a one-off such as \"in 30 minutes\" or \"tomorrow at 9\" (fill every and time with your best guess; the real time is worked out from the sentence): a short name, the instruction to carry out \
-             each time (prompt), every (day, weekdays, weekends, a weekday such as monday, or month), day (of the month, for month) and \
-             time (24-hour, HH:MM). The files it needs go in files. Leave the question empty. \
-             For \"remind me to X by/at TIME\" set remind true: prompt is then the reminder's own words (\"Time to X\"), every is day \
-             unless a day is named, and time is exactly the time said.\n",
-        );
-    }
     prompt.push_str("confidence: how sure you are of the whole answer, from 0 to 1.\n");
     prompt.push_str(&format!("Actions:\n{}\n", actions.join("\n")));
     prompt.push_str(
@@ -162,18 +101,13 @@ pub fn system_prompt(facts: &[String], text: &str) -> String {
          open youtube -> {\"actions\":[{\"name\":\"open_url\",\"text\":\"youtube.com\",\"confidence\":0.9}],\"question\":\"\",\"confidence\":0.9}\n\
          why is the sky blue -> {\"actions\":[],\"question\":\"Why is the sky blue?\",\"confidence\":0.9}",
     );
-    if !facts.is_empty() {
-        let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
-        prompt.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
-    }
     prompt
 }
 
-/// The answer's shape; `files` can only be among `candidates`, and `remember` and `task` are there only when the
-/// sentence could mean them.
-pub fn schema(candidates: &[String], text: &str) -> Value {
+/// The answer's shape.
+pub fn schema() -> Value {
     let names: Vec<&str> = CATALOG.iter().map(|(name, ..)| *name).collect();
-    let mut properties = json!({
+    let properties = json!({
         "actions": { "type": "array", "items": {
             "type": "object",
             "properties": {
@@ -188,40 +122,7 @@ pub fn schema(candidates: &[String], text: &str) -> Value {
         "question": { "type": "string", "maxLength": 240 },
         "confidence": { "type": "number" },
     });
-    let mut required = vec!["actions", "question"];
-    if wants_remember(text) {
-        properties["remember"] = json!({ "type": "string" });
-        required.push("remember");
-    }
-    if wants_task(text) {
-        properties["task"] = json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "prompt": { "type": "string" },
-                "every": { "enum": ["day", "weekdays", "weekends", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "month"] },
-                "day": { "type": "number" },
-                "time": { "type": "string" },
-                "remind": { "type": "boolean" },
-            },
-            "required": ["name", "prompt", "every", "time"],
-        });
-    }
-    required.push("confidence");
-    if !candidates.is_empty() {
-        properties["files"] = json!({ "type": "array", "items": { "enum": candidates } });
-    }
-    json!({ "type": "object", "properties": properties, "required": required })
-}
-
-/// What the model is told besides the instructions: the conversation so far if there is one, the sentence,
-/// and the files it may pick from.
-pub fn user(text: &str, candidates: &[String], conversation: &str) -> String {
-    let mut user = if conversation.is_empty() { text.to_owned() } else { format!("Conversation so far:\n{conversation}\n\nNew message: {text}") };
-    if !candidates.is_empty() {
-        user.push_str(&format!("\n\nFiles: {}", candidates.join(", ")));
-    }
-    user
+    json!({ "type": "object", "properties": properties, "required": ["actions", "question", "confidence"] })
 }
 
 #[derive(Deserialize)]
@@ -230,28 +131,7 @@ struct Answer {
     actions: Vec<RawAction>,
     #[serde(default)]
     question: String,
-    #[serde(default)]
-    files: Vec<String>,
-    #[serde(default)]
-    remember: String,
-    task: Option<RawTask>,
     confidence: f64,
-}
-
-#[derive(Deserialize)]
-struct RawTask {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    prompt: String,
-    #[serde(default)]
-    every: String,
-    #[serde(default)]
-    day: f64,
-    #[serde(default)]
-    time: String,
-    #[serde(default)]
-    remind: bool,
 }
 
 #[derive(Deserialize)]
@@ -263,8 +143,6 @@ struct RawAction {
     confidence: Option<f64>,
 }
 
-/// Checks the model's answer against the catalog, the candidate files and the facts already kept. With no
-/// actions, question or fact, the whole sentence is the question: you asked Kith, so Kith answers.
 /// Whether the sentence names the website: its address (`youtube.com`) or its name (`youtube`); an address with a
 /// path or query has to be written out whole. Asked to "look up" something, a small model invents plausible pages,
 /// so `open_url` keeps to the sites the user asked for.
@@ -284,10 +162,12 @@ fn named_in(text: &str, url: &str) -> bool {
     text.contains(host) || (name.len() >= 3 && text.contains(name))
 }
 
-pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String]) -> Result<Routed, String> {
+/// Checks the model's answer against the catalog. With no actions or question, the whole sentence is the question:
+/// you asked Kith, so Kith answers.
+pub fn parse(answer: Value, text: &str) -> Result<Routed, String> {
     let answer: Answer = serde_json::from_value(answer).map_err(|err| format!("the route doesn't fit the schema: {err}"))?;
     let confidence = answer.confidence.clamp(0.0, 1.0);
-    let mut actions = answer
+    let actions = answer
         .actions
         .into_iter()
         .map(|raw| {
@@ -301,45 +181,15 @@ pub fn parse(answer: Value, text: &str, candidates: &[String], facts: &[String])
             _ => true,
         })
         .collect::<Vec<_>>();
-    let mut remember: String = answer.remember.trim().chars().take(200).collect();
-    if facts.iter().any(|fact| fact.eq_ignore_ascii_case(&remember)) {
-        remember.clear();
-    }
-    let mut files: Vec<String> = Vec::new();
-    for file in answer.files {
-        if candidates.contains(&file) && !files.contains(&file) {
-            files.push(file);
-        }
-    }
-    // A task asks for later, so nothing is answered now; its files are the task's.
-    let task = match answer.task.filter(|task| !task.name.trim().is_empty() && !task.prompt.trim().is_empty()) {
-        Some(raw) => {
-            // A one-off time is read from the sentence by code; the model's guess at a date is not used.
-            let when = match crate::schedule::once(text, chrono::Local::now().naive_local()) {
-                Some(at) => crate::tasks::When { every: "once".to_owned(), date: at.date().to_string(), day: 0, time: at.format("%H:%M").to_string() },
-                None => crate::tasks::When { every: raw.every, date: String::new(), day: raw.day.clamp(0.0, 31.0) as u8, time: raw.time },
-            };
-            let task = crate::tasks::Task { name: raw.name, prompt: raw.prompt, when, reads: std::mem::take(&mut files), urls: crate::web::named(text), remind: raw.remind || text.to_lowercase().contains("remind me"), skill: String::new() };
-            Some(crate::tasks::check(task).map_err(|why| format!("the task doesn't fit: {why}"))?)
-        }
-        None => None,
-    };
-    // "sleep" in "remind me to sleep" isn't a request to put the laptop to sleep now: a task is for later.
-    if task.is_some() {
-        actions.clear();
-    }
-    let mut question = if task.is_some() { String::new() } else { answer.question.trim().to_owned() };
+    let mut question = answer.question.trim().to_owned();
     // A small model sometimes carries on after the question mark with its own answer and filler; the field is only the question.
     if let Some(end) = question.find('?') {
         question.truncate(end + 1);
     }
-    if actions.is_empty() && question.is_empty() && remember.is_empty() && task.is_none() {
+    if actions.is_empty() && question.is_empty() {
         question = text.trim().to_owned();
     }
-    if question.is_empty() {
-        files.clear();
-    }
-    Ok(Routed { actions, question, files, remember, task, confidence, engine: "ollama" })
+    Ok(Routed { actions, question, confidence, engine: "ollama" })
 }
 
 /// What Jev is asked about each catalog action: whether the sentence asks for it, and for the ones with a
@@ -360,20 +210,10 @@ const JEV_ACTIONS: [(&str, &str, Option<&str>); 10] = [
 /// Percent levels a Jev score picks between; the score, 0 to 4, is interpolated to 0 to 100.
 const JEV_LEVELS: [&str; 5] = ["0%, the lowest", "25%", "50%, the middle", "75%", "100%, the highest"];
 
-/// Whether Jev can route the sentence alone. It answers typed questions and writes no text, so a sentence
-/// that needs a task, a fact, a question split from actions or an app's name goes to Ollama instead.
-pub fn jev_can(text: &str, candidates: &[String]) -> bool {
-    !wants_task(text) && !wants_remember(text) && candidates.is_empty()
-}
-
-/// The sentence (with the conversation, if any) as Jev's state, and its questions: one noul for each action,
-/// which way for the switches, a score for the levels, and whether anything is asked beyond the actions.
-pub fn jev_questions(text: &str, conversation: &str) -> (String, Value) {
-    let state = if conversation.is_empty() {
-        format!("A sentence typed into a desktop launcher:\n{text}")
-    } else {
-        format!("A conversation with a desktop assistant:\n{conversation}\n\nThe new message, typed into the launcher:\n{text}")
-    };
+/// The sentence as Jev's state, and its questions: one noul for each action, which way for the switches, a score
+/// for the levels, and whether anything is asked beyond the actions.
+pub fn jev_questions(text: &str) -> (String, Value) {
+    let state = format!("A sentence typed into a desktop launcher:\n{text}");
     let mut questions = serde_json::Map::new();
     for (name, asks, way) in JEV_ACTIONS {
         questions.insert(format!("do_{name}"), json!({ "type": "noul", "instructions": asks }));
@@ -427,18 +267,7 @@ pub fn jev_parse(answers: &Value, text: &str) -> Result<Option<Routed>, String> 
     let confidence = actions.iter().map(|chosen| chosen.confidence).fold(1.0, f64::min);
     // As with Ollama, a sentence that asks for nothing is a question for Kith.
     let question = if actions.is_empty() { text.trim().to_owned() } else { String::new() };
-    Ok(Some(Routed { actions, question, files: Vec::new(), remember: String::new(), task: None, confidence, engine: "jev" }))
-}
-
-/// The files the sentence names, then the ones memories point to.
-pub fn candidates(text: &str, facts: &[String]) -> Vec<String> {
-    let mut found = crate::files::named(text);
-    for file in facts.iter().flat_map(|fact| crate::files::named(fact)) {
-        if !found.contains(&file) {
-            found.push(file);
-        }
-    }
-    found
+    Ok(Some(Routed { actions, question, confidence, engine: "jev" }))
 }
 
 fn action(raw: RawAction) -> Result<Action, String> {
@@ -469,13 +298,11 @@ mod tests {
 
     #[test]
     fn actions_and_a_question_from_one_sentence() {
-        let answer = json!({ "confidence": 0.9, "question": "Why did my last build stop?", "files": ["~/autark/log.md"], "actions": [
+        let answer = json!({ "confidence": 0.9, "question": "Why did my last build stop?", "actions": [
             { "name": "set_brightness", "number": 30, "confidence": 0.94 }, { "name": "mute", "on": true, "confidence": 0.97 } ] });
-        let candidates = vec!["~/autark/log.md".to_owned()];
-        let routed = parse(answer, "dim the screen and mute, then tell me why my last build stopped", &candidates, &[]).unwrap();
+        let routed = parse(answer, "dim the screen and mute, then tell me why my last build stopped").unwrap();
         assert_eq!(routed.actions, vec![Chosen { action: Action::SetBrightness { percent: 30 }, confidence: 0.94 }, Chosen { action: Action::Mute { on: true }, confidence: 0.97 }]);
         assert_eq!(routed.question, "Why did my last build stop?");
-        assert_eq!(routed.files, candidates);
         let json = serde_json::to_value(&routed).unwrap();
         assert_eq!(json["actions"][0], json!({ "action": "set_brightness", "percent": 30, "confidence": 0.94 }));
         assert_eq!(json["actions"][1], json!({ "action": "mute", "on": true, "confidence": 0.97 }));
@@ -483,16 +310,14 @@ mod tests {
     }
 
     #[test]
-    fn arguments_and_files_are_checked() {
+    fn arguments_are_checked() {
         let clamp = json!({ "confidence": 2.0, "question": "", "actions": [{ "name": "set_volume", "number": 140, "confidence": 0.8 }, { "name": "lock", "confidence": 0.5 }] });
-        let routed = parse(clamp, "", &[], &[]).unwrap();
+        let routed = parse(clamp, "").unwrap();
         assert_eq!(routed.confidence, 1.0);
         assert_eq!(routed.actions[0].action, Action::SetVolume { percent: 100 });
         assert_eq!(serde_json::to_value(&routed.actions[1]).unwrap(), json!({ "action": "lock", "confidence": 0.5 }));
-        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "wifi", "confidence": 1 }] }), "", &[], &[]).is_err());
-        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "rm_rf", "confidence": 1 }] }), "", &[], &[]).is_err());
-        let invented = json!({ "confidence": 1, "question": "what's in it?", "files": ["~/autark/log.md", "/etc/shadow"] });
-        assert_eq!(parse(invented, "", &["~/autark/log.md".to_owned()], &[]).unwrap().files, vec!["~/autark/log.md"]);
+        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "wifi", "confidence": 1 }] }), "").is_err());
+        assert!(parse(json!({ "confidence": 1, "actions": [{ "name": "rm_rf", "confidence": 1 }] }), "").is_err());
     }
 
     fn noul(p: f64) -> Value {
@@ -536,46 +361,9 @@ mod tests {
     }
 
     #[test]
-    fn a_clear_one_off_reminder_needs_no_model() {
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 10, 19).unwrap().and_hms_opt(18, 0, 0).unwrap();
-        let routed = reminder("remind me tomorrow at 9am to send the report", now).unwrap();
-        let task = routed.task.unwrap();
-        assert_eq!((task.name.as_str(), task.prompt.as_str(), task.remind), ("Reminder: Send the report", "Send the report", true));
-        assert_eq!((task.when.every.as_str(), task.when.date.as_str(), task.when.time.as_str()), ("once", "2026-10-20", "09:00"));
-        assert_eq!((routed.engine, routed.confidence), ("code", 1.0));
-        assert!(reminder("remind me to sleep by 10pm", now).is_none(), "no day: that is the model's daily reminder");
-        assert!(reminder("tomorrow at 9am send the report", now).is_none());
-    }
-
-    #[test]
-    fn a_one_off_reminder_is_read_by_code_not_guessed_by_the_model() {
-        // The model guesses a daily 22:00; the sentence says "in 30 minutes".
-        let answer = json!({ "confidence": 0.95, "question": "", "actions": [],
-            "task": { "name": "Stretch", "prompt": "Time to stretch", "every": "day", "time": "22:00", "remind": true } });
-        let routed = parse(answer, "remind me in 30 minutes to stretch", &[], &[]).unwrap();
-        let task = routed.task.unwrap();
-        assert_eq!(task.when.every, "once");
-        let at = chrono::NaiveDateTime::parse_from_str(&format!("{} {}", task.when.date, task.when.time), "%Y-%m-%d %H:%M").unwrap();
-        let ahead = (at - chrono::Local::now().naive_local()).num_minutes();
-        assert!((28..=31).contains(&ahead), "{ahead} minutes ahead");
-        assert!(wants_task("remind me tomorrow at 9am to call") && !wants_task("how many hours are in a day"));
-    }
-
-    #[test]
-    fn a_reminder_is_a_task_for_later_and_never_an_action() {
-        let answer = json!({ "confidence": 0.95, "question": "", "actions": [ { "name": "sleep", "confidence": 0.95 } ],
-            "task": { "name": "Sleep", "prompt": "Time to sleep", "every": "day", "time": "22:00", "remind": false } });
-        let routed = parse(answer, "remind me to sleep by 10pm", &[], &[]).unwrap();
-        assert!(routed.actions.is_empty());
-        let task = routed.task.unwrap();
-        assert!(task.remind);
-        assert_eq!(task.when.calendar().unwrap(), "*-*-* 22:00:00");
-    }
-
-    #[test]
     fn a_website_is_an_action_with_its_address() {
         let answer = json!({ "confidence": 0.9, "question": "", "files": [], "actions": [ { "name": "open_url", "text": "youtube.com", "confidence": 0.9 } ] });
-        let routed = parse(answer, "open youtube", &[], &[]).unwrap();
+        let routed = parse(answer, "open youtube").unwrap();
         assert_eq!(routed.actions, vec![Chosen { action: Action::OpenUrl { url: "youtube.com".to_owned() }, confidence: 0.9 }]);
         assert_eq!(serde_json::to_value(&routed).unwrap()["actions"][0], json!({ "action": "open_url", "url": "youtube.com", "confidence": 0.9 }));
     }
@@ -589,7 +377,7 @@ mod tests {
         assert!(!named_in("open the browser", "https://google.com"));
         assert!(!named_in("open youtube", "https://youtube.com/watch?v=abc"));
         let invented = json!({ "confidence": 0.9, "question": "", "files": [], "actions": [ { "name": "open_url", "text": "https://www.phoronix.com/news/x.html", "confidence": 0.9 } ] });
-        let routed = parse(invented, "lookup the latest news on Linux 7.3", &[], &[]).unwrap();
+        let routed = parse(invented, "lookup the latest news on Linux 7.3").unwrap();
         assert!(routed.actions.is_empty());
         assert_eq!(routed.question, "lookup the latest news on Linux 7.3");
     }
@@ -603,7 +391,6 @@ mod tests {
         both["do_lock"] = noul(0.9);
         both["question"] = noul(0.9);
         assert_eq!(jev_parse(&both, "lock and tell me why").unwrap(), None);
-        assert!(jev_can("mute", &[]) && !jev_can("every day at 8 mute", &[]) && !jev_can("mute", &["~/a".to_owned()]));
         let mut asked = jev_answers();
         asked["question"] = noul(0.9);
         let routed = jev_parse(&asked, " why is the sky blue ").unwrap().unwrap();
@@ -614,34 +401,8 @@ mod tests {
 
     #[test]
     fn nothing_routed_asks_the_whole_sentence() {
-        let routed = parse(json!({ "confidence": 0.4, "question": " ", "actions": [] }), "how much swap do I have ", &[], &[]).unwrap();
+        let routed = parse(json!({ "confidence": 0.4, "question": " ", "actions": [] }), "how much swap do I have ").unwrap();
         assert_eq!(routed.question, "how much swap do I have");
         assert!(routed.actions.is_empty());
-    }
-
-    #[test]
-    fn a_schedule_is_a_task() {
-        let answer = json!({ "confidence": 0.9, "question": "What's in the log?", "actions": [], "remember": "", "files": ["~/autark/log.md"],
-            "task": { "name": "Morning build summary", "prompt": "Summarise last night's build log", "every": "day", "time": "08:00" } });
-        let text = "every morning at 8, summarise last night's build log and https://example.org/news";
-        let routed = parse(answer, text, &["~/autark/log.md".to_owned()], &[]).unwrap();
-        let task = routed.task.unwrap();
-        assert_eq!(task.when.calendar().unwrap(), "*-*-* 08:00:00");
-        assert_eq!(task.reads, vec!["~/autark/log.md"]);
-        assert_eq!(task.urls, vec!["https://example.org/news"]);
-        assert!(routed.question.is_empty() && routed.files.is_empty());
-        let wrong = json!({ "confidence": 0.9, "question": "", "actions": [], "task": { "name": "x", "prompt": "y", "every": "day", "time": "8pm" } });
-        assert!(parse(wrong, "", &[], &[]).is_err());
-    }
-
-    #[test]
-    fn a_fact_to_remember_is_no_question() {
-        let answer = json!({ "confidence": 0.9, "question": "", "actions": [], "remember": " Works on Autark in the evenings " });
-        let routed = parse(answer.clone(), "remember that I work on Autark in the evenings", &[], &[]).unwrap();
-        assert_eq!(routed.remember, "Works on Autark in the evenings");
-        assert!(routed.question.is_empty());
-        let kept = parse(answer, "remember that I work on Autark in the evenings", &[], &["works on autark in the evenings".to_owned()]).unwrap();
-        assert!(kept.remember.is_empty());
-        assert_eq!(kept.question, "remember that I work on Autark in the evenings");
     }
 }

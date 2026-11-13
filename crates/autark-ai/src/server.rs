@@ -8,10 +8,9 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use zbus::object_server::SignalEmitter;
 
-use crate::chat::{Chat, Proposal, SuggestionState, TaskState, What};
 use crate::config::Ai as Config;
 use crate::ollama::Ollama;
-use crate::{act, agent, board, calendar, chat, check, events, files, jev, log, mail, memory, recall, route, senses, skills, soul, suggest, tasks, web};
+use crate::{act, check, events, jev, log, route, senses, suggest};
 
 pub const PATH: &str = "/org/autark/AI1";
 
@@ -33,7 +32,6 @@ pub struct Ai {
     next_answer: AtomicU32,
     /// Answers to stop at their next piece.
     stopped: Arc<Mutex<HashSet<u32>>>,
-    chat: Arc<Mutex<Chat>>,
     suggestions: Mutex<suggest::Policy>,
     busy: Arc<Busy>,
 }
@@ -79,7 +77,6 @@ impl Ai {
             ollama: RwLock::new(ollama),
             next_answer: AtomicU32::new(1),
             stopped: Arc::default(),
-            chat: Arc::new(Mutex::new(Chat::load())),
             suggestions: Mutex::new(suggest::Policy::load()),
             busy: Arc::new(Busy { said: Mutex::new("idle"), ..Default::default() }),
         }
@@ -98,11 +95,10 @@ impl Ai {
         self.config.read().map(|config| config.clone()).unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
 
-    /// The instructions for a generated answer: the rules, what Kith can do when `question` asks, how it sounds, then the soul.
-    fn ask_system(&self, question: &str, conversation: bool) -> String {
-        let talking = if conversation { " You're talking with the user in a running conversation." } else { "" };
-        let can = if asks_abilities(question) { abilities(&self.config()) } else { String::new() };
-        format!("{ASK_SYSTEM}{talking}{can}{ASK_VOICE}{}", soul::voice())
+    /// The instructions for a generated answer: the rules, what Kith can do when `question` asks, and how it sounds.
+    fn ask_system(&self, question: &str) -> String {
+        let can = if asks_abilities(question) { ABILITIES } else { "" };
+        format!("{ASK_SYSTEM}{can}{ASK_VOICE}")
     }
 
     fn ollama(&self) -> Arc<Ollama> {
@@ -119,104 +115,22 @@ impl Ai {
         Ok(())
     }
 
-    /// What Kith can see about what `question` is about, as context for the answer (see `senses`): the laptop's own
-    /// numbers for a system question, search results for a look-up when search is on, and for anything Kith has no
-    /// source for, a line saying so. Empty when the question is about none of these.
-    async fn senses(&self, connection: &zbus::Connection, question: &str) -> String {
-        self.senses_for(connection, question, None).await
-    }
-
-    /// `senses`, for a caller that may look at only the `allowed` subjects (see `Subject::ability`): a subject it may
-    /// not look at is answered with a line saying so, and never read.
-    async fn senses_for(&self, connection: &zbus::Connection, question: &str, allowed: Option<&[String]>) -> String {
-        let mut seen: Vec<String> = Vec::new();
-        for subject in senses::subjects(question) {
-            if let Some(allowed) = allowed
-                && !allowed.iter().any(|can| can == subject.ability())
-            {
-                seen.push(format!("You are not set up to look at the user's {}. Say so in one sentence, and that Kith itself can; do not guess.", subject.ability()));
-                continue;
-            }
-            seen.push(match subject {
-                senses::Subject::System => senses::system(),
-                senses::Subject::Web => self.looked_up(connection, question).await,
-                senses::Subject::Calendar => match self.calendar_found(connection, question).await {
-                    Some(Ok(agenda)) => format!("The user's calendar, read just now (answer only from this):\n{agenda}"),
-                    Some(Err(why)) => format!("Kith could not read the user's calendar just now: {why}. Tell the user that in one sentence. Do not make up events."),
-                    None => senses::unavailable(senses::Subject::Calendar).to_owned(),
-                },
-                senses::Subject::Tasks => match self.board_found().await {
-                    Ok(board) => format!("The user's GitHub project tasks, read just now (answer only from this):\n{board}"),
-                    Err(why) => format!("Kith could not read the user's tasks just now: {why}. Tell the user that in one sentence. Do not make up tasks."),
-                },
-                senses::Subject::Mail => match self.mail_found(connection, question).await {
-                    Ok(inbox) if mail::wants_body(question) => format!("From the user's inbox, read just now and left unread (answer only from this):\n{inbox}"),
-                    Ok(inbox) => format!("The user's inbox, read just now (answer only from this; only who each message is from and its subject are known):\n{inbox}"),
-                    Err(why) => format!("Kith could not read the user's email just now: {why}. Tell the user that in one sentence. Do not make up messages."),
-                },
-                senses::Subject::Recall => {
-                    let question = question.to_owned();
-                    format!("What Kith found in the user's notes and earlier conversations (answer only from this):\n{}", blocking::unblock(move || recall::search(&question)).await)
-                }
-            });
-        }
-        seen.join("\n\n")
-    }
-
-    /// The calendar for a question about it, read from the feed you gave Kith: `None` when no address is set,
-    /// else the agenda or why it couldn't be read. Logged like any call, without the address, which is the key.
-    async fn calendar_found(&self, connection: &zbus::Connection, question: &str) -> Option<Result<String, String>> {
-        let address = calendar::url(connection).await.ok()?;
-        let start = Instant::now();
-        let asked = question.to_owned();
-        let result = blocking::unblock(move || calendar::answer(&address, &asked)).await;
-        log::record("calendar", "ical", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
-        Some(result)
-    }
-
-    /// The user's GitHub project tasks, read with `gh`. Logged like any call, with how much came back and nothing of it.
-    async fn board_found(&self) -> Result<String, String> {
-        let start = Instant::now();
-        let result = blocking::unblock(board::answer).await;
-        log::record("tasks", "gh", json!(null), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
-        result
-    }
-
-    /// The inbox for a question about mail, read through the Mail service. Logged like any call, with how much came
-    /// back and nothing of the messages.
-    async fn mail_found(&self, connection: &zbus::Connection, question: &str) -> Result<String, String> {
-        let start = Instant::now();
-        let result = mail::answer(connection, question).await;
-        log::record("mail", "imap", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
-        result
-    }
-
-    /// The short search results for a look-up question, or `None` when search is off or failed. Logged like any call.
-    async fn search_found(&self, connection: &zbus::Connection, question: &str) -> Option<String> {
-        let config = self.config();
-        if !config.web.search || config.local_only {
-            return None;
-        }
-        let start = Instant::now();
-        let result = async {
-            let key = web::key(connection).await?;
-            let query = question.to_owned();
-            blocking::unblock(move || web::lookup(&key, &query)).await
-        }
+    /// What Kith can see of the laptop that `question` is about, as context for the answer (see `senses`). Empty when
+    /// the question is about none of it.
+    async fn senses(&self, question: &str) -> String {
+        let folder = self.config().suggestions.build_logs.clone();
+        let subjects = senses::subjects(question);
+        let seen = blocking::unblock(move || {
+            subjects
+                .into_iter()
+                .map(|subject| match subject {
+                    senses::Subject::System => senses::system(),
+                    senses::Subject::Build => senses::build(&folder),
+                })
+                .collect::<Vec<String>>()
+        })
         .await;
-        log::record("search", "firecrawl", json!(question), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
-        result.ok().filter(|found| !found.trim().is_empty())
-    }
-
-    /// Search results for a look-up question, or why Kith can't search, in the words the model is given.
-    async fn looked_up(&self, connection: &zbus::Connection, question: &str) -> String {
-        match self.search_found(connection, question).await {
-            Some(found) => format!(
-                "Web search results for the question. Answer only from these. Say which site you take it from. Copy names and numbers exactly as written, \
-                 keeping each label (\"stable\", \"mainline\", \"beta\") with its own number; if they don't answer it, say so.\n{found}"
-            ),
-            None => senses::unavailable(senses::Subject::Web).to_owned(),
-        }
+        seen.join("\n\n")
     }
 
     /// `Check`'s risk from Jev, logged like any call. The command leaves the laptop, which is why `[jev] terminal` is off by default.
@@ -233,33 +147,13 @@ impl Ai {
         result.map(|risk| risk.clamp(0.0, 1.0))
     }
 
-    /// `Rank`'s scores from Jev, one noul per item, logged like any call. The query and items leave the laptop,
-    /// which is why `[jev] files` and `[jev] settings` are off by default.
-    async fn jev_rank(&self, connection: &zbus::Connection, query: &str, items: &[String]) -> Result<Vec<f64>, String> {
-        let start = Instant::now();
-        let result = async {
-            let key = jev::key(connection).await?;
-            let state = format!("What the user searched for:\n{query}");
-            let questions: serde_json::Map<String, Value> = items
-                .iter()
-                .enumerate()
-                .map(|(n, item)| (n.to_string(), json!({ "type": "noul", "instructions": format!("“{item}” is a likely match for the search.") })))
-                .collect();
-            let answers = blocking::unblock(move || jev::ask(&key, &state, Value::Object(questions))).await?;
-            (0..items.len()).map(|n| jev::noul(&answers, &n.to_string()).map(|score| score.clamp(0.0, 1.0))).collect::<Result<Vec<f64>, String>>()
-        }
-        .await;
-        log::record("rank", "jev", json!({ "query": query, "items": items }), &result.clone().map(|scores| json!({ "scores": scores })), start.elapsed());
-        result
-    }
-
     /// `Route` from Jev, logged like any call. `None` when Jev can't route the sentence alone (see `route::jev_parse`).
     /// The sentence leaves the laptop, which is why `[jev] launcher` is off by default.
-    async fn jev_route(&self, connection: &zbus::Connection, text: &str, conversation: &str) -> Result<Option<route::Routed>, String> {
+    async fn jev_route(&self, connection: &zbus::Connection, text: &str) -> Result<Option<route::Routed>, String> {
         let start = Instant::now();
         let result = async {
             let key = jev::key(connection).await?;
-            let (state, questions) = route::jev_questions(text, conversation);
+            let (state, questions) = route::jev_questions(text);
             let answers = blocking::unblock(move || jev::ask(&key, &state, questions)).await?;
             route::jev_parse(&answers, text)
         }
@@ -294,21 +188,12 @@ impl Ai {
     }
 
     /// Streams an answer on a thread of its own as `AnswerPiece` signals, then `AnswerDone`, and returns its id.
-    /// `logged` is added to the call log's input. A chat answer grows its entry in the conversation as it's
-    /// written, so the Assistant panel can pick it up part way.
-    fn answer(&self, emitter: SignalEmitter<'_>, ask: Ask, logged: Value) -> u32 {
+    fn answer(&self, emitter: SignalEmitter<'_>, ask: Ask) -> u32 {
         let id = self.next_answer.fetch_add(1, Ordering::Relaxed);
         let emitter = emitter.into_owned();
         let ollama = self.ollama();
         let stopped = self.stopped.clone();
         let busy = self.busy.clone();
-        let chat = ask.entry.map(|entry| (self.chat.clone(), entry));
-        if let Some((chat, entry)) = &chat {
-            let mut chat = lock(chat);
-            if let Some(What::Answer { answer, .. }) = chat.get_mut(*entry) {
-                *answer = id;
-            }
-        }
         std::thread::spawn(move || {
             let announce = |state: Option<&'static str>| {
                 if let Some(state) = state
@@ -319,7 +204,7 @@ impl Ai {
             };
             announce(busy.change(1, 0));
             let mut started = false;
-            let mut user = if ask.context.is_empty() { ask.prompt.clone() } else { format!("{}\n\nQuestion: {}", ask.context, ask.prompt) };
+            let user = if ask.context.is_empty() { ask.prompt.clone() } else { format!("{}\n\nQuestion: {}", ask.context, ask.prompt) };
             let start = Instant::now();
             let mut text = String::new();
             let mut write = |piece: &str| -> bool {
@@ -332,102 +217,39 @@ impl Ai {
                 }
                 let offset = text.len() as u32;
                 text.push_str(piece);
-                if let Some((chat, _)) = &chat
-                    && let Some(What::Answer { text, .. }) = lock(chat).answer_mut(id)
-                {
-                    text.push_str(piece);
-                }
                 if let Err(err) = async_io::block_on(Ai::answer_piece(&emitter, id, offset, piece)) {
                     eprintln!("ai: sending an answer: {err}");
                 }
                 true
             };
-            let mut proposal: Option<skills::Skill> = None;
             let result = match &ask.verbatim {
                 Some(said) => {
                     write(said);
                     Ok(())
                 }
-                None => {
-                    let mut stopped_early = false;
-                    if let Some(web_open) = ask.agent {
-                        // One line a step at the top of the answer says what Kith looked at.
-                        let (notes, stopped) = agent::gather(
-                            &ask.prompt,
-                            web_open,
-                            ask.skill.as_ref().map_or_else(|| agent::seeds(&ask.prompt, web_open), |skill| agent::skill_seeds(skill, web_open)),
-                            |system, step, schema| {
-                                let start = Instant::now();
-                                let choice = ollama.json(system, step, schema);
-                                log::record("agent", "ollama", json!({ "question": ask.prompt, "step": step }), &choice, start.elapsed());
-                                choice
-                            },
-                            |tool, input| agent::execute(tool, input, web_open),
-                            |note| write(&format!("{}\n", agent::shown(note))),
-                        );
-                        stopped_early = stopped;
-                        // Two steps that worked, for a question no skill covers yet, are offered as one.
-                        if ask.skill.is_none() && !stopped {
-                            proposal = skills::propose(&ask.prompt, &notes, &skills::all());
-                        }
-                        if !notes.is_empty() {
-                            write("\n");
-                        }
-                        let context = if ask.context.is_empty() { agent::found(&notes) } else { format!("{}\n\n{}", ask.context, agent::found(&notes)) };
-                        user = format!("{context}\n\nQuestion: {}", ask.prompt);
-                    }
-                    if stopped_early { Ok(()) } else { ollama.stream(&ask.system, &user, &mut write) }
-                }
+                None => ollama.stream(&ask.system, &user, &mut write),
             };
             let answer = result.map(|()| json!(text));
-            let mut input = json!({ "prompt": ask.prompt, "context": ask.context });
-            if let (Some(input), Value::Object(logged)) = (input.as_object_mut(), logged) {
-                input.extend(logged);
-            }
-            log::record(if chat.is_some() { "chat" } else { "ask" }, if ask.verbatim.is_some() { "firecrawl" } else { "ollama" }, input, &answer, start.elapsed());
+            log::record("ask", if ask.verbatim.is_some() { "code" } else { "ollama" }, json!({ "prompt": ask.prompt, "context": ask.context }), &answer, start.elapsed());
             announce(if started { busy.change(0, -1) } else { busy.change(-1, 0) });
             let error = answer.err().unwrap_or_default();
             if let Ok(mut stopped) = stopped.lock() {
                 stopped.remove(&id);
             }
-            if let Some((chat, _)) = &chat {
-                let mut chat = lock(chat);
-                if let Some(What::Answer { writing, error: why, .. }) = chat.answer_mut(id) {
-                    *writing = false;
-                    why.clone_from(&error);
-                }
-                if let Some(skill) = proposal.take()
-                    && error.is_empty()
-                {
-                    chat.push(What::Skill { skill, state: Proposal::Proposed });
-                }
-                chat.save();
-            }
             if let Err(err) = async_io::block_on(Ai::answer_done(&emitter, id, &error)) {
                 eprintln!("ai: sending an answer: {err}");
-            }
-            if chat.is_some()
-                && let Err(err) = async_io::block_on(Ai::history_changed(&emitter))
-            {
-                eprintln!("ai: sending a conversation change: {err}");
             }
         });
         id
     }
 
-    /// Routes `text`, with the conversation so far when there is one.
-    async fn routed(&self, emitter: &SignalEmitter<'_>, connection: &zbus::Connection, text: &str, conversation: &str) -> Result<route::Routed, Error> {
+    /// Routes `text`.
+    async fn routed(&self, emitter: &SignalEmitter<'_>, connection: &zbus::Connection, text: &str) -> Result<route::Routed, Error> {
         self.allowed(self.config().features.route, "route")?;
-        // A clear one-off reminder is read by code: instant, and the time is never a model's guess.
-        if let Some(routed) = route::reminder(text, chrono::Local::now().naive_local()) {
-            return Ok(routed);
-        }
-        let facts = memory::facts();
-        let candidates = route::candidates(text, &facts);
         let config = self.config();
-        if config.jev.launcher && !config.local_only && route::jev_can(text, &candidates) {
+        if config.jev.launcher && !config.local_only {
             self.announce(emitter, self.busy.change(1, 0)).await;
-            let routed = self.jev_route(connection, text, conversation).await;
+            let routed = self.jev_route(connection, text).await;
             self.announce(emitter, self.busy.change(-1, 0)).await;
             // Ollama routes what Jev hands over or can't answer, so the launcher never loses its answer.
             match routed {
@@ -436,22 +258,10 @@ impl Ai {
                 Err(err) => eprintln!("ai: {err}; Ollama routes it instead"),
             }
         }
-        let user = route::user(text, &candidates, conversation);
         self.announce(emitter, self.busy.change(1, 0)).await;
-        let answer = self.json("route", json!(text), route::system_prompt(&facts, text), user, route::schema(&candidates, text)).await;
+        let answer = self.json("route", json!(text), route::system_prompt(), text.to_owned(), route::schema()).await;
         self.announce(emitter, self.busy.change(-1, 0)).await;
-        answer
-            .and_then(|answer| route::parse(answer, text, &candidates, &facts))
-            .map(|mut routed| {
-                // A task that names a saved skill runs that skill's steps each time.
-                if let Some(task) = &mut routed.task
-                    && let Some(skill) = skills::matching(text, &skills::all())
-                {
-                    task.skill = skill.name;
-                }
-                routed
-            })
-            .map_err(Error::Engine)
+        answer.and_then(|answer| route::parse(answer, text)).map_err(Error::Engine)
     }
 
     async fn announce(&self, emitter: &SignalEmitter<'_>, state: Option<&'static str>) {
@@ -477,13 +287,13 @@ impl Ai {
     }
 
     /// Takes what one look found: the first event the policy lets through is rated, and shown if it's worth it,
-    /// as an entry in the conversation, a quiet notification and the `Suggestion` signal.
+    /// as a quiet notification and the `Suggestion` signal, and kept open until it's answered.
     pub async fn consider(&self, emitter: &SignalEmitter<'_>, connection: &zbus::Connection, found: Vec<events::Event>) {
         let Some(limits) = self.suggesting() else { return };
         let Some(event) = self.policy().pick(found, suggest::now(), Instant::now(), limits.per_hour) else { return };
         let focus = suggest::focus(connection).await;
         let input = json!({ "kind": event.kind, "facts": event.facts, "offer": event.offer.as_ref().map(|(_, label)| label), "focus": focus });
-        let answer = match self.json("suggest", input, suggest::SYSTEM.to_owned(), suggest::user(&event, focus, &memory::facts()), suggest::schema()).await {
+        let answer = match self.json("suggest", input, suggest::SYSTEM.to_owned(), suggest::user(&event, focus), suggest::schema()).await {
             Ok(answer) => answer,
             Err(err) => return eprintln!("ai: rating a suggestion: {err}"),
         };
@@ -501,36 +311,12 @@ impl Ai {
             Some((action, label)) => (serde_json::to_value(action).ok(), label.clone()),
             None => (None, String::new()),
         };
-        let suggestion = What::Suggestion {
-            event: event.kind,
-            key: event.key(),
-            label: event.label.clone(),
-            text: text.clone(),
-            offer,
-            offer_label,
-            worth,
-            state: SuggestionState::Open,
-            result: String::new(),
-            notification,
-        };
-        let entry = self.change(emitter, |chat| chat.push(suggestion)).await;
-        if let Err(err) = Ai::suggestion(emitter, entry, &text).await {
+        let suggestion = suggest::Open { id: 0, time: suggest::now(), event: event.kind, key: event.key(), label: event.label.clone(), text: text.clone(), offer, offer_label, worth, notification };
+        let id = self.policy().open(suggestion);
+        if let Err(err) = Ai::suggestion(emitter, id, &text).await {
             eprintln!("ai: sending a suggestion: {err}");
         }
-    }
-
-    /// Changes the conversation, saves it and says so.
-    async fn change<T>(&self, emitter: &SignalEmitter<'_>, change: impl FnOnce(&mut Chat) -> T) -> T {
-        let result = {
-            let mut chat = lock(&self.chat);
-            let result = change(&mut chat);
-            chat.save();
-            result
-        };
-        if let Err(err) = Ai::history_changed(emitter).await {
-            eprintln!("ai: sending a conversation change: {err}");
-        }
-        result
+        say_suggestions_changed(emitter).await;
     }
 }
 
@@ -539,26 +325,31 @@ struct Ask {
     system: String,
     prompt: String,
     context: String,
-    /// The conversation's entry the answer goes in, for a chat answer.
-    entry: Option<u64>,
-    /// An answer written already, shown as it is with no model: what a look-up's sources say.
+    /// An answer written already, shown as it is with no model.
     verbatim: Option<String>,
-    /// Gather what the question needs with the tool loop first (see `agent`); whether it may search the web.
-    agent: Option<bool>,
-    /// A saved skill the question calls for, whose steps are the loop's first looks.
-    skill: Option<skills::Skill>,
 }
 
-const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Answer the question that was asked, in one or two plain sentences, unless the user asks for a list or more detail: then give it, \
-                          one item to a line, each starting with \"- \". \
-                          You know only what is given with the question and what you remember about the user. When something asked for isn't \
-                          given, say so in one sentence and what you would need. Never invent events, names, numbers, links or news, and never \
-                          claim an ability you haven't been told you have.";
+const ASK_SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop, which looks after this laptop. Answer the question that was asked, \
+                          in one or two plain sentences, unless the user asks for a list or more detail: then give it, one item to a line, each starting with \"- \". \
+                          You know only what is given with the question. When something asked for isn't given, say so in one sentence. Never invent events, \
+                          names, numbers, links or news, and never claim an ability you haven't been told you have.";
 
-/// How Kith sounds, kept apart from the soul so a small model gets the same few rules whatever the soul says. It
-/// never names "Done.": the panel marks an action done itself, and a small model repeats whatever it is told not to say.
-const ASK_VOICE: &str = "\nDon't say \"sir\" or \"ma'am\" unless your soul below asks for it, and never end with a question or an offer: reply to a greeting with a greeting. \
-                         If the user asks what you meant, explain your last reply in other words and give the reason; don't repeat it or change the subject.";
+/// How Kith sounds. It never names "Done.": the launcher marks an action done itself, and a small model repeats
+/// whatever it is told not to say.
+const ASK_VOICE: &str = "\nDon't say \"sir\" or \"ma'am\", and never end with a question or an offer: reply to a greeting with a greeting.";
+
+/// What Kith can do, so the model neither denies an ability it has nor makes one up.
+const ABILITIES: &str = "\nWhat Kith can do:\n\
+                         - Propose actions for the user to tick: volume, brightness, mute, Wi-Fi, Focus, night light, lock, sleep, open an app or a website.\n\
+                         - Look at this laptop: disk, battery, memory, uptime and how the last build went.\n\
+                         - Suggest something when it notices an app running away, the battery low, a build ending or a new network.\n\
+                         - Check pasted terminal commands for harm.\n\
+                         It keeps no conversation and remembers nothing between questions.";
+
+/// What Kith says when asked plainly what it can do.
+const CAN_DO: &str = "I look after this laptop. I can propose actions for you to tick: volume, brightness, mute, Wi-Fi, Focus, night light, lock, sleep, \
+                      and opening an app or a website. I can tell you about its disk, battery, memory and uptime and how the last build went, suggest \
+                      something when an app runs away, the battery runs low, a build ends or a new network is in range, and check pasted terminal commands.";
 
 /// Whether a question is about what Kith can do. The list of abilities goes in only then: a small model that has it
 /// in front of it offers those things, or reports a battery level, to a plain "hi".
@@ -567,322 +358,66 @@ fn asks_abilities(question: &str) -> bool {
     ["can you", "could you", "able to", "what do you do", "what can", "capab", "abilit", "feature", "how about", "do you have", "help me"].iter().any(|ask| question.contains(ask))
 }
 
-/// Whether a question is plainly "what can you do". That has one answer, so code gives it (`can_do`) instead of a model
+/// Whether a question is plainly "what can you do". That has one answer, so code gives it (`CAN_DO`) instead of a model
 /// that took 30 s to describe it wrongly.
 fn asks_what_it_can_do(question: &str) -> bool {
     let question = question.to_lowercase();
     ["what can you do", "what do you do", "what are you able", "what are you capable", "your capabilities", "what can kith do"].iter().any(|ask| question.contains(ask))
 }
 
-/// What Kith says it can do, as far as the settings allow.
-fn can_do(config: &Config) -> String {
-    let web = if config.web.search && !config.local_only { "I can also search the web." } else { "Web search is switched off." };
-    format!(
-        "I can propose actions for you to tick: volume, brightness, mute, Wi-Fi, Focus, night light, lock, sleep, and opening an app or a link. \
-         I can look at this laptop's disk, battery, memory and apps, and read your calendar, mail, tasks, notes and files in your home folder \
-         (calendar and mail once their accounts are connected). I remember a fact once you approve it, and run tasks on a schedule. {web}"
-    )
-}
-
-/// What Kith can do, as far as the settings allow, so the model neither denies an ability it has nor makes one up.
-fn abilities(config: &Config) -> String {
-    let web = if config.web.search && !config.local_only { "Search the web." } else { "Cannot search the web: it is switched off." };
-    format!(
-        "\nWhat Kith can do:\n\
-         - Propose actions for the user to tick: volume, brightness, mute, Wi-Fi, Focus, night light, lock, sleep, open an app or a link.\n\
-         - Look at this laptop: disk, battery, memory and what apps are using.\n\
-         - Read the user's calendar, mail, tasks and notes, and files in their home folder.\n\
-         - Remember a fact once the user approves it, and run tasks on a schedule.\n\
-         - {web}"
-    )
-}
-
-/// An error as the conversation shows it.
-fn said(error: &Error) -> String {
-    match error {
-        Error::Disabled(why) | Error::Engine(why) => why.clone(),
-        Error::ZBus(error) => error.to_string(),
+/// Says the open suggestions changed, for the bar's dot and the centre's widget.
+async fn say_suggestions_changed(emitter: &SignalEmitter<'_>) {
+    if let Err(err) = Ai::suggestions_changed(emitter).await {
+        eprintln!("ai: sending a change in suggestions: {err}");
     }
-}
-
-fn lock(chat: &Mutex<Chat>) -> std::sync::MutexGuard<'_, Chat> {
-    chat.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[zbus::interface(name = "org.autark.AI1")]
 impl Ai {
-    /// Turns a sentence into the actions it asks for, the question it asks and a fact to propose remembering,
-    /// as JSON: `{"actions":[{"action":"mute","on":true,"confidence":0.97}],"question":"Why did my build stop?",
-    /// "files":["~/autark/log.md"],"remember":"","confidence":0.9,"engine":"ollama"}`.
+    /// Turns a sentence into the laptop actions it asks for and the question it asks, as JSON:
+    /// `{"actions":[{"action":"mute","on":true,"confidence":0.97}],"question":"Why did my build stop?","confidence":0.9,"engine":"ollama"}`.
     async fn route(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
-        let routed = self.routed(&emitter, connection, &text, "").await?;
+        let routed = self.routed(&emitter, connection, &text).await?;
         serde_json::to_string(&routed).map_err(|err| Error::Engine(err.to_string()))
-    }
-
-    /// `Route` as part of the conversation: the message goes into it, routed with what was said before, with
-    /// its actions and proposed fact as entries of their own, whose ids come back as `actions_entry` and
-    /// `memory_entry` (0 for none). Then `ChatAnswer`, `ChatAct` and `Remember` carry on from here.
-    async fn chat(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, text: String) -> Result<String, Error> {
-        let conversation = lock(&self.chat).transcript();
-        let routed = self.routed(&emitter, connection, &text, &conversation).await;
-        let entries = self
-            .change(&emitter, |chat| {
-                chat.said(&text);
-                let routed = match &routed {
-                    Ok(routed) => routed,
-                    Err(err) => {
-                        // Kept, so the conversation shows why there's no answer.
-                        chat.push(What::Answer { answer: 0, text: String::new(), files: Vec::new(), writing: false, error: said(err) });
-                        return Err(said(err));
-                    }
-                };
-                let actions = routed.actions.iter().map(|chosen| serde_json::to_value(&chosen.action).unwrap_or(Value::Null)).collect::<Vec<_>>();
-                let confidence = routed.actions.iter().map(|chosen| chosen.confidence).collect();
-                let actions = if actions.is_empty() { 0 } else { chat.push(What::Actions { actions, confidence, results: Vec::new(), skipped: false }) };
-                let memory = if routed.remember.is_empty() { 0 } else { chat.push(What::Memory { text: routed.remember.clone(), state: Proposal::Proposed }) };
-                let task = match &routed.task {
-                    Some(task) => chat.push(What::Task { task: task.clone(), state: TaskState::Proposed, unit: String::new(), next: 0 }),
-                    None => 0,
-                };
-                Ok((actions, memory, task))
-            })
-            .await;
-        let routed = routed?;
-        let (actions, memory, task) = entries.map_err(Error::Engine)?;
-        let mut json = serde_json::to_value(&routed).map_err(|err| Error::Engine(err.to_string()))?;
-        json["actions_entry"] = json!(actions);
-        json["memory_entry"] = json!(memory);
-        json["task_entry"] = json!(task);
-        Ok(json.to_string())
-    }
-
-    /// Creates a proposed task, as its card shows it (`task`, JSON, which you may have edited): its folder, its
-    /// timer, enabled and started. Returns the timer's unit and its first run, in microseconds since the epoch.
-    async fn create_task(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, task: String) -> Result<(String, u64), Error> {
-        if !matches!(lock(&self.chat).get_mut(entry), Some(What::Task { state: TaskState::Proposed, .. })) {
-            return Err(Error::Engine("that task has been answered already".to_owned()));
-        }
-        let task: tasks::Task = serde_json::from_str(&task).map_err(|err| Error::Engine(format!("that isn't a task: {err}")))?;
-        let task = tasks::check(task).map_err(Error::Engine)?;
-        let runner = std::env::current_exe().map_err(|err| Error::Engine(format!("finding autark-ai itself: {err}")))?;
-        let created = tasks::create(connection, task.clone(), self.config().tasks, &runner.to_string_lossy()).await.map_err(Error::Engine)?;
-        log::record("create_task", "code", json!({ "task": task, "id": created.id }), &Ok(json!({ "unit": created.unit, "next": created.next })), Default::default());
-        self.change(&emitter, |chat| {
-            if let Some(What::Task { task: kept, state, unit, next }) = chat.get_mut(entry) {
-                *kept = task;
-                *state = TaskState::Created;
-                unit.clone_from(&created.unit);
-                *next = created.next;
-            }
-        })
-        .await;
-        Ok((created.unit, created.next))
-    }
-
-    /// Answers a proposed task with Cancel.
-    async fn cancel_task(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64) -> Result<(), Error> {
-        if !matches!(lock(&self.chat).get_mut(entry), Some(What::Task { state: TaskState::Proposed, .. })) {
-            return Err(Error::Engine("that task has been answered already".to_owned()));
-        }
-        self.change(&emitter, |chat| {
-            if let Some(What::Task { state, .. }) = chat.get_mut(entry) {
-                *state = TaskState::Cancelled;
-            }
-        })
-        .await;
-        Ok(())
-    }
-
-    /// A streamed answer for the team's backend (`autark-alfred`): `prompt` answered under `system`, with `context`
-    /// before it, as `AnswerPiece` signals and then `AnswerDone`. It goes in no conversation here: `autark-alfred`
-    /// keeps each agent's own. Returns the answer's id.
-    async fn complete(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, system: String, context: String, prompt: String) -> Result<u32, Error> {
-        self.allowed(self.config().features.ask, "ask")?;
-        Ok(self.answer(emitter, Ask { system, prompt, context, entry: None, verbatim: None, agent: None, skill: None }, json!({ "for": "alfred" })))
-    }
-
-    /// What `question` is about, as far as the team's agent may look: the subjects in `can` (any of mail, calendar,
-    /// tasks, notes, web and laptop), read now and read-only, as context for an answer. Other subjects the question
-    /// is about come back as a line saying the agent can't look at them. Empty when the question is about none.
-    async fn look(&self, #[zbus(connection)] connection: &zbus::Connection, question: String, can: Vec<String>) -> Result<String, Error> {
-        self.allowed(self.config().features.ask, "ask")?;
-        Ok(self.senses_for(connection, &question, Some(&can)).await)
-    }
-
-    /// `AskFiles` as part of the conversation: answered with what was said before and what Kith remembers, the
-    /// answer kept as an entry that grows as it's written. Returns the answer's id, its entry and the files.
-    async fn chat_answer(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, question: String, files: Vec<String>) -> Result<(u32, u64, Vec<(String, String)>), Error> {
-        self.allowed(self.config().features.ask, "ask")?;
-        let (read, outcome) = blocking::unblock(move || files::read(&files)).await;
-        let conversation = lock(&self.chat).transcript();
-        let entry = self.change(&emitter, |chat| chat.push(What::Answer { answer: 0, text: String::new(), files: outcome.clone(), writing: true, error: String::new() })).await;
-        let facts = memory::facts();
-        let mut system = self.ask_system(&question, true);
-        if !facts.is_empty() {
-            let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
-            system.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
-        }
-        let mut context = String::new();
-        if !conversation.is_empty() {
-            context.push_str(&format!("Conversation so far:\n{conversation}\n\n"));
-        }
-        context.push_str(&read);
-        // A question that is only a look-up shows what its sources say: a small model misread their labels.
-        let lookup_only = senses::subjects(&question) == [senses::Subject::Web];
-        let found = if lookup_only { self.search_found(connection, &question).await } else { None };
-        // A question that is only about the calendar is answered from the events themselves: no model to invent one.
-        let calendar_only = senses::subjects(&question) == [senses::Subject::Calendar];
-        let agenda = if calendar_only { self.calendar_found(connection, &question).await.and_then(Result::ok) } else { None };
-        // The same for mail: the list of who wrote and what about, from the inbox itself.
-        let mail_only = senses::subjects(&question) == [senses::Subject::Mail] && !mail::wants_body(&question);
-        let inbox = if mail_only { self.mail_found(connection, &question).await.ok() } else { None };
-        // And for the task board: the project items themselves.
-        let board_only = senses::subjects(&question) == [senses::Subject::Tasks];
-        let items = if board_only { self.board_found().await.ok() } else { None };
-        let verbatim = found.as_deref().and_then(|found| web::quoted(found, 1)).or(agenda).or(inbox).or(items).or_else(|| asks_what_it_can_do(&question).then(|| can_do(&self.config())));
-        // A question that needs more than one look gathers its own context with the tool loop, in the answer's thread.
-        let skill = if verbatim.is_none() { skills::matching(&question, &skills::all()) } else { None };
-        let agent = (verbatim.is_none() && !lookup_only && !calendar_only && !mail_only && !board_only && (skill.is_some() || agent::wants_agent(&question))).then(|| {
-            let config = self.config();
-            config.web.search && !config.local_only
-        });
-        if verbatim.is_none() && agent.is_none() {
-            let seen = if lookup_only { senses::unavailable(senses::Subject::Web).to_owned() } else { self.senses(connection, &question).await };
-            if !seen.is_empty() {
-                context.push_str(&format!("\n{seen}"));
-            }
-        }
-        let logged = json!({ "files": outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>() });
-        let id = self.answer(emitter, Ask { system, prompt: question, context: context.trim_end().to_owned(), entry: Some(entry), verbatim, agent, skill }, logged);
-        Ok((id, entry, outcome))
-    }
-
-    /// Runs the chosen actions (by their place) of a conversation entry, as `Act` does, and keeps how each went.
-    async fn chat_act(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, chosen: Vec<u32>) -> Result<Vec<String>, Error> {
-        let actions = match lock(&self.chat).get_mut(entry) {
-            Some(What::Actions { actions, results, skipped: false, .. }) if results.is_empty() => actions.clone(),
-            Some(What::Actions { .. }) => return Err(Error::Engine("these actions have run or been passed by".to_owned())),
-            _ => return Err(Error::Engine("there are no such actions".to_owned())),
-        };
-        let picked: Vec<Value> = chosen.iter().filter_map(|at| actions.get(*at as usize).cloned()).collect();
-        let parsed: Vec<route::Action> = serde_json::from_value(Value::Array(picked.clone())).map_err(|err| Error::Engine(format!("not actions from the catalog: {err}")))?;
-        let start = Instant::now();
-        let ran = act::run(connection, &parsed).await;
-        log::record("act", "code", Value::Array(picked), &Ok(json!(ran)), start.elapsed());
-        self.change(&emitter, |chat| {
-            if let Some(What::Actions { results, .. }) = chat.get_mut(entry) {
-                *results = vec![None; actions.len()];
-                for (at, outcome) in chosen.iter().zip(&ran) {
-                    if let Some(result) = results.get_mut(*at as usize) {
-                        *result = Some(outcome.clone());
-                    }
-                }
-            }
-        })
-        .await;
-        Ok(ran)
-    }
-
-    /// Answers a proposed fact: saved to memory.toml as `text` (which you may have edited), or not.
-    async fn remember(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, text: String, save: bool) -> Result<(), Error> {
-        let text = text.trim().to_owned();
-        if !matches!(lock(&self.chat).get_mut(entry), Some(What::Memory { state: Proposal::Proposed, .. })) {
-            return Err(Error::Engine("that fact has been answered already".to_owned()));
-        }
-        if save {
-            if text.is_empty() {
-                return Err(Error::Engine("there's nothing to remember".to_owned()));
-            }
-            memory::add(&text).map_err(Error::Engine)?;
-        }
-        self.change(&emitter, |chat| {
-            if let Some(What::Memory { text: kept, state }) = chat.get_mut(entry) {
-                *state = if save { Proposal::Saved } else { Proposal::NotSaved };
-                if save {
-                    *kept = text;
-                }
-            }
-        })
-        .await;
-        Ok(())
-    }
-
-    /// Answers a proposed skill: kept as a file in the skills folder under `name` (which you may have changed), or not.
-    async fn save_skill(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, name: String, save: bool) -> Result<(), Error> {
-        let mut skill = match lock(&self.chat).get_mut(entry) {
-            Some(What::Skill { skill, state: Proposal::Proposed }) => skill.clone(),
-            Some(What::Skill { .. }) => return Err(Error::Engine("that skill has been answered already".to_owned())),
-            _ => return Err(Error::Engine("there's no such skill".to_owned())),
-        };
-        if save {
-            skill.name = name.trim().to_owned();
-            blocking::unblock({
-                let skill = skill.clone();
-                move || skills::save(&skill)
-            })
-            .await
-            .map_err(Error::Engine)?;
-        }
-        self.change(&emitter, |chat| {
-            if let Some(What::Skill { skill: kept, state }) = chat.get_mut(entry) {
-                *state = if save { Proposal::Saved } else { Proposal::NotSaved };
-                if save {
-                    *kept = skill;
-                }
-            }
-        })
-        .await;
-        Ok(())
     }
 
     /// Answers a suggestion: `accept` runs its offer through `Act` and returns how it went (empty for done, else
     /// why not); `not_now` passes; `never` also stops this kind and subject being suggested again.
     async fn answer_suggestion(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, entry: u64, answer: String) -> Result<String, Error> {
-        let (offer, key, label, notification) = match lock(&self.chat).get(entry) {
-            Some(found) => match &found.what {
-                What::Suggestion { .. } if suggest::now().saturating_sub(found.time) > suggest::STANDS => return Err(Error::Engine("that suggestion has passed by".to_owned())),
-                What::Suggestion { state: SuggestionState::Open, offer, key, label, notification, .. } => (offer.clone(), key.clone(), label.clone(), *notification),
-                What::Suggestion { .. } => return Err(Error::Engine("that suggestion has been answered already".to_owned())),
-                _ => return Err(Error::Engine("there's no such suggestion".to_owned())),
+        if !["accept", "not_now", "never"].contains(&answer.as_str()) {
+            return Err(Error::Engine(format!("“{answer}” isn't an answer: accept, not_now or never")));
+        }
+        let open = self.policy().answer(entry, suggest::now()).ok_or_else(|| Error::Engine("that suggestion has been answered already or has passed by".to_owned()))?;
+        let result = match answer.as_str() {
+            "accept" => match &open.offer {
+                Some(offer) => match serde_json::from_value::<route::Action>(offer.clone()) {
+                    Ok(action) => {
+                        let start = Instant::now();
+                        let ran = act::run(connection, &[action]).await;
+                        log::record("act", "code", json!([offer]), &Ok(json!(ran)), start.elapsed());
+                        ran.into_iter().next().unwrap_or_default()
+                    }
+                    Err(err) => format!("not an action: {err}"),
+                },
+                None => "that suggestion offers nothing".to_owned(),
             },
-            None => return Err(Error::Engine("there's no such suggestion".to_owned())),
-        };
-        let (state, result) = match answer.as_str() {
-            "accept" => {
-                let offer = offer.ok_or_else(|| Error::Engine("that suggestion offers nothing".to_owned()))?;
-                let action: route::Action = serde_json::from_value(offer.clone()).map_err(|err| Error::Engine(format!("not an action: {err}")))?;
-                let start = Instant::now();
-                let ran = act::run(connection, &[action]).await;
-                log::record("act", "code", json!([offer]), &Ok(json!(ran)), start.elapsed());
-                (SuggestionState::Accepted, ran.into_iter().next().unwrap_or_default())
-            }
-            "not_now" => (SuggestionState::NotNow, String::new()),
             "never" => {
-                self.policy().never(&key, &label);
-                (SuggestionState::Never, String::new())
+                self.policy().never(&open.key, &open.label);
+                String::new()
             }
-            _ => return Err(Error::Engine(format!("“{answer}” isn't an answer: accept, not_now or never"))),
+            _ => String::new(),
         };
-        self.change(&emitter, |chat| {
-            if let Some(What::Suggestion { state: kept, result: why, .. }) = chat.get_mut(entry) {
-                *kept = state;
-                why.clone_from(&result);
-            }
-        })
-        .await;
-        if notification != 0 {
-            suggest::close(connection, notification).await;
+        say_suggestions_changed(&emitter).await;
+        if open.notification != 0 {
+            suggest::close(connection, open.notification).await;
         }
         Ok(result)
     }
 
-    /// The suggestions still open and standing, newest last, as a JSON array of conversation entries.
+    /// The suggestions still open and standing, oldest first, as a JSON array of
+    /// `{"id","time","event","key","label","text","offer","offer_label","worth","notification"}`.
     async fn open_suggestions(&self) -> Result<String, Error> {
-        let now = suggest::now();
-        let mut chat = lock(&self.chat);
-        let open: Vec<&chat::Entry> =
-            chat.entries().iter().filter(|entry| matches!(entry.what, What::Suggestion { state: SuggestionState::Open, .. }) && now.saturating_sub(entry.time) <= suggest::STANDS).collect();
-        serde_json::to_string(&open).map_err(|err| Error::Engine(err.to_string()))
+        serde_json::to_string(self.policy().standing(suggest::now())).map_err(|err| Error::Engine(err.to_string()))
     }
 
     /// What you said never to suggest again: each one's key and how to name it.
@@ -893,57 +428,6 @@ impl Ai {
     /// Lets something you said never to suggest be suggested again.
     async fn suggest_again(&self, key: String) {
         self.policy().again(&key);
-    }
-
-    /// The conversation, as a JSON array of entries.
-    async fn history(&self) -> Result<String, Error> {
-        serde_json::to_string(lock(&self.chat).entries()).map_err(|err| Error::Engine(err.to_string()))
-    }
-
-    /// Empties the conversation.
-    async fn clear_history(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) {
-        self.change(&emitter, Chat::clear).await;
-    }
-
-    /// How relevant each item is to the query, 0 to 1, in the items' order.
-    async fn rank(&self, #[zbus(connection)] connection: &zbus::Connection, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
-        self.rank_for(connection, String::new(), query, items).await
-    }
-
-    /// `Rank` for a caller that has its own Jev switch: `source` is "files" or "settings".
-    async fn rank_for(&self, #[zbus(connection)] connection: &zbus::Connection, source: String, query: String, items: Vec<String>) -> Result<Vec<f64>, Error> {
-        self.allowed(self.config().features.rank, "rank")?;
-        if items.is_empty() {
-            return Ok(Vec::new());
-        }
-        let config = self.config();
-        let jev = match source.as_str() {
-            "files" => config.jev.files,
-            "settings" => config.jev.settings,
-            _ => false,
-        };
-        if jev && !config.local_only {
-            // If Jev can't answer, Ollama does, so search never loses its ranking.
-            match self.jev_rank(connection, &query, &items).await {
-                Ok(scores) => return Ok(scores),
-                Err(err) => eprintln!("ai: {err}; Ollama ranks it instead"),
-            }
-        }
-        let listed: Vec<String> = items.iter().enumerate().map(|(n, item)| format!("{}. {item}", n + 1)).collect();
-        let user = format!("Query: {query}\nItems:\n{}", listed.join("\n"));
-        let system = "Score how relevant each numbered item is to the query, from 0 (unrelated) to 1 (exactly what's meant). \
-                      Give one score per item, in order.";
-        let schema = json!({
-            "type": "object",
-            "properties": { "scores": { "type": "array", "items": { "type": "number" }, "minItems": items.len(), "maxItems": items.len() } },
-            "required": ["scores"],
-        });
-        let answer = self.json("rank", json!({ "query": query, "items": items }), system.to_owned(), user, schema).await.map_err(Error::Engine)?;
-        let scores: Vec<f64> = answer["scores"].as_array().into_iter().flatten().filter_map(Value::as_f64).map(|s| s.clamp(0.0, 1.0)).collect();
-        if scores.len() != items.len() {
-            return Err(Error::Engine(format!("got {} scores for {} items", scores.len(), items.len())));
-        }
-        Ok(scores)
     }
 
     /// How much a notification needs the user's attention now, 0 to 1, for Focus to let the urgent ones through.
@@ -958,27 +442,6 @@ impl Ai {
             return Err(Error::Disabled("urgent is off in ai.toml".to_owned()));
         }
         self.jev_urgent(connection, &app, &summary, &body).await.map_err(Error::Engine)
-    }
-
-    /// A web search through Firecrawl: titles, addresses and snippets of the best results, as text. The query leaves
-    /// the laptop, which is why `[web] search` is off by default; it is an error unless that is on and `local_only` is not.
-    async fn search(&self, #[zbus(connection)] connection: &zbus::Connection, query: String) -> Result<String, Error> {
-        let config = self.config();
-        if !config.enabled {
-            return Err(Error::Disabled("AI is off: set `enabled = true` in ai.toml".to_owned()));
-        }
-        if !config.web.search || config.local_only {
-            return Err(Error::Disabled("search is off in ai.toml".to_owned()));
-        }
-        let start = Instant::now();
-        let result = async {
-            let key = web::key(connection).await?;
-            let query = query.clone();
-            blocking::unblock(move || web::search(&key, &query)).await
-        }
-        .await;
-        log::record("search", "firecrawl", json!(query), &result.clone().map(|text| json!({ "bytes": text.len() })), start.elapsed());
-        result.map_err(Error::Engine)
     }
 
     /// The probability that running `command` does harm, with a short reason. Destructive commands
@@ -1004,26 +467,16 @@ impl Ai {
         Ok((risk.clamp(0.0, 1.0), answer["reason"].as_str().unwrap_or_default().to_owned()))
     }
 
-    /// Starts a generated answer and returns its id. The text arrives as `AnswerPiece` signals,
-    /// then `AnswerDone`, whose error is empty on success.
-    async fn ask(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, context: String) -> Result<u32, Error> {
+    /// Starts one generated answer to a quick question about the laptop and returns its id: `context` (may be
+    /// empty) and what Kith reads of the laptop for it go with the question, and nothing said before does. The
+    /// text arrives as `AnswerPiece` signals, then `AnswerDone`, whose error is empty on success.
+    async fn ask(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, context: String) -> Result<u32, Error> {
         self.allowed(self.config().features.ask, "ask")?;
         let context = if context.is_empty() { context } else { format!("Context:\n{context}") };
-        let seen = self.senses(connection, &prompt).await;
+        let seen = self.senses(&prompt).await;
         let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok(self.answer(emitter, Ask { system: self.ask_system(&prompt, false), verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())), prompt, context, entry: None, agent: None, skill: None }, json!({})))
-    }
-
-    /// `Ask` with files for context, as `Route` picked them: reads the ones Kith may read (see `files`) and
-    /// says how each went, an empty reason for read, before the answer streams.
-    async fn ask_files(&self, #[zbus(connection)] connection: &zbus::Connection, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>, prompt: String, files: Vec<String>) -> Result<(u32, Vec<(String, String)>), Error> {
-        self.allowed(self.config().features.ask, "ask")?;
-        let (context, outcome) = blocking::unblock(move || files::read(&files)).await;
-        let read = json!(outcome.iter().map(|(path, why)| if why.is_empty() { json!(path) } else { json!({ "path": path, "not_read": why }) }).collect::<Vec<_>>());
-        let context = if context.is_empty() { context } else { format!("Context:\n{}", context.trim_end()) };
-        let seen = self.senses(connection, &prompt).await;
-        let context = if seen.is_empty() { context } else if context.is_empty() { seen } else { format!("{context}\n\n{seen}") };
-        Ok((self.answer(emitter, Ask { system: self.ask_system(&prompt, false), verbatim: asks_what_it_can_do(&prompt).then(|| can_do(&self.config())), prompt, context, entry: None, agent: None, skill: None }, json!({ "files": read })), outcome))
+        let verbatim = asks_what_it_can_do(&prompt).then(|| CAN_DO.to_owned());
+        Ok(self.answer(emitter, Ask { system: self.ask_system(&prompt), prompt, context, verbatim }))
     }
 
     /// Stops an answer still being written; its `AnswerDone` follows, with no error.
@@ -1067,13 +520,13 @@ impl Ai {
     #[zbus(signal)]
     async fn state_changed(emitter: &SignalEmitter<'_>, state: &str) -> zbus::Result<()>;
 
-    /// A new suggestion, as conversation entry `entry`.
+    /// A new suggestion, `id` in `OpenSuggestions`.
     #[zbus(signal)]
-    pub async fn suggestion(emitter: &SignalEmitter<'_>, entry: u64, text: &str) -> zbus::Result<()>;
+    pub async fn suggestion(emitter: &SignalEmitter<'_>, id: u64, text: &str) -> zbus::Result<()>;
 
-    /// The conversation changed: read it again with `History`.
+    /// The open suggestions changed: one was shown or answered. Read them again with `OpenSuggestions`.
     #[zbus(signal)]
-    async fn history_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    async fn suggestions_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 #[cfg(test)]
@@ -1098,19 +551,5 @@ mod tests {
         for asked in ["can you open the browser", "how about web search?", "hi", "what do you mean"] {
             assert!(!asks_what_it_can_do(asked), "{asked}");
         }
-        let mut config = Config::default();
-        assert!(can_do(&config).ends_with("Web search is switched off."));
-        config.web.search = true;
-        assert!(can_do(&config).ends_with("I can also search the web."));
-    }
-
-    #[test]
-    fn the_abilities_follow_the_web_switch() {
-        let mut config = Config::default();
-        assert!(abilities(&config).contains("Cannot search the web"));
-        config.web.search = true;
-        assert!(abilities(&config).ends_with("- Search the web."));
-        config.local_only = true;
-        assert!(abilities(&config).contains("Cannot search the web"));
     }
 }

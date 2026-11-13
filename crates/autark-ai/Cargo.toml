@@ -1,6 +1,6 @@
 [package]
 name = "autark-ai"
-description = "Kith's local daemon (org.autark.AI1): routing, Jev and Ollama, laptop MCP tools, tasks, memory."
+description = "Kith's local daemon (org.autark.AI1), a minimal laptop supervisor: routing and laptop actions, quick answers, command checks, suggestions; Jev and Ollama."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,11 +10,12 @@ publish = false
 async-io = "2.6.0"
 autark-common = { version = "0.0.0", path = "../autark-common", features = ["changes"] }
 blocking = "1.7.0"
-autark-pim = { version = "0.0.0", path = "../autark-pim" }
 chrono = "0.4.45"
 futures-util = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-toml = "1.1.8"
 ureq = "3.4.2"
 zbus = "6.0.0"
+
+[dev-dependencies]
+toml = "1.1.8"

@@ -21,7 +21,7 @@ They live apart from the distro so other Linux systems can use them too.
 | --- | --- |
 | 🖥️ **Desktop shell** | A top bar, a dock with magnification, a Spotlight-style launcher with clipboard history, a notification centre with widgets, a lock screen (password or fingerprint), a wallpaper layer, night light and display layouts. GTK4 and Rust, for any wlroots compositor. |
 | 🗂️ **Apps** | Files, Notes (Markdown vaults with links and a graph), Calendar, Contacts, Mail pieces, Viewer, Player, Calculator, Archives, Clock, Task manager, Screenshots, Settings and a hardware page. |
-| 🤖 **Kith** | An assistant that runs on [Ollama](https://ollama.com) on your laptop. Off until you turn it on; it reads only files you name and logs every call. Jev, an optional cloud engine for fast typed decisions, is off unless you switch it on per feature. |
+| 🤖 **Kith** | A minimal supervisor of the laptop that runs on [Ollama](https://ollama.com): laptop actions from the launcher, quick answers about the laptop, suggestions when something needs a look, and a safety check on pasted commands. Off until you turn it on; it keeps no conversation or memory, reads none of your files and logs every call. Jev, an optional cloud engine for fast typed decisions, is off unless you switch it on per feature. |
 | 📦 **autark-pkg** | Builds package recipes into signed archives, installs, upgrades, removes and rolls back, and imports a recipe from Arch Linux when none exists. Autark only. |
 | 🔓 **autark-init** | An initramfs init that unlocks a LUKS2 disk with TPM plus PIN, then hands over to systemd. |
 | 🧱 **autark-sandbox** | Runs a vendor binary under a per-app Landlock profile. |
@@ -46,7 +46,7 @@ flowchart LR
   shell --- apps
   ai -->|"D-Bus: org.autark.AI1"| shell
   ai --> apps
-  ai -->|"questions and routing"| ollama["Ollama on your laptop"]
+  ai -->|"routing, answers, checks"| ollama["Ollama on your laptop"]
 ```
 
 The distribution builds the system and installs it; these programs are what you see and use once it runs. The tools talk to each other over D-Bus (`org.autark.*`) and read plain config files under `~/.config/autark/`, so a change in Settings is just an edit to a file the tools already watch.
@@ -63,12 +63,10 @@ The distribution builds the system and installs it; these programs are what you 
 | `autark-lock` | Lock screen using `ext-session-lock` and PAM |
 | `autark-accounts` | Accounts: Google, iCloud, Fastmail and other mail, calendar and contact accounts signed in once (`org.autark.Accounts1`); passwords and OAuth refresh tokens live in the keyring, and only Autark's own apps are handed credentials, never Kith |
 | `autark-pim` | Mail, calendars, tasks and contacts over open protocols: iCalendar, vCard, CalDAV, CardDAV, IMAP and SMTP, for the Calendar, Tasks, Contacts and Mail apps |
-| `autark-calendar` | Calendar: a month grid and day agenda over every account's CalDAV calendars, with an event editor; serves `org.autark.Calendar1` (agenda, create, delete) for Kith while it runs |
-| `autark-contacts` | Contacts: people from every account's CardDAV address books, searchable and grouped by letter, with an editor; serves `org.autark.Contacts1` (search, create, delete) for Kith and Mail's address completion while it runs |
-| `autark-ai` | Kith's local daemon (`org.autark.AI1`): routing, Jev and Ollama, laptop MCP tools, tasks, memory |
-| `autark-alfred` | ALFRED, the Assistant that Lists, Files, Reminds, and Edits Drafts: the team's backend (`org.autark.Alfred1`): Kith's agents with their jobs, souls, conversations and memories, and an event log; it asks `autark-ai` for the model and for what an agent may read. See [docs/alfred.md](docs/alfred.md) |
+| `autark-calendar` | Calendar: a month grid and day agenda over every account's CalDAV calendars, with an event editor; serves `org.autark.Calendar1` (agenda, create, delete) while it runs |
+| `autark-contacts` | Contacts: people from every account's CardDAV address books, searchable and grouped by letter, with an editor; serves `org.autark.Contacts1` (search, create, delete) for Mail's address completion while it runs |
+| `autark-ai` | Kith's local daemon (`org.autark.AI1`), a minimal laptop supervisor: routing and laptop actions, quick answers about the laptop, command checks, suggestions; Jev and Ollama |
 | `autark-butler` | A window onto your own Alfred server: what waits for your yes, what it remembers (with forget), today's lists, the turn log and what's linked. Holds no data: it asks `alfred window` over an SSH key locked to that one command, set in `~/.config/autark/butler.toml` |
-| `autark-kith` | Kith's team: a roster of named agents on the left, a conversation with the one you pick on the right. Each has a job, a soul, a conversation and a small memory of its own and a list of what it may read; Alfred comes first, and a new install starts with Lucius, Gordon, Oracle and QUILL, and an agent for each profession skill (accountant, tax, lawyer, doctor, psychiatrist, engineer) found on the machine. Serves nothing: it talks to `autark-alfred` |
 | `autark-stats` | System metrics service over D-Bus; polls only while something displays the numbers |
 | `autark-wallpaper` | The desktop background: one of four drawn wallpapers or a picture, on every display |
 | `autark-monitor` | Task manager: apps and processes with CPU, memory, disk, network and energy impact; force quit |
@@ -146,7 +144,7 @@ And for notifications:
 # ~/.config/autark/notifyd.toml
 banner_seconds = 5   # when the app doesn't say
 max_banners = 3
-suggestions = true   # Kith's suggestions to quit runaway apps
+suggestions = true   # Kith's suggestions in the Kith widget
 note = "Plans/Kith.md"   # the Pinned note widget; default: the first note pinned in Notes
 
 # Weather stays off until this is set and switched on in Edit widgets.
@@ -181,14 +179,24 @@ enabled = false   # nothing but Check's rules answers until this is true
 [ollama]
 url = "http://localhost:11434"
 model = ""        # no default: choose after measuring on your laptop
-answer_model = "" # writes Kith's answers (a bigger, slower model can pay off here); empty means `model`
+answer_model = "" # writes Ask's answers (a bigger, slower model can pay off here); empty means `model`
 timeout_seconds = 120
 
 [features]        # each on once AI is enabled
 route = true
-rank = true
 check = true
 ask = true
+suggest = true
+
+[jev]             # each off by default; local_only overrides them
+launcher = false  # Route
+notify = false    # Urgent, for Focus
+terminal = false  # Check
+
+[suggestions]
+per_hour = 3
+low_battery = 20.0
+build_logs = "/var/log/autark-pkg"
 ```
 
 `autark-pkg` reads `/etc/autark/pkg.toml` (paths as the target sees them; `--root` moves them all):
