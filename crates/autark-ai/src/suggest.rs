@@ -1,7 +1,7 @@
 //! Kith's suggestions: code notices an event (see `events`), Ollama rates whether it's worth interrupting you
-//! now, given Focus and what Kith remembers, and writes the card. A suggestion only offers: its one action runs
+//! now, given only the event and Focus, and writes the card. A suggestion only offers: its one action runs
 //! through `Act` once you click it. At most `per_hour` are shown in any hour, an event rated once isn't rated
-//! again for a while, and "Don't suggest again" is kept, with the times shown, in
+//! again for a while, and the suggestions still open, "Don't suggest again" and the times shown are kept in
 //! `$XDG_STATE_HOME/autark-ai/suggestions.json`.
 
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ pub const BUILD_LOGS: &str = "/var/log/autark-pkg";
 /// A rating at or above this shows the card.
 pub const BAR: f64 = 0.5;
 
-/// How long a suggestion stands; after that its card says it passed by.
+/// How long a suggestion stands; after that it has passed by.
 pub const STANDS: u64 = 60 * 60;
 
 /// `[suggestions]` in ai.toml.
@@ -56,12 +56,37 @@ pub struct Never {
     pub label: String,
 }
 
+/// A suggestion shown and not yet answered, with its one offer (an action as `Act` takes it, and its button).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Open {
+    pub id: u64,
+    /// Seconds since the Unix epoch.
+    pub time: u64,
+    /// What kind of event it came from.
+    pub event: Kind,
+    /// What "Don't suggest again" covers, and how Settings lists it.
+    pub key: String,
+    pub label: String,
+    pub text: String,
+    pub offer: Option<Value>,
+    #[serde(default)]
+    pub offer_label: String,
+    /// How the model rated it, 0 to 1.
+    pub worth: f64,
+    /// Its quiet notification in the centre, closed once it's answered.
+    #[serde(default)]
+    pub notification: u32,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 struct Kept {
     never: Vec<Never>,
     /// When each recent suggestion was shown, in seconds since the epoch.
     shown: Vec<u64>,
+    open: Vec<Open>,
+    /// The next suggestion's id, so an id is never given twice.
+    next: u64,
 }
 
 pub fn now() -> u64 {
@@ -127,6 +152,34 @@ impl Policy {
         &self.kept.never
     }
 
+    /// Keeps a suggestion just shown, open until it's answered or passes by, and returns its id.
+    pub fn open(&mut self, mut open: Open) -> u64 {
+        let id = self.kept.open.iter().map(|open| open.id + 1).fold(self.kept.next.max(1), u64::max);
+        self.kept.next = id + 1;
+        open.id = id;
+        self.kept.open.push(open);
+        self.save();
+        id
+    }
+
+    /// The suggestions still open and standing at `now`, oldest first.
+    pub fn standing(&mut self, now: u64) -> &[Open] {
+        let before = self.kept.open.len();
+        self.kept.open.retain(|open| now.saturating_sub(open.time) <= STANDS);
+        if self.kept.open.len() != before {
+            self.save();
+        }
+        &self.kept.open
+    }
+
+    /// Takes suggestion `id` out of the open ones to answer it; `None` when it was answered already or has passed by.
+    pub fn answer(&mut self, id: u64, now: u64) -> Option<Open> {
+        let at = self.standing(now).iter().position(|open| open.id == id)?;
+        let open = self.kept.open.remove(at);
+        self.save();
+        Some(open)
+    }
+
     fn save(&self) {
         if !self.saving {
             return;
@@ -138,6 +191,7 @@ impl Policy {
             }
             let temporary = path.with_extension("json.saving");
             std::fs::write(&temporary, serde_json::to_vec(&self.kept)?)?;
+            std::fs::set_permissions(&temporary, <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600))?;
             std::fs::rename(&temporary, &path)
         })();
         if let Err(err) = result {
@@ -149,6 +203,13 @@ impl Policy {
 #[zbus::proxy(interface = "org.autark.Stats1", default_service = "org.autark.Stats1", default_path = "/org/autark/Stats1")]
 trait Stats {
     fn snapshot(&self) -> zbus::Result<String>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.Notifications", default_service = "org.freedesktop.Notifications", default_path = "/org/freedesktop/Notifications")]
+trait Notifications {
+    #[allow(clippy::too_many_arguments)]
+    fn notify(&self, app_name: &str, replaces_id: u32, app_icon: &str, summary: &str, body: &str, actions: &[&str], hints: HashMap<&str, zbus::Variant<'_>>, expire_timeout: i32) -> zbus::Result<u32>;
+    fn close_notification(&self, id: u32) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(interface = "org.autark.Notifications1", default_service = "org.freedesktop.Notifications", default_path = "/org/autark/Notifications")]
@@ -241,11 +302,11 @@ pub async fn notify(connection: &zbus::Connection, text: &str) -> zbus::Result<u
     let mut hints = HashMap::new();
     hints.insert("x-autark-quiet", zbus::Variant::from(true));
     hints.insert("desktop-entry", zbus::Variant::from("autark-ai"));
-    crate::runner::NotificationsProxy::new(connection).await?.notify("Kith", 0, "autark-ai", "Suggestion", text, &[], hints, -1).await
+    NotificationsProxy::new(connection).await?.notify("Kith", 0, "autark-ai", "Suggestion", text, &[], hints, -1).await
 }
 
 pub async fn close(connection: &zbus::Connection, id: u32) {
-    let closed = async { crate::runner::NotificationsProxy::new(connection).await?.close_notification(id).await };
+    let closed = async { NotificationsProxy::new(connection).await?.close_notification(id).await };
     if let Err(err) = closed.await {
         eprintln!("ai: closing a suggestion's notification: {err}");
     }
@@ -254,7 +315,7 @@ pub async fn close(connection: &zbus::Connection, id: u32) {
 pub const SYSTEM: &str = "You are Kith, the assistant built into the Autark desktop. Something just happened on the user's laptop, \
                           noticed by code. Decide whether it's worth interrupting them with a suggestion card now.\n\
                           worth: from 0 to 1. Weigh how much it matters to them and whether the offer helps; with Focus on, only what \
-                          can't wait is worth it. Use what you remember about them.\n\
+                          can't wait is worth it.\n\
                           text: one or two short, plain sentences for the card: what happened, then the offer as a question if there \
                           is one (\"Dim the screen to 40%?\"). Never say you've done anything.";
 
@@ -266,14 +327,9 @@ pub fn schema() -> Value {
     })
 }
 
-pub fn user(event: &Event, focus: bool, facts: &[String]) -> String {
+pub fn user(event: &Event, focus: bool) -> String {
     let offer = event.offer.as_ref().map_or("none".to_owned(), |(_, label)| label.clone());
-    let mut user = format!("What happened: {}\nOffer: {offer}\nFocus (do not disturb): {}\nNow: {}", event.facts, if focus { "on" } else { "off" }, chrono::Local::now().format("%A %H:%M"));
-    if !facts.is_empty() {
-        let facts: Vec<String> = facts.iter().map(|fact| format!("- {fact}")).collect();
-        user.push_str(&format!("\nWhat you remember about the user:\n{}", facts.join("\n")));
-    }
-    user
+    format!("What happened: {}\nOffer: {offer}\nFocus (do not disturb): {}\nNow: {}", event.facts, if focus { "on" } else { "off" }, chrono::Local::now().format("%A %H:%M"))
 }
 
 #[cfg(test)]
@@ -300,6 +356,20 @@ mod tests {
         }
         assert!(policy.pick(vec![event(Kind::Build, "")], now + 60, at, 3).is_none());
         assert!(policy.pick(vec![event(Kind::Build, "")], now + 3600, at, 3).is_some());
+    }
+
+    #[test]
+    fn an_open_suggestion_is_answered_once_and_passes_by() {
+        let mut policy = Policy::default();
+        let open = |time| Open { id: 0, time, event: Kind::Build, key: "build:".into(), label: String::new(), text: "A build ended.".into(), offer: None, offer_label: String::new(), worth: 0.8, notification: 0 };
+        let first = policy.open(open(1_000));
+        let second = policy.open(open(1_000 + STANDS));
+        assert_eq!((first, second), (1, 2));
+        assert_eq!(policy.standing(1_000 + STANDS).len(), 2);
+        assert_eq!(policy.answer(first, 1_000 + STANDS).map(|open| open.id), Some(1));
+        assert!(policy.answer(first, 1_000 + STANDS).is_none(), "answered already");
+        assert!(policy.answer(second, 1_000 + 3 * STANDS).is_none(), "passed by");
+        assert!(policy.standing(1_000 + 3 * STANDS).is_empty());
     }
 
     #[test]

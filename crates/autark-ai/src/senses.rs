@@ -1,20 +1,15 @@
-//! What Kith can see, by what a question is about. Code reads the facts and gives them to the model as context, so the
-//! answer comes from them. A subject Kith has no source for says so in the context: asked about a calendar it can't
-//! see, a small model makes one up, and a rule in the system prompt did not stop it.
+//! What Kith can see of the laptop, by what a question is about. Code reads the facts and gives them to the model as
+//! context, so the answer comes from them: disk, battery, memory and uptime, and how the last `autark-pkg` build went.
 
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Subject {
     /// Disk, battery, memory, uptime: read from this laptop.
     System,
-    Calendar,
-    Mail,
-    Tasks,
-    /// News and look-ups: a web search, when it is on.
-    Web,
-    /// What the user said to Kith before, and what is in their notes.
-    Recall,
+    /// The last `autark-pkg` build, read from its log.
+    Build,
 }
 
 /// What the question is about.
@@ -25,32 +20,27 @@ pub fn subjects(question: &str) -> Vec<Subject> {
     if has(&["disk", "storage", "battery", "uptime", "how much ram", "how much memory", "free memory", "memory left"]) {
         found.push(Subject::System);
     }
-    if has(&["calendar", "schedule", "meeting", "appointment", "agenda"]) {
-        found.push(Subject::Calendar);
-    }
-    if has(&["email", "e-mail", "inbox", "unread", "gmail", "my mail", "new mail"]) {
-        found.push(Subject::Mail);
-    }
-    if has(&["my task", "to-do", "todo", "to do list", "task for today", "tasks for today", "my project", "project board", "github project", "what should i work on", "what should i do today"]) {
-        found.push(Subject::Tasks);
-    }
-    if has(&["news", "latest", "look up", "lookup", "search for", "search the web", "what happened"]) {
-        found.push(Subject::Web);
-    }
-    if has(&["my notes", "in my notes", "we discussed", "we talked", "we decided", "i told you", "you told me", "did i say", "did i tell", "remember when", "last week", "what did i"]) {
-        found.push(Subject::Recall);
+    if has(&["build", "compile", "autark-pkg"]) {
+        found.push(Subject::Build);
     }
     found
 }
 
-/// What to tell the model about a subject Kith has no source for.
-pub fn unavailable(subject: Subject) -> &'static str {
-    match subject {
-        Subject::Calendar => "Kith cannot see the user's calendar yet: no calendar address has been given to Kith. Tell the user that in one sentence. Do not make up events.",
-        Subject::Mail => "Kith cannot read the user's email just now: no mail account is connected, or the mail service did not answer. Tell the user that in one sentence. Do not make up messages.",
-        Subject::Tasks => "Kith cannot see the user's tasks just now: the GitHub projects could not be read. Tell the user that in one sentence. Do not make up tasks.",
-        Subject::Web => "Kith cannot search the internet right now: web search is off or not set up. Tell the user that in one sentence. Do not make up news or links.",
-        Subject::System | Subject::Recall => "",
+/// How the newest build log in `folder` says its build went, with the lines before a failure; or that there is none.
+pub fn build(folder: &Path) -> String {
+    let newest = std::fs::read_dir(folder).ok().and_then(|entries| {
+        entries
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "log"))
+            .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+            .max()
+    });
+    let Some((_, path)) = newest else {
+        return "There are no autark-pkg build logs on this laptop. Say so in one sentence; do not make up a build.".to_owned();
+    };
+    match crate::events::build_ended(&path) {
+        Some(event) => format!("The last autark-pkg build, read from its log just now (answer from this):\n{}", event.facts),
+        None => format!("The last autark-pkg build's log, {}, has no outcome line yet: the build is still running or was cut off.", path.display()),
     }
 }
 
@@ -122,10 +112,21 @@ mod tests {
     #[test]
     fn a_question_is_sorted_by_its_subject() {
         assert_eq!(subjects("How much disk space do I have left?"), vec![Subject::System]);
-        assert_eq!(subjects("What is on my calendar today?"), vec![Subject::Calendar]);
-        assert_eq!(subjects("whats my task for today"), vec![Subject::Tasks]);
-        assert_eq!(subjects("Any unread email? And the latest news on Linux?"), vec![Subject::Mail, Subject::Web]);
+        assert_eq!(subjects("Why did my last build fail? Battery?"), vec![Subject::System, Subject::Build]);
+        assert!(subjects("What is on my calendar today?").is_empty());
         assert!(subjects("Why is the sky blue?").is_empty());
+    }
+
+    #[test]
+    fn the_last_build_is_read_from_the_newest_log() {
+        let folder = std::env::temp_dir().join(format!("autark-ai-senses-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        assert!(build(&folder).contains("no autark-pkg build logs"));
+        std::fs::write(folder.join("old.log"), "== autark-pkg: old 1.0 built in 3s\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(folder.join("gcc.log"), "make\n== autark-pkg: gcc 15.2.0 built in 812s\n").unwrap();
+        assert!(build(&folder).ends_with("An autark-pkg build ended: gcc 15.2.0 built in 812s."));
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     #[test]
@@ -142,12 +143,5 @@ mod tests {
         assert_eq!(memory("MemTotal:       16777216 kB\nMemFree: 1 kB\nMemAvailable:    8388608 kB\n").unwrap(), "- Memory: 8.0 GB available of 16.0 GB");
         assert_eq!(uptime("7384.52 28000.1\n").unwrap(), "- Up for 2 h 3 min");
         assert!(memory("").is_none() && uptime("").is_none());
-    }
-
-    #[test]
-    fn what_cannot_be_seen_says_so() {
-        for subject in [Subject::Calendar, Subject::Mail, Subject::Tasks, Subject::Web] {
-            assert!(unavailable(subject).contains("Do not make up"));
-        }
     }
 }

@@ -164,7 +164,7 @@ impl Builds {
 }
 
 /// The build a log tells of, if its last line says how it ended; a failed one comes with the lines before.
-fn build_ended(path: &Path) -> Option<Event> {
+pub fn build_ended(path: &Path) -> Option<Event> {
     let tail = tail(path, 4096)?;
     let lines: Vec<&str> = tail.lines().filter(|line| !line.trim().is_empty()).collect();
     let (last, before) = lines.split_last()?;

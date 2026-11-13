@@ -14,10 +14,13 @@ pub struct Ai {
     pub ollama: Ollama,
     pub features: Features,
     pub jev: Jev,
-    pub mcp: Mcp,
-    pub web: Web,
-    pub tasks: crate::tasks::Limits,
     pub suggestions: crate::suggest::Limits,
+    #[serde(rename = "mcp")]
+    _mcp: IgnoredAny,
+    #[serde(rename = "web")]
+    _web: IgnoredAny,
+    #[serde(rename = "tasks")]
+    _tasks: IgnoredAny,
 }
 
 #[derive(Deserialize)]
@@ -26,8 +29,8 @@ pub struct Ollama {
     pub url: String,
     /// No default: pick one after measuring it on your laptop.
     pub model: String,
-    /// The model that writes Kith's answers, when a bigger and slower one is worth it there: routing, the lookup loop,
-    /// ratings and tasks keep to `model`. Empty means `model` writes them too.
+    /// The model that writes Ask's answers, when a bigger and slower one is worth it there: routing, checks and
+    /// ratings keep to `model`. Empty means `model` writes them too.
     pub answer_model: String,
     pub timeout_seconds: u64,
 }
@@ -74,19 +77,16 @@ pub struct Jev {
     _settings: IgnoredAny,
 }
 
-/// `autark-ai mcp`. It only reads, unless you let it act.
-#[derive(Deserialize, Default, Clone, Copy)]
-#[serde(default, deny_unknown_fields)]
-pub struct Mcp {
-    /// Offers `run_actions` to the client: the catalog's actions (volume, brightness, Wi-Fi, Focus, night light,
-    /// lock, sleep, open an app), which then run without asking you. Off by default.
-    pub act: bool,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Web search through Firecrawl (https://docs.firecrawl.dev), for `Search` and the MCP server's `web_search`.
-/// The query goes to Firecrawl, so it is off by default, and `local_only` overrides it.
-#[derive(Deserialize, Default, Clone, Copy)]
-#[serde(default, deny_unknown_fields)]
-pub struct Web {
-    pub search: bool,
+    #[test]
+    fn an_older_file_still_loads() {
+        let older = "enabled = true\n[features]\nrank = false\nsuggest = false\n[jev]\nfiles = true\nsettings = true\nlauncher = true\n\
+                     [mcp]\nact = true\n[web]\nsearch = true\n[tasks]\nmax = 5\nminutes = 2\n";
+        let ai: Ai = toml::from_str(older).unwrap();
+        assert!(ai.enabled && ai.jev.launcher && !ai.features.suggest && ai.features.route);
+        assert!(toml::from_str::<Ai>("enabeld = true").is_err());
+    }
 }

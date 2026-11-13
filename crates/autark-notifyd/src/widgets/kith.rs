@@ -1,80 +1,10 @@
-//! Kith's widget: its next scheduled tasks and its newest suggestion.
-//!
-//! Tasks are the `autark-task@<id>.timer` user timers of standalone mode; tasks that run on
-//! Kith's own box arrive through `autark-ai` once it serves them. Suggestions are `autark-ai`'s,
-//! read again whenever its conversation changes, and answered through it.
+//! Kith's widget: its newest suggestion, under its face. Suggestions are `autark-ai`'s, read again whenever they
+//! change, and answered through it.
 
 use autark_common::visor::{State, Visor};
-use gtk::glib;
 use gtk::prelude::*;
 
 use crate::shared::Shared;
-
-#[zbus::proxy(interface = "org.freedesktop.systemd1.Manager", default_service = "org.freedesktop.systemd1", default_path = "/org/freedesktop/systemd1")]
-trait Manager {
-    fn list_units_by_patterns(&self, states: &[&str], patterns: &[&str]) -> zbus::Result<Vec<Unit>>;
-}
-
-/// systemd's `ListUnits` row: name, description, load, active and sub state, followed unit,
-/// object path, job ID, job type and job path.
-type Unit = (String, String, String, String, String, String, zbus::OwnedObjectPath, u32, String, zbus::OwnedObjectPath);
-
-#[zbus::proxy(interface = "org.freedesktop.systemd1.Timer", default_service = "org.freedesktop.systemd1")]
-trait Timer {
-    #[zbus(property, name = "NextElapseUSecRealtime")]
-    fn next_elapse(&self) -> zbus::Result<u64>;
-}
-
-#[derive(Clone)]
-pub struct Task {
-    pub name: String,
-    /// Microseconds since the Unix epoch.
-    pub next: u64,
-}
-
-/// Up to three tasks, soonest first.
-pub async fn tasks(connection: &zbus::Connection) -> zbus::Result<Vec<Task>> {
-    let units = ManagerProxy::new(connection).await?.list_units_by_patterns(&[], &["autark-task@*.timer"]).await?;
-    let mut tasks = Vec::new();
-    for (unit, description, _, _, _, _, path, ..) in units {
-        let next = TimerProxy::builder(connection).path(path).build().await?.next_elapse().await?;
-        if next == 0 {
-            continue;
-        }
-        tasks.push(Task { name: task_name(&unit, &description), next });
-    }
-    tasks.sort_by_key(|task| task.next);
-    tasks.truncate(3);
-    Ok(tasks)
-}
-
-/// Kith writes each timer's description as the task's name; failing that, the instance name
-/// reads well enough ("learning-digest" becomes "Learning digest").
-fn task_name(unit: &str, description: &str) -> String {
-    let id = unit.trim_start_matches("autark-task@").trim_end_matches(".timer").replace("\\x2d", "-");
-    if !description.trim().is_empty() && !description.contains(unit) && !description.contains("autark-task@") {
-        return description.trim().to_owned();
-    }
-    let words = id.replace(['-', '_'], " ");
-    let mut chars = words.chars();
-    chars.next().map_or(String::new(), |first| first.to_uppercase().chain(chars).collect())
-}
-
-/// "18:30" today, "Sun" this week, "24 Oct" after.
-fn when(next: u64, now: &glib::DateTime) -> String {
-    let Ok(time) = glib::DateTime::from_unix_local((next / 1_000_000) as i64) else {
-        return String::new();
-    };
-    let days = time.difference(now).as_seconds() / 86_400;
-    let format = if time.day_of_year() == now.day_of_year() && time.year() == now.year() {
-        "%H:%M"
-    } else if days < 6 {
-        "%a"
-    } else {
-        "%-d %b"
-    };
-    time.format(format).map(String::from).unwrap_or_default()
-}
 
 #[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
 pub trait Ai {
@@ -85,10 +15,10 @@ pub trait Ai {
     #[zbus(signal)]
     fn state_changed(&self, state: String) -> zbus::Result<()>;
     #[zbus(signal)]
-    fn history_changed(&self) -> zbus::Result<()>;
+    fn suggestions_changed(&self) -> zbus::Result<()>;
 }
 
-/// Kith's newest open suggestion, as `autark-ai` keeps it in the conversation.
+/// Kith's newest open suggestion, as `autark-ai` keeps it.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Suggestion {
     pub entry: u64,
@@ -125,39 +55,13 @@ impl Answer {
     }
 }
 
-pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion: &Shared<Option<Suggestion>>, kith: &Shared<State>, on_answer: impl Fn(Answer) + 'static) -> gtk::Box {
+pub fn view(suggestion: &Shared<Option<Suggestion>>, kith: &Shared<State>, on_answer: impl Fn(Answer) + 'static) -> gtk::Box {
     let face = Visor::new(24);
-    let up_next = gtk::Label::builder().label("Up next").xalign(1.0).hexpand(true).build();
-    up_next.add_css_class("detail");
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.append(face.widget());
     header.append(&super::caption("KITH"));
-    header.append(&up_next);
-
-    let rows = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let refresh_rows = {
-        let (rows, now) = (rows.clone(), now.clone());
-        move |tasks: &[Task]| {
-            while let Some(child) = rows.first_child() {
-                rows.remove(&child);
-            }
-            if tasks.is_empty() {
-                let none = gtk::Label::builder().label("No upcoming tasks").xalign(0.0).build();
-                none.add_css_class("detail");
-                rows.append(&none);
-            }
-            let now = now.get();
-            for task in tasks {
-                let time = gtk::Label::builder().label(when(task.next, &now)).xalign(0.0).width_chars(6).build();
-                time.add_css_class("when");
-                let name = gtk::Label::builder().label(&task.name).xalign(0.0).hexpand(true).ellipsize(gtk::pango::EllipsizeMode::End).build();
-                let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-                row.append(&time);
-                row.append(&name);
-                rows.append(&row);
-            }
-        }
-    };
+    let none = gtk::Label::builder().label("No suggestions").xalign(0.0).build();
+    none.add_css_class("detail");
 
     let text = gtk::Label::builder().xalign(0.0).wrap(true).build();
     text.add_css_class("suggestion-text");
@@ -186,20 +90,13 @@ pub fn view(tasks: &Shared<Vec<Task>>, now: &Shared<glib::DateTime>, suggestion:
     card.add_css_class("card");
     card.add_css_class("widget");
     card.append(&header);
-    card.append(&rows);
+    card.append(&none);
     card.append(&suggestion_box);
 
-    let refresh = std::rc::Rc::new(refresh_rows);
-    tasks.watch(&card, {
-        let refresh = refresh.clone();
-        move |_, tasks| refresh(tasks)
-    });
-    // "Sun" becomes "18:30" on the day.
-    let tasks_now = tasks.clone();
-    now.watch(&card, move |_, _| refresh(&tasks_now.get()));
     kith.watch(&card, move |_, state| face.set_state(*state));
     suggestion.watch(&card, move |_, suggestion| {
         suggestion_box.set_visible(suggestion.is_some());
+        none.set_visible(suggestion.is_none());
         if let Some(suggestion) = suggestion {
             text.set_label(&suggestion.text);
             offer.set_label(&suggestion.offer);

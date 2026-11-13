@@ -23,7 +23,7 @@ use crate::shared::Shared;
 use resources::Feed;
 use settings::Settings;
 
-/// How often batteries and tasks are reread while shown.
+/// How often batteries are reread while shown.
 const REFRESH: Duration = Duration::from_secs(30);
 const WEATHER_EVERY: Duration = Duration::from_secs(30 * 60);
 /// How often suggestions are read again with nothing changed, as each stands for an hour.
@@ -33,7 +33,6 @@ pub struct Sources {
     now: Shared<glib::DateTime>,
     batteries: Shared<Vec<battery::Battery>>,
     feed: Shared<Feed>,
-    tasks: Shared<Vec<kith::Task>>,
     suggestion: Shared<Option<kith::Suggestion>>,
     /// What Kith is doing, for its face.
     kith: Shared<autark_common::visor::State>,
@@ -54,7 +53,6 @@ impl Sources {
             now: clock::source(),
             batteries: Shared::new(Vec::new()),
             feed: Shared::new(Feed::Waiting),
-            tasks: Shared::new(Vec::new()),
             suggestion: Shared::new(None),
             kith: Shared::new(autark_common::visor::State::Idle),
             note: note::Source::new(config.note.clone()),
@@ -100,7 +98,6 @@ impl Sources {
         let me = self.me.clone();
         glib::spawn_future_local(async move {
             let system = zbus::Connection::system().await;
-            let session = zbus::Connection::session().await;
             loop {
                 let Some(sources) = me.upgrade() else { return };
                 if let Ok(system) = &system {
@@ -110,12 +107,6 @@ impl Sources {
                             eprintln!("notifyd: reading batteries from UPower: {err}");
                             sources.batteries.set(Vec::new());
                         }
-                    }
-                }
-                if let Ok(session) = &session {
-                    match kith::tasks(session).await {
-                        Ok(tasks) => sources.tasks.set(tasks),
-                        Err(err) => eprintln!("notifyd: listing Kith's task timers: {err}"),
                     }
                 }
                 drop(sources);
@@ -177,13 +168,12 @@ impl Sources {
     }
 }
 
-/// Reads Kith's open suggestions whenever its conversation changes, and every few minutes, since each
-/// stands only an hour.
+/// Reads Kith's open suggestions whenever they change, and every few minutes, since each stands only an hour.
 async fn follow_suggestions(sources: Weak<Sources>) {
     let followed = async {
         let connection = zbus::Connection::session().await?;
         let ai = kith::AiProxy::new(&connection).await?;
-        let mut changes = ai.receive_history_changed().await?;
+        let mut changes = ai.receive_suggestions_changed().await?;
         let mut states = ai.receive_state_changed().await?;
         if let (Some(sources), Ok(state)) = (sources.upgrade(), ai.state().await) {
             sources.kith.set(autark_common::visor::State::from_word(&state));
@@ -254,7 +244,7 @@ pub fn page(sources: &Rc<Sources>) -> (gtk::Box, gtk::MenuButton) {
 
     let weather = weather::view(&sources.weather);
     let me = Rc::downgrade(sources);
-    let kith = kith::view(&sources.tasks, &sources.now, &sources.suggestion, &sources.kith, move |answer| {
+    let kith = kith::view(&sources.suggestion, &sources.kith, move |answer| {
         if let Some(sources) = me.upgrade() {
             sources.answer(answer);
         }

@@ -266,13 +266,6 @@ window.notifications {
   font-feature-settings: "tnum";
 }
 
-.widget .when {
-  font-size: 12px;
-  font-weight: 600;
-  color: @accent;
-  font-feature-settings: "tnum";
-}
-
 .suggestion {
   padding: 10px 12px;
   border-radius: 12px;
