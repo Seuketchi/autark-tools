@@ -386,7 +386,7 @@ version = "0.0.0"
 dependencies = [
  "async-channel",
  "autark-common",
- "bindgen 0.69.5",
+ "bindgen 0.72.1",
  "chrono",
  "futures-util",
  "gtk4",
@@ -547,7 +547,7 @@ version = "0.0.0"
 dependencies = [
  "async-channel",
  "autark-common",
- "bindgen 0.69.5",
+ "bindgen 0.72.1",
  "chrono",
  "futures-util",
  "gtk4",
