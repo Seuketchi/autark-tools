@@ -84,6 +84,36 @@ impl Door {
     }
 }
 
+/// Set for ssh-add's prompt: Butler started with it is the passphrase dialog, not the window.
+pub const ASKPASS: &str = "BUTLER_ASKPASS";
+
+/// The server turned the key away: with BatchMode, that's a key whose passphrase isn't in ssh-agent yet.
+pub fn locked(error: &str) -> bool {
+    error.contains("Permission denied (publickey")
+}
+
+/// Adds `key` to ssh-agent, ssh-add asking for the passphrase through Butler's own dialog (`askpass`).
+pub fn unlock(key: &str, askpass: &std::path::Path) -> Result<(), String> {
+    unlock_with("ssh-add", &[], key, askpass)
+}
+
+fn unlock_with(program: &str, args: &[&str], key: &str, askpass: &std::path::Path) -> Result<(), String> {
+    let out = Command::new(program)
+        .args(args)
+        .args(["--", key])
+        .env("SSH_ASKPASS", askpass)
+        .env("SSH_ASKPASS_REQUIRE", "force")
+        .env(ASKPASS, "1")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Couldn't unlock the key: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    Err(format!("Couldn't unlock the key: {}", err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("cancelled")))
+}
+
 /// One turn from the log, for a row: where, which model, tokens, time and how it ended. Never the message.
 pub fn turn(t: &Value) -> String {
     let n = |k: &str| t[k].as_i64().unwrap_or(0);
@@ -138,6 +168,16 @@ mod tests {
         assert!(door.args.windows(2).any(|w| w == ["-i", "/k/alfred_window"]));
         assert!(door.args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
         assert_eq!(door.args[door.args.len() - 3..], ["--", "me@server", "window"]);
+    }
+
+    #[test]
+    fn a_locked_key_is_unlocked_by_ssh_add_asking_through_butler() {
+        assert!(locked("Couldn't reach Alfred: me@server: Permission denied (publickey,password)."));
+        assert!(!locked("Couldn't reach Alfred: no answer in 30 seconds"));
+        let script = r#"test "$SSH_ASKPASS" = /bin/butler && test "$SSH_ASKPASS_REQUIRE" = force && test "$BUTLER_ASKPASS" = 1 && test "$1" = -- && test "$2" = /k/alfred_window"#;
+        assert_eq!(unlock_with("sh", &["-c", script, "ssh-add"], "/k/alfred_window", "/bin/butler".as_ref()), Ok(()));
+        let wrong = unlock_with("sh", &["-c", "echo 'Bad passphrase, try again' >&2; exit 1", "ssh-add"], "/k", "/b".as_ref());
+        assert_eq!(wrong, Err("Couldn't unlock the key: Bad passphrase, try again".to_owned()));
     }
 
     #[test]
