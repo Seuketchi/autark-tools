@@ -159,17 +159,15 @@ impl Butler {
     fn refresh(self: &Rc<Self>, note: String) {
         let this = self.asked.get() + 1;
         self.asked.set(this);
-        let requests = vec![
+        let mut requests = vec![
             json!({"op": "approvals"}),
             json!({"op": "memory"}),
             json!({"op": "today", "what": self.chosen()}),
             json!({"op": "turns", "n": 50}),
             json!({"op": "linked"}),
-            json!({"op": "today", "what": DASHBOARD[0].0}),
-            json!({"op": "today", "what": DASHBOARD[1].0}),
-            json!({"op": "today", "what": DASHBOARD[2].0}),
-            json!({"op": "today", "what": DASHBOARD[3].0}),
         ];
+        // The cards' lists, in DASHBOARD's order: show_dashboard pairs them back up from the sixth answer on.
+        requests.extend(DASHBOARD.iter().map(|(what, _)| json!({"op": "today", "what": what})));
         self.ask(requests, move |me, a| {
             if me.asked.get() != this {
                 return;
@@ -259,8 +257,8 @@ impl Butler {
             heading.add_css_class("heading");
             card.append(&heading);
             let body = match answer {
-                Ok(Value::String(s)) if !s.trim().is_empty() => s.clone(),
-                _ => empty(answer, "Nothing yet."),
+                Ok(Value::String(s)) if s.trim().is_empty() => "Nothing yet.".to_owned(),
+                _ => said(answer),
             };
             card.append(&text(&body));
             self.dashboard.insert(&card, -1);
