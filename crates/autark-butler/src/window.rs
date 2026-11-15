@@ -20,6 +20,8 @@ const DASHBOARD: [(&str, &str); 4] = [("habits", "Habits"), ("goals", "Goals"), 
 pub struct Butler {
     pub window: gtk::ApplicationWindow,
     status: gtk::Label,
+    /// Shown while the server turns the key away: adds it to ssh-agent, asking for its passphrase.
+    unlock: gtk::Button,
     dashboard: gtk::FlowBox,
     approvals: gtk::Box,
     memory: gtk::Box,
@@ -86,6 +88,7 @@ impl Butler {
         let me = Rc::new(Butler {
             window,
             status: gtk::Label::builder().xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::End).build(),
+            unlock: gtk::Button::builder().label("Unlock").visible(false).build(),
             dashboard: gtk::FlowBox::builder().min_children_per_line(1).max_children_per_line(2).homogeneous(true).selection_mode(gtk::SelectionMode::None).valign(gtk::Align::Start).build(),
             approvals: column(),
             memory: column(),
@@ -96,7 +99,14 @@ impl Butler {
             asked: Cell::new(0),
         });
         me.status.add_css_class("dim");
+        header.pack_start(&me.unlock);
         header.pack_start(&me.status);
+        let again = Rc::downgrade(&me);
+        me.unlock.connect_clicked(move |_| {
+            if let Some(me) = again.upgrade() {
+                me.unlock_key();
+            }
+        });
         let linked = column();
         linked.append(&me.linked);
         me.dashboard.add_css_class("page");
@@ -150,12 +160,34 @@ impl Butler {
             })
             .await
             .unwrap_or_else(|_| Err("Asking Alfred stopped unexpectedly.".into()));
+            me.unlock.set_visible(matches!(&asked, Err(e) if door::locked(e)));
             match asked {
                 Ok(answers) => done(&me, answers),
                 Err(e) => {
                     me.status.set_label(&e);
                     me.status.set_tooltip_text(Some(&e));
                 }
+            }
+        });
+    }
+
+    /// Adds the key to ssh-agent (ssh-add asks for its passphrase in Butler's dialog), then fetches everything again.
+    fn unlock_key(self: &Rc<Self>) {
+        self.unlock.set_sensitive(false);
+        let me = Rc::clone(self);
+        glib::spawn_future_local(async move {
+            let unlocked = gio::spawn_blocking(|| {
+                let config: door::Config = autark_common::config::load("butler");
+                let key = config.key.ok_or_else(|| door::NOT_SET.to_owned())?;
+                let me = std::env::current_exe().map_err(|e| format!("Couldn't unlock the key: {e}"))?;
+                door::unlock(&key, &me)
+            })
+            .await
+            .unwrap_or_else(|_| Err("Unlocking stopped unexpectedly.".into()));
+            me.unlock.set_sensitive(true);
+            match unlocked {
+                Ok(()) => me.refresh(String::new()),
+                Err(e) => me.status.set_label(&e),
             }
         });
     }
