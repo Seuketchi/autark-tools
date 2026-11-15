@@ -11,12 +11,16 @@ use serde_json::{Value, json};
 use crate::door::{self, Door};
 
 /// The lists `alfred window` will show under Today; it refuses anything else.
-const TODAY: [&str; 11] =
-    ["reminders", "calendar", "tasks", "habits", "goals", "chores", "groceries", "bills", "balances", "budgets", "debts"];
+const TODAY: [&str; 12] =
+    ["reminders", "calendar", "tasks", "habits", "goals", "chores", "meals", "groceries", "bills", "balances", "budgets", "debts"];
+
+/// The dashboard's cards: the routine at a glance, all fetched with every refresh.
+const DASHBOARD: [(&str, &str); 4] = [("habits", "Habits"), ("goals", "Goals"), ("chores", "Chores"), ("meals", "Meals")];
 
 pub struct Butler {
     pub window: gtk::ApplicationWindow,
     status: gtk::Label,
+    dashboard: gtk::FlowBox,
     approvals: gtk::Box,
     memory: gtk::Box,
     today: gtk::Label,
@@ -77,6 +81,7 @@ impl Butler {
         let me = Rc::new(Butler {
             window,
             status: gtk::Label::builder().xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::End).build(),
+            dashboard: gtk::FlowBox::builder().min_children_per_line(1).max_children_per_line(2).homogeneous(true).selection_mode(gtk::SelectionMode::None).valign(gtk::Align::Start).build(),
             approvals: column(),
             memory: column(),
             today,
@@ -89,12 +94,14 @@ impl Butler {
         header.pack_start(&me.status);
         let linked = column();
         linked.append(&me.linked);
+        me.dashboard.add_css_class("page");
+        page(&stack, "dashboard", "Dashboard", &me.dashboard);
         page(&stack, "approvals", "Approvals", &me.approvals);
         page(&stack, "memory", "Memory", &me.memory);
         page(&stack, "today", "Today", &today_page);
         page(&stack, "turns", "Turns", &me.turns);
         page(&stack, "linked", "Linked", &linked);
-        stack.set_visible_child_name("approvals");
+        stack.set_visible_child_name("dashboard");
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         body.append(&gtk::StackSidebar::builder().stack(&stack).build());
         body.append(&stack);
@@ -152,13 +159,15 @@ impl Butler {
     fn refresh(self: &Rc<Self>, note: String) {
         let this = self.asked.get() + 1;
         self.asked.set(this);
-        let requests = vec![
+        let mut requests = vec![
             json!({"op": "approvals"}),
             json!({"op": "memory"}),
             json!({"op": "today", "what": self.chosen()}),
             json!({"op": "turns", "n": 50}),
             json!({"op": "linked"}),
         ];
+        // The cards' lists, in DASHBOARD's order: show_dashboard pairs them back up from the sixth answer on.
+        requests.extend(DASHBOARD.iter().map(|(what, _)| json!({"op": "today", "what": what})));
         self.ask(requests, move |me, a| {
             if me.asked.get() != this {
                 return;
@@ -169,6 +178,7 @@ impl Butler {
             me.today.set_label(&said(&a[2]));
             me.show_turns(&a[3]);
             me.linked.set_label(&said(&a[4]));
+            me.show_dashboard(&a[5..]);
         });
     }
 
@@ -237,6 +247,24 @@ impl Butler {
         });
     }
 
+    /// A card for each of the routine's lists, each as Alfred writes it (streaks, progress, what's due).
+    fn show_dashboard(&self, answers: &[Result<Value, String>]) {
+        self.dashboard.remove_all();
+        for ((_, title), answer) in DASHBOARD.iter().zip(answers) {
+            let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            card.add_css_class("card");
+            let heading = gtk::Label::builder().label(*title).xalign(0.0).build();
+            heading.add_css_class("heading");
+            card.append(&heading);
+            let body = match answer {
+                Ok(Value::String(s)) if s.trim().is_empty() => "Nothing yet.".to_owned(),
+                _ => said(answer),
+            };
+            card.append(&text(&body));
+            self.dashboard.insert(&card, -1);
+        }
+    }
+
     fn show_turns(&self, answer: &Result<Value, String>) {
         clear(&self.turns);
         let turns = answer.as_ref().ok().and_then(Value::as_array).cloned().unwrap_or_default();
@@ -263,5 +291,13 @@ fn said(answer: &Result<Value, String>) -> String {
         Ok(Value::String(s)) => s.clone(),
         Ok(other) => other.to_string(),
         Err(e) => e.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_dashboard_asks_only_for_lists_the_window_door_shows() {
+        assert!(super::DASHBOARD.iter().all(|(what, _)| super::TODAY.contains(what)));
     }
 }
