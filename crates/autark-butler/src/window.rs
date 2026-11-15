@@ -70,6 +70,11 @@ impl Butler {
         window.add_css_class("butler");
         let (header, refresh) = (gtk::HeaderBar::new(), gtk::Button::from_icon_name("view-refresh-symbolic"));
         refresh.set_tooltip_text(Some("Refresh"));
+        // The header's own buttons stretch to its height; centred, the theme's round buttons stay round.
+        let controls = gtk::WindowControls::new(gtk::PackType::Start);
+        controls.set_valign(gtk::Align::Center);
+        header.set_show_title_buttons(false);
+        header.pack_start(&controls);
         header.pack_start(&refresh);
         window.set_titlebar(Some(&header));
         let stack = gtk::Stack::new();
