@@ -147,7 +147,6 @@ version = "0.0.0"
 dependencies = [
  "async-io",
  "autark-common",
- "autark-pim",
  "blocking",
  "chrono",
  "futures-util",
@@ -155,19 +154,6 @@ dependencies = [
  "serde_json",
  "toml",
  "ureq",
- "zbus",
-]
-
-[[package]]
-name = "autark-alfred"
-version = "0.0.0"
-dependencies = [
- "async-io",
- "chrono",
- "futures-util",
- "serde",
- "serde_json",
- "toml",
  "zbus",
 ]
 
@@ -328,7 +314,6 @@ dependencies = [
  "gtk4",
  "serde",
  "toml",
- "zbus",
 ]
 
 [[package]]
@@ -376,18 +361,6 @@ version = "0.0.0"
 dependencies = [
  "autark-common",
  "gtk4",
-]
-
-[[package]]
-name = "autark-kith"
-version = "0.0.0"
-dependencies = [
- "autark-common",
- "futures-util",
- "gtk4",
- "serde",
- "serde_json",
- "zbus",
 ]
 
 [[package]]

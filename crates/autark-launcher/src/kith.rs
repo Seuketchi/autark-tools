@@ -1,16 +1,14 @@
-//! Ask Kith: what you typed, sent to `autark-ai` as a message in Kith's conversation, comes back as the actions
-//! it asks for, each ticked if Kith is sure and run only when you say, the answer to what it asks, streamed in
-//! with the files it read, and any fact Kith proposes to remember. Follow up carries on in the Assistant panel.
-//! Built from the design's `AiLauncher` artboard.
+//! Ask Kith: what you typed, routed by `autark-ai`, comes back as the laptop actions it asks for, each ticked if
+//! Kith is sure and run only when you say, and a single answer to what it asks, streamed in. There is no
+//! conversation: each question stands alone. Built from the design's `AiLauncher` artboard.
 
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
 
 use futures_util::StreamExt;
 use gtk::prelude::*;
-use gtk::{gio, glib};
+use gtk::glib;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -80,16 +78,12 @@ fn set_jev(on: bool) -> Result<(), String> {
 struct Routed {
     actions: Vec<Value>,
     question: String,
-    files: Vec<String>,
-    remember: String,
-    task: Option<Value>,
     engine: String,
-    actions_entry: u64,
-    memory_entry: u64,
-    task_entry: u64,
 }
 
 struct Row {
+    /// The action as `Act` takes it.
+    action: Value,
     check: gtk::CheckButton,
     done: gtk::Label,
     row: gtk::Box,
@@ -105,30 +99,20 @@ pub struct View {
     run: gtk::Button,
     answer: gtk::Box,
     text: gtk::Label,
-    chips: gtk::Box,
     stop: gtk::Button,
-    open: gtk::Button,
     privacy: gtk::Label,
     jev: gtk::Switch,
     jev_box: gtk::Box,
     rows: RefCell<Vec<Row>>,
     ran: Cell<bool>,
     answering: Cell<Option<u32>>,
-    opened: RefCell<Option<PathBuf>>,
     /// Counts each question, so an answer to one you've moved on from is dropped.
     generation: Cell<u64>,
     settings: Cell<Settings>,
-    /// Where the cards for a proposed fact or task go.
-    memory: gtk::Box,
-    follow: gtk::Button,
-    /// The conversation's entry holding the actions shown.
-    actions_entry: Cell<u64>,
-    close: Box<dyn Fn()>,
 }
 
 impl View {
-    /// `close` closes the launcher and `follow_up` moves on to the Assistant panel.
-    pub fn new(close: impl Fn() + 'static, follow_up: impl Fn() + 'static) -> Rc<Self> {
+    pub fn new() -> Rc<Self> {
         // Wrapped text asks for little width, so the dialog keeps its own instead of growing to fit a line.
         let status = gtk::Label::builder().xalign(0.0).wrap(true).max_width_chars(40).build();
         status.add_css_class("kith-status");
@@ -145,40 +129,17 @@ impl View {
         answer_pill.set_label("Ollama · on this laptop");
         let text = gtk::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(40).build();
         text.add_css_class("kith-answer");
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let stop = gtk::Button::builder().label("Stop").focus_on_click(false).build();
-        let open = gtk::Button::builder().focus_on_click(false).build();
-        for button in [&stop, &open] {
-            button.add_css_class("kith-button");
-        }
-        let bottom = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        chips.set_hexpand(true);
-        bottom.append(&chips);
-        bottom.append(&stop);
-        bottom.append(&open);
+        let stop = gtk::Button::builder().label("Stop").focus_on_click(false).halign(gtk::Align::End).build();
+        stop.add_css_class("kith-button");
         let answer = section("ANSWER", &answer_pill);
         answer.append(&text);
-        answer.append(&bottom);
+        answer.append(&stop);
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("kith");
-        let memory = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        memory.add_css_class("kith-section");
-        let follow = gtk::Button::builder().focus_on_click(false).halign(gtk::Align::End).visible(false).build();
-        let follow_label = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        follow_label.append(&gtk::Label::new(Some("Follow up")));
-        let keys = gtk::Label::new(Some("ctrl ↵"));
-        keys.add_css_class("key");
-        follow_label.append(&keys);
-        follow.set_child(Some(&follow_label));
-        follow.add_css_class("kith-button");
-        follow.add_css_class("kith-follow");
-        follow.connect_clicked(move |_| follow_up());
         root.append(&status);
         root.append(&actions);
         root.append(&answer);
-        root.append(&memory);
-        root.append(&follow);
 
         let shield = gtk::Image::from_icon_name("security-high-symbolic");
         shield.set_pixel_size(14);
@@ -204,22 +165,15 @@ impl View {
             run,
             answer,
             text,
-            chips,
             stop,
-            open,
             privacy,
             jev,
             jev_box,
             rows: RefCell::default(),
             ran: Cell::new(false),
             answering: Cell::new(None),
-            opened: RefCell::default(),
             generation: Cell::new(0),
             settings: Cell::default(),
-            memory,
-            follow,
-            actions_entry: Cell::new(0),
-            close: Box::new(close),
         });
 
         view.run.connect_clicked({
@@ -236,18 +190,6 @@ impl View {
                 if let Some(view) = view.upgrade() {
                     view.stop_answer();
                 }
-            }
-        });
-        view.open.connect_clicked({
-            let view = Rc::downgrade(&view);
-            move |button| {
-                let Some(view) = view.upgrade() else { return };
-                let Some(path) = view.opened.borrow().clone() else { return };
-                let context = WidgetExt::display(button).app_launch_context();
-                if let Err(err) = gio::AppInfo::launch_default_for_uri(&gio::File::for_path(&path).uri(), Some(&context)) {
-                    eprintln!("launcher: opening {}: {err}", path.display());
-                }
-                (view.close)();
             }
         });
         view.jev.connect_state_set({
@@ -285,16 +227,12 @@ impl View {
         self.ran.set(false);
         self.actions.set_visible(false);
         self.answer.set_visible(false);
-        self.follow.set_visible(false);
-        while let Some(child) = self.memory.first_child() {
-            self.memory.remove(&child);
-        }
         self.say("Kith is working out what you asked…");
         let text = text.trim().to_owned();
         let view = self.clone();
         glib::spawn_future_local(async move {
             let start = Instant::now();
-            let routed = async { ai::proxy().await?.chat(&text).await };
+            let routed = async { ai::proxy().await?.route(&text).await };
             let routed = match routed.await {
                 Ok(json) => serde_json::from_str::<Routed>(&json).map_err(|err| format!("Kith's answer doesn't fit: {err}")),
                 Err(error) => Err(said(error)),
@@ -302,20 +240,12 @@ impl View {
             if view.generation.get() != generation {
                 return;
             }
-            view.follow.set_visible(true);
             match routed {
                 Ok(routed) => {
                     view.status.set_visible(false);
-                    view.actions_entry.set(routed.actions_entry);
                     view.show_actions(&routed, start.elapsed().as_secs_f64());
-                    if !routed.remember.is_empty() {
-                        view.memory.append(&crate::assistant::memory_card(routed.memory_entry, &routed.remember, "proposed"));
-                    }
-                    if let Some(task) = &routed.task {
-                        view.memory.append(&crate::assistant::task_card(routed.task_entry, task, "proposed", "", 0));
-                    }
                     if !routed.question.is_empty() {
-                        view.ask(generation, routed.question, routed.files).await;
+                        view.ask(generation, routed.question).await;
                     }
                 }
                 Err(error) => view.say(&error),
@@ -327,13 +257,6 @@ impl View {
     pub fn cancel(&self) {
         self.generation.set(self.generation.get() + 1);
         self.stop_answer();
-    }
-
-    /// Lets go of the question under way without stopping its answer, which the Assistant panel carries on
-    /// showing.
-    pub fn detach(&self) {
-        self.generation.set(self.generation.get() + 1);
-        self.answering.set(None);
     }
 
     /// The Enter key: runs the ticked actions, once.
@@ -412,7 +335,11 @@ impl View {
         for widget in [check.upcast_ref::<gtk::Widget>(), tile.upcast_ref(), words.upcast_ref(), sure.upcast_ref(), bar.upcast_ref(), done.upcast_ref()] {
             row.append(widget);
         }
-        Row { check, done, row }
+        let mut action = action.clone();
+        if let Some(fields) = action.as_object_mut() {
+            fields.remove("confidence");
+        }
+        Row { action, check, done, row }
     }
 
     fn show_run(&self) {
@@ -436,12 +363,11 @@ impl View {
         for row in self.rows.borrow().iter() {
             row.check.set_sensitive(false);
         }
-        let places: Vec<u32> = chosen.iter().map(|at| *at as u32).collect();
-        let entry = self.actions_entry.get();
+        let actions = Value::Array(chosen.iter().map(|at| self.rows.borrow()[*at].action.clone()).collect()).to_string();
         let generation = self.generation.get();
         let view = self.clone();
         glib::spawn_future_local(async move {
-            let results = async { ai::proxy().await?.chat_act(entry, &places).await };
+            let results = async { ai::proxy().await?.act(&actions).await };
             let results = results.await.map_err(said);
             if view.generation.get() != generation {
                 return;
@@ -468,24 +394,19 @@ impl View {
         });
     }
 
-    async fn ask(self: &Rc<Self>, generation: u64, question: String, files: Vec<String>) {
+    async fn ask(self: &Rc<Self>, generation: u64, question: String) {
         self.answer.set_visible(true);
         self.text.set_label("▍");
         self.stop.set_visible(true);
-        self.open.set_visible(false);
-        while let Some(child) = self.chips.first_child() {
-            self.chips.remove(&child);
-        }
         let result = async {
             let proxy = ai::proxy().await?;
             // Listening before asking, so no piece is missed.
             let pieces = proxy.receive_answer_piece().await?;
             let dones = proxy.receive_answer_done().await?;
-            let names: Vec<&str> = files.iter().map(String::as_str).collect();
-            let (id, _, outcome) = proxy.chat_answer(&question, &names).await?;
-            zbus::Result::Ok((proxy, pieces, dones, id, outcome))
+            let id = proxy.ask(&question, "").await?;
+            zbus::Result::Ok((proxy, pieces, dones, id))
         };
-        let (_proxy, pieces, dones, id, outcome) = match result.await {
+        let (_proxy, pieces, dones, id) = match result.await {
             Ok(started) => started,
             Err(error) => {
                 if self.generation.get() == generation {
@@ -498,7 +419,6 @@ impl View {
             return;
         }
         self.answering.set(Some(id));
-        self.show_files(&outcome);
         enum Event {
             Piece(u32, String),
             Done(String),
@@ -525,38 +445,9 @@ impl View {
         }
     }
 
-    fn show_files(&self, outcome: &[(String, String)]) {
-        let mut first = None;
-        for (path, why) in outcome {
-            let chip = gtk::Label::builder()
-                .label(if why.is_empty() { format!("read {path}") } else { format!("couldn’t read {path}: {why}") })
-                .ellipsize(gtk::pango::EllipsizeMode::Middle)
-                .max_width_chars(36)
-                .build();
-            chip.set_tooltip_text(Some(&chip.label()));
-            chip.add_css_class("kith-chip");
-            if why.is_empty() {
-                first.get_or_insert(path.clone());
-            } else {
-                chip.add_css_class("failed");
-            }
-            self.chips.append(&chip);
-        }
-        if let Some(path) = first {
-            let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-            let resolved = path.strip_prefix("~/").map_or_else(|| PathBuf::from(&path), |rest| home.join(rest));
-            let name = resolved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or(path);
-            self.open.set_label(&format!("Open {name}"));
-            *self.opened.borrow_mut() = Some(resolved);
-        } else {
-            *self.opened.borrow_mut() = None;
-        }
-    }
-
     fn end_answer(&self, error: &str) {
         self.answering.set(None);
         self.stop.set_visible(false);
-        self.open.set_visible(self.opened.borrow().is_some());
         if !error.is_empty() {
             let text = self.text.label().trim_end_matches('▍').to_owned();
             self.text.set_label(&if text.is_empty() { error.to_owned() } else { format!("{text}\n\n{error}") });
@@ -567,7 +458,6 @@ impl View {
         let Some(id) = self.answering.take() else { return };
         self.stop.set_visible(false);
         self.text.set_label(self.text.label().trim_end_matches('▍'));
-        self.open.set_visible(self.opened.borrow().is_some());
         glib::spawn_future_local(async move {
             let stopped = async { ai::proxy().await?.stop(id).await };
             if let Err(err) = stopped.await {

@@ -39,11 +39,11 @@ pub struct Notification {
     pub transient: bool,
     /// The sender plays its own sound, or wants none.
     pub silent: bool,
-    /// Kept in the centre without a banner or a chime: Autark's own `x-autark-quiet` hint, which Kith's tasks
-    /// send for results that aren't urgent.
+    /// Kept in the centre without a banner or a chime: Autark's own `x-autark-quiet` hint, which Kith's
+    /// suggestions send.
     pub quiet: bool,
     /// What to open for an action key, as URIs: the `x-autark-open` hint (`a{ss}`), so the buttons work after
-    /// the sender has gone, as a task's runner has once it's sent its result.
+    /// the sender has gone.
     pub opens: Vec<(String, String)>,
     pub received: SystemTime,
 }

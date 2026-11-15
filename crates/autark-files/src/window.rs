@@ -661,23 +661,11 @@ impl Window {
         *self.searching.borrow_mut() = Some(cancelled.clone());
         let generation = self.search_generation.get() + 1;
         self.search_generation.set(generation);
-        let (me, folder, query) = (self.me.clone(), folder.to_path_buf(), query.to_owned());
+        let (me, root, words) = (self.me.clone(), folder.to_path_buf(), query.to_owned());
         glib::spawn_future_local(async move {
-            let (root, words) = (folder.clone(), query.clone());
-            let Ok(hits) = gio::spawn_blocking(move || search::walk(&root, &words, hidden, true, &cancelled)).await else { return };
-            let current = |me: &Weak<Window>| me.upgrade().filter(|this| this.search_generation.get() == generation);
-            let show = |this: &Window, hits: &[search::Hit]| {
-                this.fill(hits.iter().filter_map(|hit| Entry::read(&hit.path)).collect());
-            };
-            // The code's matches first; Jev's order replaces them if it answers.
-            let Some(this) = current(&me) else { return };
-            show(&this, &search::named(hits.clone()));
-            drop(this);
-            if let Some(ranked) = search::rank(&query, &folder, &hits).await
-                && let Some(this) = current(&me)
-            {
-                show(&this, &ranked);
-            }
+            let Ok(hits) = gio::spawn_blocking(move || search::walk(&root, &words, hidden, &cancelled)).await else { return };
+            let Some(this) = me.upgrade().filter(|this| this.search_generation.get() == generation) else { return };
+            this.fill(hits.iter().filter_map(|hit| Entry::read(&hit.path)).collect());
         });
     }
 

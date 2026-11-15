@@ -1,5 +1,5 @@
 //! Kith's small Visor, shown while AI is on in ai.toml: it pulses while Kith thinks or answers, has a dot
-//! while a suggestion is open, and opens the Assistant panel when clicked.
+//! while a suggestion is open, and opens the launcher, where Ask Kith is, when clicked.
 
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ trait Ai {
     #[zbus(signal)]
     fn state_changed(&self, state: String) -> zbus::Result<()>;
     #[zbus(signal)]
-    fn history_changed(&self) -> zbus::Result<()>;
+    fn suggestions_changed(&self) -> zbus::Result<()>;
 }
 
 /// Only ai.toml's switch matters here.
@@ -80,7 +80,7 @@ async fn follow(shared: &Shared<Kith>) -> zbus::Result<()> {
     let connection = zbus::Connection::session().await?;
     let ai = AiProxy::new(&connection).await?;
     let mut states = ai.receive_state_changed().await?;
-    let mut changes = ai.receive_history_changed().await?;
+    let mut changes = ai.receive_suggestions_changed().await?;
     let open = |json: &str| {
         serde_json::from_str::<Vec<serde_json::Value>>(json).is_ok_and(|open| !open.is_empty())
     };
@@ -125,7 +125,7 @@ pub fn view(source: &Shared<Kith>) -> gtk::Button {
         .build();
     button.add_css_class("item");
     button.add_css_class("icon");
-    button.connect_clicked(|_| open_panel());
+    button.connect_clicked(|_| open_launcher());
     source.watch(&button, move |button, kith| {
         button.set_visible(kith.on);
         visor.set_state(kith.state);
@@ -141,17 +141,16 @@ pub fn view(source: &Shared<Kith>) -> gtk::Button {
     button
 }
 
-/// The Assistant panel, opened or closed by the launcher.
-fn open_panel() {
+/// The launcher, opened or closed by running it again.
+fn open_launcher() {
     let mut command = std::process::Command::new("autark-launcher");
     command
-        .arg("--assistant")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     match std::os::unix::process::CommandExt::process_group(&mut command, 0).spawn() {
         // Waited for, so it doesn't linger as a zombie.
         Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
-        Err(err) => eprintln!("kith: opening the Assistant panel: {err}"),
+        Err(err) => eprintln!("kith: opening the launcher: {err}"),
     }
 }

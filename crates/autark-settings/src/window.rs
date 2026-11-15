@@ -1,20 +1,14 @@
 //! The window: the sidebar (search, the panes) and the open pane. Panes are built the first
 //! time they're opened and kept, each keeping itself current.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::panes::{self, INDEX, PANES};
-use crate::{bus, config, icon, ui};
-
-#[zbus::proxy(interface = "org.autark.AI1", default_service = "org.autark.AI1", default_path = "/org/autark/AI1")]
-trait Ai {
-    fn rank_for(&self, source: &str, query: &str, items: Vec<String>) -> zbus::Result<Vec<f64>>;
-}
+use crate::{icon, ui};
 
 pub struct Shell {
     pub window: gtk::ApplicationWindow,
@@ -23,9 +17,6 @@ pub struct Shell {
     results: gtk::Box,
     pages: gtk::Stack,
     search: gtk::SearchEntry,
-    /// Bumped with each search, so a slow answer to an old one is dropped.
-    searches: Cell<u32>,
-    debounce: ui::Debounce,
     first: RefCell<Option<&'static str>>,
 }
 
@@ -76,7 +67,7 @@ impl Shell {
         main.append(&gtk::WindowHandle::builder().child(&over).hexpand(true).build());
         window.set_child(Some(&main));
 
-        let shell = Rc::new(Self { window, nav, browse, results, pages, search, searches: Cell::new(0), debounce: ui::Debounce::default(), first: RefCell::new(None) });
+        let shell = Rc::new(Self { window, nav, browse, results, pages, search, first: RefCell::new(None) });
         // `win.show-pane` with a pane's id opens it, for a pane that points at another (Network at Wi-Fi).
         let open = gio::SimpleAction::new("show-pane", Some(glib::VariantTy::STRING));
         open.connect_activate({
@@ -156,7 +147,6 @@ impl Shell {
 
     fn searched(self: &Rc<Self>) {
         let query = self.search.text().trim().to_lowercase();
-        self.searches.set(self.searches.get() + 1);
         ui::clear(&self.results);
         *self.first.borrow_mut() = None;
         self.browse.set_visible(query.is_empty());
@@ -165,39 +155,7 @@ impl Shell {
             return;
         }
         let found: Vec<(&str, &str)> = INDEX.iter().filter(|(label, _)| label.to_lowercase().contains(&query)).copied().collect();
-        if !found.is_empty() {
-            self.list(&found, None);
-            return;
-        }
-        // Nothing by name: let the AI find it by meaning, when it's on.
-        let ai_on = config::get_bool(&config::read("ai"), "enabled").unwrap_or(false);
-        if !ai_on || query.chars().count() < 3 {
-            self.list(&[], Some("No settings match. Turn on AI to search by meaning."));
-            return;
-        }
-        self.list(&[], Some("Searching by meaning…"));
-        let search = self.searches.get();
-        let shell = Rc::downgrade(self);
-        self.debounce.run(Duration::from_millis(350), move || {
-            glib::spawn_future_local(async move {
-                let scores = rank(&query).await;
-                let Some(shell) = shell.upgrade() else { return };
-                if shell.searches.get() != search {
-                    return;
-                }
-                ui::clear(&shell.results);
-                match scores {
-                    Ok(scores) => {
-                        let mut ranked: Vec<(f64, (&str, &str))> = scores.into_iter().zip(INDEX.iter().copied()).filter(|(score, _)| *score >= 0.5).collect();
-                        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-                        let found: Vec<(&str, &str)> = ranked.into_iter().take(4).map(|(_, entry)| entry).collect();
-                        let note = if found.is_empty() { "No settings match." } else { "Ranked by AI" };
-                        shell.list(&found, Some(note));
-                    }
-                    Err(error) => shell.list(&[], Some(&format!("No settings match. ({error})"))),
-                }
-            });
-        });
+        self.list(&found, found.is_empty().then_some("No settings match."));
     }
 
     fn list(self: &Rc<Self>, found: &[(&'static str, &'static str)], note: Option<&str>) {
@@ -228,13 +186,6 @@ impl Shell {
             self.results.append(&label);
         }
     }
-}
-
-async fn rank(query: &str) -> Result<Vec<f64>, String> {
-    let connection = bus::session().await.map_err(|error| error.to_string())?;
-    let proxy = AiProxy::new(&connection).await.map_err(|error| bus::message(error, "The AI daemon"))?;
-    let items = INDEX.iter().map(|(label, _)| label.to_string()).collect();
-    proxy.rank_for("settings", query, items).await.map_err(|error| bus::message(error, "The AI daemon"))
 }
 
 fn nav_button(pane: &'static panes::Pane) -> gtk::Button {

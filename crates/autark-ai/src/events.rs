@@ -164,7 +164,7 @@ impl Builds {
 }
 
 /// The build a log tells of, if its last line says how it ended; a failed one comes with the lines before.
-fn build_ended(path: &Path) -> Option<Event> {
+pub fn build_ended(path: &Path) -> Option<Event> {
     let tail = tail(path, 4096)?;
     let lines: Vec<&str> = tail.lines().filter(|line| !line.trim().is_empty()).collect();
     let (last, before) = lines.split_last()?;
@@ -185,6 +185,10 @@ fn build_ended(path: &Path) -> Option<Event> {
 
 /// The last `bytes` of a file, from a line's start.
 fn tail(path: &Path, bytes: u64) -> Option<String> {
+    // A log is a plain file: never a link to something else, and never a pipe that would hang the read.
+    if !std::fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
     let mut file = std::fs::File::open(path).ok()?;
     let length = file.metadata().ok()?.len();
     file.seek(SeekFrom::Start(length.saturating_sub(bytes))).ok()?;

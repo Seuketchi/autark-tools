@@ -11,4 +11,3 @@ autark-common = { version = "0.0.0", path = "../autark-common", features = ["sty
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
-zbus = "6.0.0"

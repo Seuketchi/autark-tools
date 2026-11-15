@@ -1,4 +1,0 @@
-# D-Bus activation (session bus): /usr/share/dbus-1/services/
-[D-BUS Service]
-Name=org.autark.Alfred1
-Exec=/usr/bin/autark-alfred

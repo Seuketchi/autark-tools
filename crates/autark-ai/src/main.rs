@@ -1,60 +1,36 @@
-//! Kith's local daemon (org.autark.AI1): routing, Jev and Ollama, laptop MCP tools, tasks, memory.
+//! Kith's local daemon (org.autark.AI1), a minimal laptop supervisor.
 //!
-//! So far: `Route`, `Rank`, `Check`, `Ask`, `AskFiles` and `Models`, answered by Ollama; `Act`, which runs
-//! routed actions; and the conversation (`Chat`, `ChatAnswer`, `ChatAct`, `Remember`, `History`), which proposes
-//! facts for memory.toml and tasks; `autark-ai task <id>` runs one. Suggestions come from what code notices
-//! (`events`), rated by Ollama (`suggest`). ai.toml is reread when it changes. Jev answers `Check`, `Route`, `Rank` and `Urgent` for the `[jev]` switches that are on; `autark-ai mcp` is the MCP server.
+//! `Route` turns what's typed into laptop actions and a question, `Act` runs the chosen actions, `Ask` streams one
+//! answer to a quick question about the laptop, `Check` rates a shell command's risk and `Urgent` tells Focus whether
+//! a notification can't wait; `Models` lists Ollama's models. Suggestions come from what code notices (`events`),
+//! rated by Ollama (`suggest`). Jev answers `Check`, `Route` and `Urgent` for the `[jev]` switches that are on.
+//! ai.toml is reread when it changes.
 
 mod act;
-mod agent;
-mod board;
-mod calendar;
-mod chat;
 mod check;
 mod config;
 mod events;
-mod files;
 mod jev;
 mod log;
-mod mail;
-mod mcp;
-mod memory;
 mod ollama;
-mod recall;
 mod route;
-mod runner;
-mod schedule;
 mod senses;
-mod skills;
 mod server;
-mod soul;
 mod suggest;
-mod tasks;
-mod web;
 
 fn main() {
-    // `autark-ai task <id>` is one run of a task, as its timer starts it.
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if let [verb, id] = args.as_slice()
-        && verb == "task"
-    {
-        if let Err(err) = runner::run(id) {
-            eprintln!("ai: task {id}: {err}");
-            std::process::exit(1);
-        }
-        return;
+    // Kith's tasks and MCP server are gone: an old task timer or MCP client starting `autark-ai task <id>` or
+    // `autark-ai mcp` must not start a second daemon.
+    if std::env::args().len() > 1 {
+        eprintln!("ai: autark-ai takes no arguments (Kith's tasks and MCP server were removed)");
+        std::process::exit(2);
     }
     let config: config::Ai = autark_common::config::load("ai");
-    // `autark-ai mcp` serves an MCP client on stdin and stdout, as the client starts it.
-    if args == ["mcp"] {
-        mcp::serve(&config);
-        return;
-    }
     if !config.enabled {
         eprintln!("ai: AI is off; only Check's built-in rules answer (set `enabled = true` in ai.toml)");
     }
     let result = async_io::block_on(async {
-        let connection = zbus::connection::Builder::session().name("org.autark.AI1").serve_at(server::PATH, server::Ai::new(config)).build().await?;
+        let connection = zbus::connection::Builder::session().replace_existing_names(false).name("org.autark.AI1").serve_at(server::PATH, server::Ai::new(config)).build().await?;
         let suggestions = suggest::watch(connection.clone());
         // Settings and hand edits apply at once.
         let ai = connection.object_server().interface::<_, server::Ai>(server::PATH).await?;
